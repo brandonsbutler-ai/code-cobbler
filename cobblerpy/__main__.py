@@ -35,6 +35,24 @@ def _print_summary(s, limit=12):
     if not mods:
         return
 
+    totals = s.origin_totals
+    if len(totals) > 1 or "tracked" not in totals:
+        print("\nWHERE THE CODE CAME FROM")
+        for kind, t in totals.items():
+            note = {
+                "untracked": "on disk, never committed",
+                "vendored": "third-party provenance",
+                "tracked": "committed to this repository",
+                "unknown": "no repository to ask",
+            }.get(kind, "")
+            print(f"  {kind:<10} {t['modules']:>4} modules  {t['lines']:>7,} lines"
+                  f"   {note}")
+        untracked = totals.get("untracked", {}).get("lines", 0)
+        total_lines = sum(t["lines"] for t in totals.values()) or 1
+        if untracked:
+            print(f"  -> {100 * untracked / total_lines:.0f}% of the lines here were "
+                  f"never committed: no review, no commit message, no way back.")
+
     print("\nWHERE IT STARTS")
     if p.entry_points:
         for name, why in p.entry_points:
@@ -72,9 +90,14 @@ def _print_summary(s, limit=12):
         for m in errors[:8]:
             print(f"  {m.relpath}: {m.error}")
 
-    hot = [r for r in s.frontier if r["score"] > 0]
+    hot = [r for r in s.frontier if r["score"] > 0
+           and s.origins.get(r["module"], {}).get("origin") != "vendored"]
     if hot:
         top = hot[0]["score"]
+        vendored = {k for k, r in s.origins.items() if r["origin"] == "vendored"}
+        if vendored:
+            print(f"\n  ({len(vendored)} vendored module(s) excluded from the "
+                  f"ranking below -- somebody else's TODOs are not your frontier)")
         print(f"\nWHERE THE WORK STOPPED  (read in this order)")
         for r in hot[:limit]:
             kinds = ", ".join(f"{k.replace('_', ' ')} {v}"
@@ -90,6 +113,9 @@ def _print_summary(s, limit=12):
     h = s.history
     if h.get("available"):
         print("\nWHAT THE HISTORY SAYS")
+        note = s.history_coverage
+        if note:
+            print(f"  {note}")
         print(f"  authors: {', '.join(h['authors'][:6])}")
         months = h["timeline"]
         if months:
