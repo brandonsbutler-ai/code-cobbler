@@ -193,7 +193,8 @@ def main(argv=None):
 
     if args.map:
         from .report import write_map
-        write_map(s.project, s.frontier, s.history, args.map)
+        write_map(s.project, s.frontier, s.history, args.map,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
         print(f"map -> {args.map}", file=sys.stderr)
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:

@@ -217,6 +217,22 @@ reports them regardless of what went quiet. That is not diversion, it is popular
 It also reported pre-rename paths, because the prototype did not apply the rename map that
 `history.py` already builds. Third time that trap has appeared; anything reading the log needs it.
 
+### Brandon's refinement, 2026-09-16: it is a FORK, not a successor
+
+> "diversion is a fork, you will see the effort continue, if the function is what they have
+> persued, and suddenly they move to a similar but alternate effort in the PR's, that gives us a
+> pretty good idea this is where the decided to go with a new path."
+
+This is the discriminator the first attempt lacked. The signal is not "what changed next" -- that
+is whatever file always changes. It is "effort on A stopped and effort on A-PRIME started", where
+A-prime is doing the SAME KIND OF WORK by another route. Similarity is the whole signal; timing
+alone is noise.
+
+So the related-files restriction below is not a refinement of the feature, it IS the feature.
+Candidates for A-prime, strongest first: a module sharing the abandoned one's domain vocabulary;
+a historical co-change partner; a sibling in the same package; a module with the same external
+effects. A fork should require at least two of those to agree.
+
 ### What would make it a real signal
 
 - **Normalise against each file's own baseline rate.** The question is not "what changed after"

@@ -19,6 +19,11 @@ import html
 import json
 import os
 
+from . import snippets as snip
+from . import svgmap
+from .deadends import by_module as deadends_by_module, find as find_deadends
+from .layout import compute as compute_layout
+
 _CSS = """
 :root{--bg:#f7f7f6;--fg:#1a1a18;--mut:#6b6b66;--line:#dcdcd6;--card:#fff;
       --accent:#1f4d8f;--warn:#8a5a00;--warnbg:#fdf4e3;--ok:#2d6a4f;
@@ -72,10 +77,135 @@ summary{cursor:pointer;font-size:13px}
 .layer b{min-width:74px;font-size:12px;color:var(--mut);padding-top:2px}
 .chain{font-size:12.5px;color:var(--mut)}
 .empty{color:var(--mut);padding:8px 2px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 10px;font-size:12px;
+        color:var(--mut)}
+.key{display:flex;align-items:center;gap:5px}
+.key i{width:11px;height:11px;border-radius:3px;border:1px solid;display:inline-block}
+.mapwrap{overflow:auto;background:var(--card);border:1px solid var(--line);
+         border-radius:9px;padding:6px;margin-bottom:16px;max-height:76vh}
+#graph{display:block}
+#graph .edge{fill:none;stroke:var(--line);stroke-width:1.3}
+#graph .edge.back{stroke-dasharray:4 3}
+#graph .edge.deadend{stroke:var(--hot);stroke-width:1.8}
+#graph marker path{fill:var(--mut);stroke:var(--mut)}
+#graph .node{cursor:pointer}
+#graph .node rect{stroke-width:1.5;transition:filter .1s}
+#graph .node:hover rect,#graph .node:focus rect{filter:brightness(.94);stroke-width:2.4}
+#graph .node:focus{outline:none}
+#graph text{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;fill:var(--fg)}
+#graph .mod{font-size:9.5px;fill:var(--mut)}
+#graph .name{font-size:11.5px;font-weight:600}
+#graph .marks{font-size:10px;fill:var(--mut)}
+#graph .badge{font-size:8.5px;fill:var(--mut);letter-spacing:.03em}
+#graph .node.dim rect{opacity:.28}
+#graph .node.dim text{opacity:.3}
+#dbody{padding:14px 16px;max-height:70vh;overflow:auto}
+#dbody h4{margin:14px 0 5px;font-size:12.5px;color:var(--accent)}
+#dbody .facts{font-size:12.5px;color:var(--mut);margin-bottom:8px}
+#dbody pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;
+           padding:8px 10px;margin:5px 0;font-size:11.5px;overflow-x:auto}
+#dbody .ln{color:var(--mut);user-select:none}
+#dbody .hit{background:var(--warnbg);display:block}
+#dbody .gap{color:var(--mut);font-size:11px;padding:2px 0}
+#dbody .sig{font-size:12px;margin:2px 0}
+#dbody .de{background:var(--hotbg);border-radius:6px;padding:8px 10px;margin:6px 0;
+           font-size:12.5px}
 @media(max-width:640px){body{padding:16px 12px}}
 """
 
 _JS = """
+const DATA = __PAYLOAD__;
+
+function esc(s){
+  return (s ?? '').toString().replace(/[&<>]/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
+
+function snippet(sn){
+  if(!sn || !sn.regions.length) return '<p class="facts">No source stored for this module.</p>';
+  let out = '', prev = null;
+  for(const r of sn.regions){
+    // Gaps between regions are shown, never closed up: a snippet that looks
+    // continuous but is not would mislead anyone reading line numbers.
+    if(prev !== null && r.start > prev + 1)
+      out += '<div class="gap">... lines ' + (prev+1) + '-' + (r.start-1) + ' not shown ...</div>';
+    out += '<pre>';
+    r.lines.forEach((line, i) => {
+      const n = r.start + i;
+      const hit = sn.marks[String(n)];
+      const cls = hit ? ' class="hit"' : '';
+      const note = hit ? '   <span class="ln">&lt;-- ' + esc(hit.join('; ')) + '</span>' : '';
+      out += '<span' + cls + '><span class="ln">' + String(n).padStart(4) + '</span>  '
+           + esc(line) + note + '</span>\n';
+    });
+    out += '</pre>';
+    prev = r.start + r.lines.length - 1;
+  }
+  return out;
+}
+
+function openModule(name){
+  const d = DATA[name];
+  if(!d) return;
+  document.getElementById('dtitle').textContent = name;
+  let h = '<p class="facts">' + esc(d.state) + ' &mdash; ' + esc(d.why)
+        + ' &middot; ' + d.loc + ' lines &middot; depth ' + d.depth
+        + ' &middot; origin: ' + esc(d.origin) + '</p>';
+
+  if(d.deadends && d.deadends.length){
+    h += '<h4>The flow stops here</h4>';
+    for(const de of d.deadends){
+      h += '<div class="de"><strong>' + esc(de.qualname) + '</strong> (line '
+         + de.lineno + ') &mdash; ' + esc(de.kind);
+      if(de.direction) h += '<br>direction: ' + esc(de.direction);
+      if(de.callers && de.callers.length){
+        h += '<br>reached from: ' + de.callers.slice(0,4)
+             .map(c => esc(c.module) + ':' + c.lineno).join(', ');
+      }
+      h += '<br><span class="ln">' + esc(de.caveat) + '</span></div>';
+    }
+  }
+
+  const kinds = Object.keys(d.signals || {});
+  if(kinds.length){
+    h += '<h4>Signals</h4>';
+    for(const k of kinds.sort()){
+      h += '<div class="sig"><strong>' + esc(k.replace(/_/g,' ')) + '</strong> &times; '
+         + d.signals[k].length + '</div>';
+    }
+  }
+
+  h += '<h4>Connections</h4><p class="facts">';
+  h += 'uses: ' + (d.uses.length ? d.uses.map(esc).join(', ') : 'nothing internal');
+  h += '<br>used by: ' + (d.used_by.length ? d.used_by.map(esc).join(', ') : 'nothing');
+  if(d.external.length) h += '<br>external: ' + d.external.map(esc).join(', ');
+  h += '</p>';
+
+  h += '<h4>Source</h4>' + snippet(d.snippets);
+  document.getElementById('dbody').innerHTML = h;
+  document.getElementById('detail').showModal();
+}
+
+document.querySelectorAll('#graph .node').forEach(g => {
+  const name = g.dataset.name;
+  g.addEventListener('click', () => openModule(name));
+  g.addEventListener('keydown', e => {
+    if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openModule(name); }
+  });
+  // Hovering a module dims everything it has nothing to do with, which is the
+  // fastest way to see what one thing actually touches.
+  g.addEventListener('mouseenter', () => {
+    const d = DATA[name]; if(!d) return;
+    const near = new Set([name, ...d.uses, ...d.used_by]);
+    document.querySelectorAll('#graph .node').forEach(o =>
+      o.classList.toggle('dim', !near.has(o.dataset.name)));
+  });
+  g.addEventListener('mouseleave', () =>
+    document.querySelectorAll('#graph .node').forEach(o => o.classList.remove('dim')));
+});
+document.getElementById('dclose')?.addEventListener('click',
+  () => document.getElementById('detail').close());
+
 const q = document.getElementById('q');
 if (q) q.addEventListener('input', () => {
   const n = q.value.toLowerCase();
@@ -94,8 +224,31 @@ def _stat(value, label):
     return f'<div class="stat"><b>{_e(value)}</b><span>{_e(label)}</span></div>'
 
 
-def write_map(project, frontier, history, path, title=None, summary_totals=None):
+def write_map(project, frontier, history, path, title=None, summary_totals=None,
+              origins=None, modules_by_key=None):
     """Write the HTML map. Returns `path`."""
+    origins = origins or {}
+    modules_by_key = modules_by_key or {(m.dotted or m.relpath): m
+                                        for m in project.modules}
+    frontier_by_module = {r["module"]: r for r in frontier}
+
+    # The graph, the source behind each node, and the points where the flow
+    # stops. Snippets are per-module regions rather than whole files: embedding
+    # a whole codebase would bury the thing the reader clicked for.
+    graph = compute_layout(project, frontier_by_module)
+    snippets_by_module = {}
+    for key, module in modules_by_key.items():
+        signals = frontier_by_module.get(key, {}).get("signals", {})
+        regions = snip.for_module(module, signals)
+        if regions:
+            snippets_by_module[key] = {
+                "regions": regions,
+                "marks": {str(k): v for k, v in snip.marked_lines(signals).items()},
+                "relpath": module.relpath,
+            }
+    dead = deadends_by_module(find_deadends(project, modules_by_key, origins))
+    svg, payload = svgmap.render(graph, project, frontier_by_module,
+                                 snippets_by_module, dead, origins)
     title = title or f"Codebase map -- {os.path.basename(project.root)}"
     mods = project.modules
     total_loc = sum(m.loc for m in mods)
@@ -269,6 +422,13 @@ decorators, plugin registries and framework callbacks, none of which a parser
 can follow. Treat every such finding as "no static path was found", never as
 "dead".</div>
 
+<h2>The map</h2>
+<p class="lede">Left to right is distance from a start point. Click any module for its source,
+its signals and what it connects to. A doubled bar instead of an arrowhead marks a call that
+reaches a body with nothing in it.</p>
+<div class="legend">{svgmap.LEGEND}</div>
+<div class="mapwrap">{svg}</div>
+
 <input type="search" id="q" placeholder="Filter the tables below...">
 
 <h2>Where it starts</h2>
@@ -310,7 +470,7 @@ still be live.</p>
 <th>Line</th><th>Might still be live because</th></tr></thead>
 <tbody>{u_rows or '<tr><td class=empty colspan=5>Everything defined here is referenced somewhere.</td></tr>'}</tbody></table></div>
 
-</div><script>{_JS}</script></body></html>"""
+</div><script>{_JS.replace("__PAYLOAD__", payload)}</script></body></html>"""
 
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(doc)

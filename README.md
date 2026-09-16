@@ -79,7 +79,7 @@ comment blocks**, which CPython's own `typing.py` is full of. The flag rate on r
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 30 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 38 tests, no pytest required
 ```
 
 Fixtures are real directories of real Python, because every bug found so far came from running
@@ -92,14 +92,34 @@ the score's diminishing returns, the untracked-file detection and the cluster ve
 the specific test that guards it go red -- and one mutation had to be rewritten after the first
 attempt was caught by an IndentationError rather than by the test, which proves nothing.
 
+## The map
+
+`--map out.html` writes one self-contained page. Left to right is distance from a start point.
+
+Click any module for its source, its signals, and what it connects to. The source shown is only
+the regions that matter -- the lines a signal points at, with context, plus every definition
+header -- and gaps between regions are marked rather than closed up, because a snippet that looks
+continuous but is not would mislead anyone reading line numbers. Hovering a module dims everything
+it has nothing to do with.
+
+A doubled bar instead of an arrowhead marks a **dead-end**: a call that reaches a body with
+nothing in it. That is the boundary where somebody stopped -- the caller exists, the callee does
+not -- and the panel shows both sides at once, because neither half explains the situation alone.
+Each one reports where it stands and what it was shaped to do, never why anybody stopped. Motive
+is not recoverable and guessing at it would poison the rest.
+
+Colour states what it is derived from, and grey is deliberately not a shade of red: "no static
+path reaches this" is an inference, while the others are read from the syntax.
+
 ## Status
 
 Working: scanning, the import and call graph, entry points and flow, the abandonment analysis,
-origin classification, cluster separation, git history with rename-following, and the HTML map.
+dead-end detection, origin classification, cluster separation, git history with rename-following,
+and the interactive HTML map.
 
-Not yet done: an end-to-end verifier of the kind its sibling project carries, and the graphical
-layout described in [DESIGN_NOTES.md](DESIGN_NOTES.md) -- an interactive SVG with click-through
-to source and to the dead-ends where the flow stops, plus `.drawio` and Mermaid export.
+Not yet done: an end-to-end verifier of the kind its sibling project carries, `.drawio` and
+Mermaid export, and diversion detection -- see [DESIGN_NOTES.md](DESIGN_NOTES.md), which records
+why the first attempt at it produced nothing.
 
 ## License
 

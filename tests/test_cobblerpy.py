@@ -430,5 +430,147 @@ class TestEndToEnd(unittest.TestCase):
         self.assertIn("no Python files", r.stderr)
 
 
+class TestDeadEnds(unittest.TestCase):
+    def test_a_called_stub_is_a_dead_end(self):
+        from cobblerpy.deadends import find
+        t = Tree({"m.py": """
+            def caller():
+                return helper()
+
+            def helper():
+                pass
+        """})
+        self.addCleanup(t.close)
+        s = t.survey()
+        found = find(s.project, s.modules_by_key, s.origins)
+        names = {d["name"] for d in found}
+        self.assertIn("helper", names)
+
+    def test_an_exception_class_is_not_a_dead_end(self):
+        """An empty class body is idiomatic. This was a live false positive."""
+        from cobblerpy.deadends import find
+        t = Tree({"m.py": """
+            class DimensionError(Exception):
+                pass
+
+            def go():
+                raise DimensionError()
+        """})
+        self.addCleanup(t.close)
+        s = t.survey()
+        self.assertEqual(find(s.project, s.modules_by_key, s.origins), [])
+
+    def test_an_abstract_method_is_not_a_dead_end(self):
+        from cobblerpy.deadends import find
+        t = Tree({"m.py": """
+            import abc
+
+            class Thing:
+                @abc.abstractmethod
+                def run(self):
+                    ...
+
+            def go(t):
+                return t.run()
+        """})
+        self.addCleanup(t.close)
+        s = t.survey()
+        self.assertEqual(find(s.project, s.modules_by_key, s.origins), [])
+
+    def test_direction_reports_shape_never_motive(self):
+        from cobblerpy.deadends import find
+        t = Tree({"m.py": """
+            def report(finding):
+                return str(finding)
+
+            def assess(finding):
+                return 1
+
+            def remediate(finding):
+                pass
+
+            def go(f):
+                return remediate(f)
+        """})
+        self.addCleanup(t.close)
+        s = t.survey()
+        found = {d["name"]: d for d in find(s.project, s.modules_by_key, s.origins)}
+        self.assertIn("remediate", found)
+        direction = found["remediate"]["direction"] or ""
+        self.assertIn("finding", direction)        # what it takes
+        self.assertIn("report", direction)         # what it sits beside
+        # no motive anywhere in the record
+        blob = " ".join(str(v) for v in found["remediate"].values()).lower()
+        for word in ("because", "gave up", "abandoned", "why they"):
+            self.assertNotIn(word, blob)
+
+    def test_vendored_stubs_are_not_your_frontier(self):
+        from cobblerpy.deadends import find
+        t = Tree({"app.py": "from vendor.lib import go\nx = go()\n",
+                  "vendor/__init__.py": "",
+                  "vendor/lib.py": "def go():\n    pass\n"}, git=True)
+        self.addCleanup(t.close)
+        s = survey(t.dir, with_history=False)
+        found = find(s.project, s.modules_by_key, s.origins)
+        self.assertFalse([d for d in found if d["module"].startswith("vendor")])
+
+
+class TestMap(unittest.TestCase):
+    def test_the_map_is_self_contained_and_interactive(self):
+        import re
+        t = Tree({"run.py": 'import lib\nif __name__ == "__main__":\n    lib.go()\n',
+                  "lib.py": "def go():\n    return 1\n",
+                  "stranded.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            doc = fh.read()
+        # Strip the embedded source payload first: the map carries the project's
+        # own code, so a naive string search matches CONTENT, not markup. That
+        # exact false positive fired on the first run of this check.
+        markup = re.sub(r"const DATA = .*?;\n", "", doc, flags=re.S)
+        external = [tag for tag in
+                    re.findall(r"<(?:script|link|img|iframe)[^>]*>", markup)
+                    if "http" in tag]
+        self.assertEqual(external, [])
+        self.assertIn('<svg id="graph"', doc)
+        self.assertIn('data-name="run"', doc)
+        self.assertIn("tabindex=", doc)           # keyboard reachable
+
+    def test_every_module_appears_as_a_node(self):
+        import re
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n',
+                  "stranded.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            doc = fh.read()
+        for name in s.project.by_dotted:
+            self.assertIn(f'data-name="{name}"', doc)
+
+    def test_the_payload_cannot_break_out_of_the_script_block(self):
+        """Source containing </script> must not close the data block."""
+        t = Tree({"run.py": 'MARKER = "</script><img src=x onerror=alert(1)>"\n'
+                            'if __name__ == "__main__":\n    pass\n'})
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            doc = fh.read()
+        self.assertNotIn("</script><img", doc)
+        self.assertNotIn("<img src=x", doc)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
