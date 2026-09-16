@@ -76,14 +76,30 @@ mechanism was load-bearing.
 It also caught a false-positive class nobody would invent: **worked examples inside explanatory
 comment blocks**, which CPython's own `typing.py` is full of. The flag rate on real code is 0.30%.
 
+## Tests
+
+```bash
+python3 -m unittest discover -s tests -v     # 30 tests, no pytest required
+```
+
+Fixtures are real directories of real Python, because every bug found so far came from running
+against real trees rather than from unit-level reasoning: relative imports that resolved to the
+wrong module, git history that stopped at a rename, and a comment classifier that flagged section
+dividers.
+
+The suite is mutation-checked. Breaking the comment classifier, the relative-import resolution,
+the score's diminishing returns, the untracked-file detection and the cluster verdict each makes
+the specific test that guards it go red -- and one mutation had to be rewritten after the first
+attempt was caught by an IndentationError rather than by the test, which proves nothing.
+
 ## Status
 
 Working: scanning, the import and call graph, entry points and flow, the abandonment analysis,
-git history with rename-following, and the HTML map.
+origin classification, cluster separation, git history with rename-following, and the HTML map.
 
-Not yet done: a test suite, an end-to-end verifier of the kind its sibling project carries, and
-the graphical layout described in [DESIGN_NOTES.md](DESIGN_NOTES.md) -- an interactive SVG with
-click-through to source, plus `.drawio` and Mermaid export.
+Not yet done: an end-to-end verifier of the kind its sibling project carries, and the graphical
+layout described in [DESIGN_NOTES.md](DESIGN_NOTES.md) -- an interactive SVG with click-through
+to source and to the dead-ends where the flow stops, plus `.drawio` and Mermaid export.
 
 ## License
 
