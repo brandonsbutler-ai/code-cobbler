@@ -79,7 +79,7 @@ comment blocks**, which CPython's own `typing.py` is full of. The flag rate on r
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 38 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 46 tests, no pytest required
 ```
 
 Fixtures are real directories of real Python, because every bug found so far came from running
@@ -117,9 +117,17 @@ Working: scanning, the import and call graph, entry points and flow, the abandon
 dead-end detection, origin classification, cluster separation, git history with rename-following,
 and the interactive HTML map.
 
-Not yet done: an end-to-end verifier of the kind its sibling project carries, `.drawio` and
-Mermaid export, and diversion detection -- see [DESIGN_NOTES.md](DESIGN_NOTES.md), which records
-why the first attempt at it produced nothing.
+`--mermaid` writes a flowchart that renders natively on GitHub and in VS Code, so the map can
+live in the repository it describes. `--drawio` writes a diagram diagrams.net opens and edits,
+and exports to Visio from there.
+
+`--map` also reports **forks**: a module that went quiet while a similar one carried on. This is
+a hypothesis, labelled as one, with its evidence attached -- and it took three attempts to stop
+it producing confident nonsense. [DESIGN_NOTES.md](DESIGN_NOTES.md) records all three, including
+the limitation that neither available codebase contains a known fork, so it has been tuned
+against absence rather than validated against a positive.
+
+Not yet done: an end-to-end verifier of the kind its sibling project carries.
 
 ## License
 

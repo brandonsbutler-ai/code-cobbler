@@ -23,6 +23,10 @@ def _bar(value, top, width=22):
     return "#" * filled + "." * (width - filled)
 
 
+def h_available(s):
+    return bool(s.history and s.history.get("available"))
+
+
 def _print_summary(s, limit=12):
     p, out = s.project, sys.stdout
     mods = p.modules
@@ -110,6 +114,18 @@ def _print_summary(s, limit=12):
         print("\n  totals: " + ", ".join(f"{k.replace('_', ' ')} {v}"
                                          for k, v in s.totals.items()))
 
+    forks = []
+    if h_available(s):
+        from .diversion import find as find_forks
+        forks = find_forks(s.project, s.modules_by_key, s.history, s.frontier)
+    if forks:
+        print("\nWHERE THE EFFORT WENT INSTEAD")
+        print("  (a hypothesis from similarity and timing, not a fact)")
+        for f in forks[:5]:
+            print(f"  {f['stopped']} stopped after \"{f['last_subject'][:44]}\"")
+            for c in f["continued_as"][:2]:
+                print(f"      -> {c['module']:<38} {c['why'][:56]}")
+
     h = s.history
     if h.get("available"):
         print("\nWHAT THE HISTORY SAYS")
@@ -166,6 +182,12 @@ def main(argv=None):
                         help="write the full HTML map (self-contained)")
     parser.add_argument("--json", metavar="PATH",
                         help="write everything as JSON")
+    parser.add_argument("--mermaid", metavar="PATH",
+                        help="write a Mermaid flowchart (renders on GitHub, "
+                             "in VS Code and most wikis)")
+    parser.add_argument("--drawio", metavar="PATH",
+                        help="write a .drawio diagram, editable in diagrams.net "
+                             "and exportable to Visio from there")
     parser.add_argument("--frontier", action="store_true",
                         help="print only where the work stopped, with evidence")
     parser.add_argument("--no-history", action="store_true",
@@ -196,6 +218,22 @@ def main(argv=None):
         write_map(s.project, s.frontier, s.history, args.map,
                   origins=s.origins, modules_by_key=s.modules_by_key)
         print(f"map -> {args.map}", file=sys.stderr)
+    if args.mermaid or args.drawio:
+        from .deadends import by_module as deadends_by_module, find as find_deadends
+        from .export import to_drawio, to_mermaid
+        from .layout import compute as compute_layout
+        graph = compute_layout(s.project, {r["module"]: r for r in s.frontier})
+        dead = deadends_by_module(find_deadends(s.project, s.modules_by_key,
+                                                s.origins))
+        if args.mermaid:
+            with open(args.mermaid, "w", encoding="utf-8") as fh:
+                fh.write(to_mermaid(graph, s.project, dead))
+            print(f"mermaid -> {args.mermaid}", file=sys.stderr)
+        if args.drawio:
+            with open(args.drawio, "w", encoding="utf-8") as fh:
+                fh.write(to_drawio(graph, s.project, dead))
+            print(f"drawio -> {args.drawio}", file=sys.stderr)
+
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(s.as_dict(), fh, indent=2, default=str)

@@ -247,3 +247,36 @@ effects. A fork should require at least two of those to agree.
 Until it does those three things it stays out of the product. A map that confidently points at
 the busiest file in the repository as "where the effort went" would be worse than saying nothing,
 because it looks like an answer.
+
+
+---
+
+## Diversion: shipped, conservatively, after three attempts (2026-09-16)
+
+Each attempt failed in a different way and each failure named the next
+discriminator. Recorded because the sequence is the actual design.
+
+**Attempt one -- "what changed after".** Returned the same three files for every
+quiet module: whichever ones changed in nearly every commit. Popularity, not diversion.
+
+**Attempt two -- add similarity.** Vocabulary, package, co-change and shared effects, requiring
+two to agree. Produced confident, meaningless pairs: `limits` -> `batch`, which is a dependency
+relationship; two deploy scripts that resemble each other. The flaw: **finished code is also
+quiet.** Every candidate was a healthy, complete module. Quiet does not mean abandoned.
+
+**Attempt three -- require the quiet side to be unfinished.** Down from nine findings to three.
+But all three pointed at the test module, because a test shares vocabulary with everything it
+tests and co-changes with everything. And the one remaining non-test pair rested on
+`package + effects`, which is true of half a codebase.
+
+**Shipped version** adds two more gates: test modules can never be a destination, and at least
+one signal must be SPECIFIC to the pair (vocabulary or co-change) rather than two generic ones
+agreeing. Result on the two available codebases: one weak candidate and zero.
+
+### The limitation that matters
+
+**Neither codebase here contains a known fork**, so this has been tuned against absence rather
+than validated against a positive. Zero on a project that was abandoned wholesale rather than
+redirected is plausibly the right answer, but "produces almost nothing" is not the same as
+"produces the right thing". It ships labelled as a hypothesis with its evidence attached, and it
+would take a codebase with a documented change of direction to know whether it works.

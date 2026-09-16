@@ -572,5 +572,97 @@ class TestMap(unittest.TestCase):
         self.assertNotIn("<img src=x", doc)
 
 
+class TestExport(unittest.TestCase):
+    def _graph(self, tree):
+        from cobblerpy.layout import compute
+        s = tree.survey()
+        return compute(s.project, {r["module"]: r for r in s.frontier}), s
+
+    def test_mermaid_is_valid_flowchart_source(self):
+        from cobblerpy.export import to_mermaid
+        t = Tree({"run.py": 'import lib\nif __name__ == "__main__":\n    lib.go()\n',
+                  "lib.py": "def go(): return 1\n"})
+        self.addCleanup(t.close)
+        graph, s = self._graph(t)
+        out = to_mermaid(graph, s.project)
+        self.assertTrue(out.startswith("flowchart LR"))
+        self.assertIn("-->", out)
+        self.assertIn("classDef", out)
+        # ids must not carry dots or dashes, which mermaid rejects
+        import re
+        for node_id in re.findall(r"^\s+(n_\S+)\[", out, re.M):
+            self.assertNotIn(".", node_id)
+            self.assertNotIn("-", node_id)
+
+    def test_drawio_is_wellformed_xml_with_geometry(self):
+        import xml.etree.ElementTree as ET
+        from cobblerpy.export import to_drawio
+        t = Tree({"run.py": 'import lib\nif __name__ == "__main__":\n    lib.go()\n',
+                  "lib.py": "def go(): return 1\n"})
+        self.addCleanup(t.close)
+        graph, s = self._graph(t)
+        root = ET.fromstring(to_drawio(graph, s.project))
+        self.assertEqual(root.tag, "mxfile")
+        cells = root.findall(".//mxCell")
+        vertices = [c for c in cells if c.get("vertex")]
+        self.assertTrue(vertices)
+        for cell in vertices:
+            self.assertIsNotNone(cell.find("mxGeometry"))
+
+    def test_mermaid_truncates_rather_than_emitting_something_unreadable(self):
+        from cobblerpy.export import to_mermaid
+        files = {f"m{i}.py": f"x = {i}\n" for i in range(30)}
+        files["run.py"] = 'if __name__ == "__main__":\n    pass\n'
+        t = Tree(files)
+        self.addCleanup(t.close)
+        graph, s = self._graph(t)
+        out = to_mermaid(graph, s.project, max_nodes=5)
+        self.assertIn("%%", out)              # says it truncated
+        self.assertIn("of 31 total", out.replace("of  31", "of 31"))
+
+
+class TestDiversion(unittest.TestCase):
+    def test_no_history_means_no_guessing(self):
+        from cobblerpy.diversion import find
+        t = Tree({"a.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        self.assertEqual(find(s.project, s.modules_by_key, s.history), [])
+
+    def test_a_settled_module_is_not_reported_as_abandoned(self):
+        """Finished code is also quiet. This was the second attempt's flaw."""
+        from cobblerpy.diversion import find
+        t = Tree({
+            "run.py": 'import done\nif __name__ == "__main__":\n    done.go()\n',
+            "done.py": '"""Complete."""\n\n\ndef go():\n    """Returns one."""\n    return 1\n',
+        }, git=True)
+        self.addCleanup(t.close)
+        s = survey(t.dir)
+        forks = find(s.project, s.modules_by_key, s.history, s.frontier)
+        self.assertFalse([f for f in forks if f["stopped"] == "done"])
+
+    def test_test_modules_are_never_the_destination(self):
+        """A test shares vocabulary with everything and follows all effort."""
+        from cobblerpy.diversion import _is_test
+        t = Tree({"tests/test_thing.py": "def test_x(): pass\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        for key, module in s.modules_by_key.items():
+            self.assertTrue(_is_test(key, module), key)
+
+    def test_generic_signals_alone_are_not_enough(self):
+        """package+effects is true of half a codebase; it cannot carry a claim."""
+        from cobblerpy.diversion import _SPECIFIC
+        self.assertEqual(_SPECIFIC, {"vocabulary", "co-change"})
+
+    def test_every_fork_carries_its_caveat(self):
+        from cobblerpy.diversion import find
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n'}, git=True)
+        self.addCleanup(t.close)
+        s = survey(t.dir)
+        for fork in find(s.project, s.modules_by_key, s.history, s.frontier):
+            self.assertIn("hypothesis", fork["caveat"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
