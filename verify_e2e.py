@@ -34,6 +34,9 @@ sys.path.insert(0, ROOT)
 
 PASS, FAIL = [], []
 
+# Filled in by verify_documentation, settled in main().
+STATED_E2E = set()
+
 
 def check(claim, ok, evidence=""):
     (PASS if ok else FAIL).append(claim)
@@ -202,6 +205,16 @@ def verify_origin_and_clusters(root):
     clusters = analyse(s3.project, s3.root, s3.modules_by_key, s3.origins)
     kept, aside = split(clusters)
     check("the app named in the README is kept", "app.main" in kept, sorted(kept))
+    # Only the KEPT half was ever asserted. The separation claim has two sides,
+    # and the side that matters to somebody inheriting a codebase is the one
+    # that says "you do not have to read this": a split that keeps everything
+    # passes a kept-only check while doing nothing at all.
+    check("the vendored subtree is set aside, not kept",
+          any(m.startswith("vendor") for m in aside) and
+          not any(m.startswith("vendor") for m in kept),
+          f"kept={sorted(kept)} aside={sorted(aside)}")
+    check("kept and set-aside do not overlap", not (kept & aside),
+          sorted(kept & aside))
     check("every cluster verdict carries its reasons",
           all(c["why"] for c in clusters))
 
@@ -216,7 +229,14 @@ def verify_deadends(root):
     check("the called stub is a dead-end", "remediate" in found, sorted(found))
     if "remediate" in found:
         d = found["remediate"]
-        check("it records what calls it", bool(d["callers"]), d["callers"])
+        # Asserting the list is non-empty says nothing about whether the
+        # RIGHT caller is in it, and the caller is the whole value of the
+        # finding -- it is what tells a reader where to start.
+        check("it records the module that actually calls it",
+              {c["module"] for c in d["callers"]} == {"app.svc"}, d["callers"])
+        check("the caller record carries a line number to jump to",
+              all(isinstance(c.get("lineno"), int) and c["lineno"] > 0
+                  for c in d["callers"]), d["callers"])
         direction = d["direction"] or ""
         check("direction names what it takes", "finding" in direction, direction)
         check("direction names its finished sibling", "report" in direction, direction)
@@ -368,6 +388,33 @@ def verify_documentation():
     check(f"README states the real test count ({units})", stated == {units},
           f"states {sorted(stated)}, actual {units}")
 
+    # The end-to-end count the README quotes. Nothing checked it, so it could
+    # drift the way vanilla-extract's did -- 156 documented against 170 run,
+    # through a rename and two reviews. The real total is only known once every
+    # check has finished, so it is recorded here and settled in main().
+    STATED_E2E.update(int(x) for x in
+                      re.findall(r"(\d+)(?:\s+[\w-]+){0,3}\s+checks?\b", readme))
+    check("README states an end-to-end check count", bool(STATED_E2E),
+          f"found {sorted(STATED_E2E)}")
+
+    # Every option the parser accepts must appear in the README. --max-files
+    # and --no-history shipped documented nowhere but `--help`, and --max-files
+    # had no help text either, so the only account of the option a user could
+    # find was its name. The parser object is read rather than the help text: a
+    # flag cannot be added now without documenting it or failing this check.
+    from cobblerpy.__main__ import build_parser
+    flags = {o for a in build_parser()._actions for o in a.option_strings
+             if o.startswith("--") and o != "--help"}
+    undocumented = sorted(f for f in flags if f not in readme)
+    check(f"every command-line option appears in the README ({len(flags)})",
+          not undocumented, undocumented)
+
+    # An option with no help text is undocumented wherever else it appears.
+    nohelp = sorted(a.option_strings[0] for a in build_parser()._actions
+                    if a.option_strings and not a.help
+                    and a.option_strings[0] != "--help")
+    check("every option has help text", not nohelp, nohelp)
+
     import tomllib
     with open(os.path.join(ROOT, "pyproject.toml"), "rb") as fh:
         version = tomllib.load(fh)["project"]["version"]
@@ -397,6 +444,15 @@ def main():
     finally:
         shutil.rmtree(root, ignore_errors=True)
         shutil.rmtree(workdir, ignore_errors=True)
+
+    # Settled last: the real total is only known once everything has run, and
+    # this check counts itself, so the figure the README quotes is the figure
+    # this run prints.
+    section("CLAIM: the README quotes the real number of checks")
+    real_total = len(PASS) + len(FAIL) + 1
+    check(f"README quotes the real check count ({real_total})",
+          STATED_E2E == {real_total},
+          f"README says {sorted(STATED_E2E)}, this run has {real_total}")
 
     section("RESULT")
     total = len(PASS) + len(FAIL)

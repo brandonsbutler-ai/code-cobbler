@@ -3,6 +3,10 @@
 Recorded decisions and deferred work. Not documentation -- documentation says what the tool does;
 this says what it should do next and why.
 
+Entries attributed to Brandon are the author's, quoted as written and dated. They are kept
+verbatim because several of them overturned a design that had already been built: the
+attribution is there so a later reader can tell a requirement from an assumption.
+
 ---
 
 ## Visual map: Visio / draw.io / clickable code (Brandon, 2026-09-16)

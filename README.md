@@ -76,11 +76,26 @@ mechanism was load-bearing.
 It also caught a false-positive class nobody would invent: **worked examples inside explanatory
 comment blocks**, which CPython's own `typing.py` is full of. The flag rate on real code is 0.30%.
 
+## Options
+
+Every option the command accepts. `--help` prints the same list.
+
+| Option | What it does |
+|---|---|
+| `--map PATH` | write the full HTML map (self-contained) |
+| `--json PATH` | write everything as JSON |
+| `--mermaid PATH` | write a Mermaid flowchart (renders on GitHub, in VS Code and most wikis) |
+| `--drawio PATH` | write a .drawio diagram, editable in diagrams.net and exportable to Visio from there |
+| `--frontier` | print only where the work stopped, with evidence |
+| `--no-history` | skip git history (faster, or for a non-repository) |
+| `--max-files N` | stop after N .py files (default 5000). The survey is truncated, not sampled, so raise it rather than trust a partial map of a tree that hit the cap |
+| `--version` | show program's version number and exit |
+
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 46 tests, no pytest required
-python3 verify_e2e.py                        # 63 end-to-end claim checks
+python3 -m unittest discover -s tests -v     # 51 tests, no pytest required
+python3 verify_e2e.py                        # 70 end-to-end claim checks
 ```
 
 `verify_e2e.py` checks the PRODUCT rather than its units. It builds a codebase whose every

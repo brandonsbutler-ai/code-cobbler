@@ -91,7 +91,14 @@ class Module:
         self.blank = 0
         self.comment_lines = 0
         self.docstring = None
-        self.imports = []                 # (module, name, lineno, level)
+        # (module, BOUND name, lineno, level, IMPORTED name).
+        # The bound and imported names differ under `as`, and the two
+        # are needed for opposite jobs: the bound name says whether the
+        # import is used in the body, the imported name is what has to
+        # be resolved against the package. Collapsing them made
+        # `from . import snippets as snip` resolve to `pkg.snip`, and
+        # cobblerpy reported its own snippets module as an orphan.
+        self.imports = []
         self.definitions = []
         self.calls = []                   # (name, lineno)
         self.names_used = set()
@@ -134,14 +141,14 @@ class _Visitor(ast.NodeVisitor):
     def visit_Import(self, node):
         for alias in node.names:
             self.m.imports.append((alias.name, alias.asname or alias.name,
-                                   node.lineno, 0))
+                                   node.lineno, 0, alias.name))
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
         base = node.module or ""
         for alias in node.names:
             self.m.imports.append((base, alias.asname or alias.name,
-                                   node.lineno, node.level or 0))
+                                   node.lineno, node.level or 0, alias.name))
         self.generic_visit(node)
 
     # -- definitions -----------------------------------------------------

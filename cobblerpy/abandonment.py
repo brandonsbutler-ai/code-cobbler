@@ -52,7 +52,7 @@ def _unused_imports(module):
     out = []
     if module.relpath.endswith("__init__.py"):
         return out                        # re-exporting is the point there
-    for target, alias, lineno, _level in module.imports:
+    for target, alias, lineno, _level, _imported in module.imports:
         if alias == "*":
             continue
         head = alias.split(".")[0]

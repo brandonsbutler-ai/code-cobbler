@@ -10,7 +10,7 @@ file went quiet" returns whichever files always change -- the test module, the
 CLI, the central service -- for every quiet file, regardless. That is
 popularity, not diversion.
 
-The discriminator (Brandon, 2026-09-16) is SIMILARITY:
+The discriminator, set as a requirement by the author, is SIMILARITY:
 
     "diversion is a fork ... if the function is what they have persued, and
      suddenly they move to a similar but alternate effort in the PR's, that

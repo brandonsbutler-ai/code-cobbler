@@ -173,7 +173,14 @@ def _print_frontier(s):
         print()
 
 
-def main(argv=None):
+def build_parser():
+    """The argument parser, as a value.
+
+    Separate from main() so a test can read the real options rather
+    than scrape --help: six flags once shipped documented nowhere but
+    the help text, and scraping would not have caught it either.
+    """
+
     parser = argparse.ArgumentParser(
         prog="cobblerpy",
         description="Make sense of a Python codebase somebody else left behind.")
@@ -192,9 +199,18 @@ def main(argv=None):
                         help="print only where the work stopped, with evidence")
     parser.add_argument("--no-history", action="store_true",
                         help="skip git history (faster, or for a non-repository)")
-    parser.add_argument("--max-files", type=int, default=5000, metavar="N")
+    parser.add_argument("--max-files", type=int, default=5000, metavar="N",
+                        help="stop after N .py files (default 5000). The survey is "
+                             "truncated, not sampled, so raise it rather than trust a "
+                             "partial map of a tree that hit the cap")
     parser.add_argument("--version", action="version",
                         version=f"cobblerpy {__version__}")
+    
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     if not os.path.isdir(args.directory):

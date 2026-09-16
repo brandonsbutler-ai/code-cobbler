@@ -48,14 +48,19 @@ class Project:
         self._build()
 
     # -- import graph -----------------------------------------------------
-    def _resolve(self, module, target, level, alias=None):
+    def _resolve(self, module, target, level, alias=None, imported=None):
         """Resolve an import to an internal module, or None if it is external.
 
         `from .formats import rtf` inside vanilla_extract.dispatch names the
-        PACKAGE in `target` and the MODULE in `alias`, so resolving the target
-        alone lands on the package and the real edge is missed -- which
-        previously reported four actively-imported modules as orphans. Both
-        forms are tried, most specific first.
+        PACKAGE in `target` and the MODULE in `imported`, so resolving the
+        target alone lands on the package and the real edge is missed -- which
+        previously reported four actively-imported modules as orphans.
+
+        `imported` is the name as WRITTEN in the source; `alias` is what it is
+        bound to. Under `from . import snippets as snip` those differ, and
+        resolving the bound name looks for `pkg.snip`, which does not exist --
+        cobblerpy reported its own snippets module as an orphan on that path.
+        All forms are tried, most specific first.
         """
         if level:
             # For `from . import x` in package.sub.mod, level 1 means the
@@ -69,8 +74,10 @@ class Project:
             return None
 
         candidates = []
-        if alias:
-            candidates.append(f"{dotted}.{alias}")     # from pkg import module
+        if imported:
+            candidates.append(f"{dotted}.{imported}")  # from pkg import module
+        if alias and alias != imported:
+            candidates.append(f"{dotted}.{alias}")     # bound name, as a fallback
         candidates.append(dotted)                      # import pkg.module
         candidates.append(dotted.rsplit(".", 1)[0])    # from pkg.module import name
         for candidate in candidates:
@@ -86,8 +93,9 @@ class Project:
 
     def _build(self):
         for module in self.modules:
-            for target, alias, lineno, level in module.imports:
-                resolved = self._resolve(module, target, level, alias)
+            for target, alias, lineno, level, imported in module.imports:
+                resolved = self._resolve(module, target, level, alias,
+                                         imported)
                 if resolved and resolved != module.dotted:
                     self.imports[module.dotted].add(resolved)
                     self.imported_by[resolved].add(module.dotted)
@@ -192,7 +200,7 @@ class Project:
         for module in self.modules:
             referenced |= module.names_used
             referenced |= {c[0].rsplit(".", 1)[-1] for c in module.calls}
-            referenced |= {alias for _, alias, _, _ in module.imports}
+            referenced |= {alias for _, alias, _, _, _ in module.imports}
 
         for module in self.modules:
             for d in module.definitions:

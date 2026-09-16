@@ -87,7 +87,7 @@ class TestScan(unittest.TestCase):
         self.assertEqual(names["method"].kind, "method")
         self.assertEqual(names["method"].parent, "Thing")
         self.assertEqual(names["method"].body_kind, "pass")
-        self.assertIn(("os", "os", 1, 0), m.imports)
+        self.assertIn(("os", "os", 1, 0, "os"), m.imports)
 
     def test_a_file_that_does_not_parse_is_a_finding_not_a_crash(self):
         t = Tree({"broken.py": "def f(:\n    pass\n"})
@@ -161,6 +161,48 @@ class TestCommentClassifier(unittest.TestCase):
         self.assertTrue(_looks_like_code("# handler()"))      # a call
 
 
+class TestTruncation(unittest.TestCase):
+    """A survey that did not read every file must say so in the artifact."""
+
+    def _capped_map(self, cap):
+        import tempfile, os
+        from cobblerpy.report import write_map
+        files = {"pkg/__init__.py": ""}
+        for i in range(8):
+            files[f"pkg/m{i}.py"] = f"from . import m{(i + 1) % 8} as nxt\n"
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = survey(t.dir, with_history=False, max_files=cap)
+        out = os.path.join(tempfile.mkdtemp(), "map.html")
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            return s, fh.read()
+
+    def test_a_truncated_survey_says_so_in_the_html(self):
+        """The terminal warned; the file that gets sent to someone did not.
+
+        With the survey capped, modules are reported as orphans because their
+        importer was never read. The map showed those orphans with no hint the
+        survey was partial.
+        """
+        s, doc = self._capped_map(3)
+        self.assertTrue(s.skipped, "the fixture did not actually hit the cap")
+        self.assertIn("This survey is incomplete", doc)
+        self.assertIn("--max-files", doc)
+
+    def test_the_warning_names_the_number_not_read(self):
+        s, doc = self._capped_map(3)
+        self.assertIn(f"{s.skipped:,} Python file", doc)
+
+    def test_a_complete_survey_carries_no_warning(self):
+        """The band must not appear when nothing was skipped."""
+        s, doc = self._capped_map(5000)
+        self.assertEqual(s.skipped, 0)
+        self.assertNotIn("This survey is incomplete", doc)
+        self.assertNotIn("NOT READ", doc)
+
+
 class TestGraph(unittest.TestCase):
     def test_relative_imports_resolve_to_the_module_not_the_package(self):
         """`from .fmt import rtf` names the PACKAGE in the module slot."""
@@ -176,6 +218,40 @@ class TestGraph(unittest.TestCase):
         self.assertIn("pkg.dispatch", s.project.imported_by["pkg.fmt.rtf"])
         self.assertNotIn("pkg.fmt.rtf", s.project.orphans)
 
+    def test_an_aliased_relative_import_is_not_an_orphan(self):
+        """`from . import snippets as snip` binds a name the package lacks.
+
+        Resolving the BOUND name looks for pkg.snip, which does not exist, so
+        the edge is dropped and an actively-imported module is reported as an
+        orphan. cobblerpy did exactly this to its own snippets module.
+        """
+        t = Tree({
+            "pkg/__init__.py": "",
+            "pkg/helper.py": "def go():\n    return 1\n",
+            "pkg/main.py": "from . import helper as h\n\nprint(h.go())\n",
+        })
+        self.addCleanup(t.close)
+        s = t.survey()
+        self.assertIn("pkg.helper", s.project.imports["pkg.main"],
+                      "the aliased import produced no edge")
+        self.assertNotIn("pkg.helper", s.project.orphans)
+
+    def test_a_plain_dotted_import_still_resolves(self):
+        """The `import pkg.module` candidate has to survive every change here.
+
+        Removing it reports two modules in vanilla-extract and six in cobblerpy
+        as orphans, and until this test existed both suites stayed green while
+        it was gone.
+        """
+        t = Tree({
+            "pkg/__init__.py": "",
+            "pkg/helper.py": "VALUE = 1\n",
+            "pkg/main.py": "import pkg.helper\n\nprint(pkg.helper.VALUE)\n",
+        })
+        self.addCleanup(t.close)
+        s = t.survey()
+        self.assertIn("pkg.helper", s.project.imports["pkg.main"])
+        self.assertNotIn("pkg.helper", s.project.orphans)
     def test_entry_points_record_why_they_qualify(self):
         t = Tree({
             "run.py": 'import argparse\nif __name__ == "__main__":\n    pass\n',

@@ -42,6 +42,9 @@ h2 .n{color:var(--mut);font-weight:400;font-size:13px}
 .sub{color:var(--mut);font-size:13px}
 .lede{color:var(--mut);font-size:13px;margin:2px 0 12px;max-width:74ch}
 .stats{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0 4px}
+.truncated{background:var(--hotbg);border:1px solid var(--hot);
+  border-radius:8px;padding:11px 13px;margin:14px 0 4px;font-size:13px}
+.truncated b{color:var(--hot)}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:8px;
       padding:9px 13px;min-width:96px}
 .stat b{display:block;font-size:20px;line-height:1.2}
@@ -263,7 +266,24 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
         _stat(len(project.orphans), "orphans"),
         _stat(len(project.cycles), "import cycles"),
         _stat(len(parse_errors), "will not parse"),
-    ])
+    ] + ([_stat(project.skipped, "NOT READ")] if project.skipped else []))
+
+    # A truncated survey makes every "nothing imports this" finding unsound:
+    # the importer may be one of the files that was never read. The terminal
+    # said so in one line at the top; this file did not say so at all, and this
+    # file is the one that gets sent to somebody else.
+    truncation = ""
+    if project.skipped:
+        truncation = (
+            f'<div class="truncated"><b>This survey is incomplete.</b> '
+            f'{project.skipped:,} Python file'
+            f'{"s were" if project.skipped != 1 else " was"} not read, because '
+            f'the file limit was reached. Every finding below that depends on '
+            f'what imports what &mdash; orphans, reachability, the frontier '
+            f'ranking &mdash; is unsound while that is true, since the importer '
+            f'may be one of the files that was skipped. Re-run with '
+            f'<code>--max-files</code> above {project.skipped + len(mods):,} '
+            f'before reading any of it.</div>')
 
     # -- entry points
     if project.entry_points:
@@ -412,6 +432,7 @@ abandoned code does not get started again.</p>
 <h1>{_e(title)}</h1>
 <div class="sub">{_e(project.root)} &middot; mapped {stamp} by cobblerpy</div>
 <div class="stats">{stats}</div>
+{truncation}
 
 <div class="note"><span class="proven">Proven</span> &mdash; module structure,
 imports, definitions, entry points and unfinished-work signals are read
