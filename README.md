@@ -80,7 +80,20 @@ comment blocks**, which CPython's own `typing.py` is full of. The flag rate on r
 
 ```bash
 python3 -m unittest discover -s tests -v     # 46 tests, no pytest required
+python3 verify_e2e.py                        # 63 end-to-end claim checks
 ```
+
+`verify_e2e.py` checks the PRODUCT rather than its units. It builds a codebase whose every
+property is known by construction -- a planted TODO, a planted stub, a module nothing imports, a
+subtree with its own LICENSE, a file that will not parse -- drives the real CLI, and asserts the
+documented behaviour against that ground truth. It prints PASS or FAIL per claim and exits
+non-zero on any failure, because a verifier that cannot fail is decoration.
+
+It caught something on its first run, though not in the tool: the "clean module" fixture was not
+imported by anything, so cobblerpy correctly reported it as an orphan and the check expecting
+silence failed. **The tool was right and the fixture was wrong** -- which is the failure mode a
+self-written verifier is most prone to, and the reason this one asserts against properties the
+fixture DEFINES rather than against whatever the code happens to produce.
 
 Fixtures are real directories of real Python, because every bug found so far came from running
 against real trees rather than from unit-level reasoning: relative imports that resolved to the
@@ -127,7 +140,9 @@ it producing confident nonsense. [DESIGN_NOTES.md](DESIGN_NOTES.md) records all 
 the limitation that neither available codebase contains a known fork, so it has been tuned
 against absence rather than validated against a positive.
 
-Not yet done: an end-to-end verifier of the kind its sibling project carries.
+Everything described above is verified end to end. What is not done: the attachment question --
+where set-aside code *would* have fitted -- which [DESIGN_NOTES.md](DESIGN_NOTES.md) records as
+probably the boundary where deterministic analysis ends and narration begins.
 
 ## License
 
