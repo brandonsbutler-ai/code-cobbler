@@ -177,5 +177,57 @@ no-op hooks are all legitimately empty, and a plugin interface is *supposed* to 
 NotImplementedError. The marker says "execution reaches here and stops", which is true; whether
 that is a problem is the reader's call, and the caveat travels with it.
 
-**Why they quit** stays out of the output. The evidence supports "this is where the flow stops",
-not a motive. Anything about motive belongs to narration, clearly labelled, never to the map.
+**Motive stays out of the output entirely.** Corrected by Brandon, 2026-09-16, and the correction
+improves the design:
+
+> "when you hit a stub, the why is not important, its important to know where it stands, that is
+> all, maybe even have a descriptor that shows the direction it was heading, and likely components
+> that effort was diverted to (you didnt need the remediation as much as you needed the report of
+> why remediation was required)"
+
+So a stub gets three things, none of them a motive:
+
+**POSITION** -- what calls it, what it sits between, how far it is from an entry point. Already
+computed.
+
+**DIRECTION** -- what it was shaped to do, read off the name, the signature, and what its finished
+siblings in the same module do. A stubbed `remediate(finding)` beside a working `report(finding)`
+and `assess(finding)` says where it was heading without anybody guessing.
+
+**DIVERSION** -- what absorbed the effort afterwards. This is the interesting one, and it is a
+FACT from the history rather than an inference: the work did not stop, it moved, and the commits
+say where. Brandon's own example: the remediation engine was stubbed because what was actually
+needed was the report explaining why remediation was required. The effort went sideways, and that
+is visible.
+
+
+---
+
+## Diversion detection: attempt one, and why it produced nothing (2026-09-16)
+
+The idea: for a file that went quiet, show what the commits afterwards went to. Work that stops
+in one place usually reappears in another, and that redirection is the most useful thing the
+history can say about a dead-end.
+
+**Measured on a 13-commit repository, it returned the same three files for every quiet module.**
+Those three were simply the ones that changed in almost every commit. Raw "what changed
+afterwards" is dominated by hub files -- the test module, the CLI, the central service -- and
+reports them regardless of what went quiet. That is not diversion, it is popularity.
+
+It also reported pre-rename paths, because the prototype did not apply the rename map that
+`history.py` already builds. Third time that trap has appeared; anything reading the log needs it.
+
+### What would make it a real signal
+
+- **Normalise against each file's own baseline rate.** The question is not "what changed after"
+  but "what changed MORE than it usually does, after". A hub that always changes tells you
+  nothing; a module that was quiet and then became busy tells you a lot.
+- **Restrict to related files.** Same package, or a historical co-change partner, or overlapping
+  domain vocabulary. "Remediation went quiet and reporting picked up" is a finding; "remediation
+  went quiet and the test file kept changing" is noise.
+- **Require a gap.** Diversion means the effort moved at roughly the moment the file stopped, not
+  at any point in the subsequent year.
+
+Until it does those three things it stays out of the product. A map that confidently points at
+the busiest file in the repository as "where the effort went" would be worse than saying nothing,
+because it looks like an answer.
