@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cobblerpy"
+version = "0.1.0"
+description = "Make sense of a Python codebase somebody else left behind"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [{ name = "Brandon S. Butler" }]
+keywords = ["static-analysis", "ast", "code-archaeology", "legacy-code",
+            "dependency-graph", "no-dependencies"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+# RUNTIME DEPENDENCIES: none, deliberately, and this list stays empty. The
+# input is somebody else's source, often under an NDA; a tool that reads it
+# should not also drag a supply chain onto the machine.
+dependencies = []
+
+[project.scripts]
+cobblerpy = "cobblerpy.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/brandonsbutler-ai/cobblerpy"
+
+[tool.setuptools]
+packages = ["cobblerpy"]

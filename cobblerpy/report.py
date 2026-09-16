@@ -1,0 +1,317 @@
+"""The map: one self-contained HTML file describing an unfamiliar codebase.
+
+Written to be read top to bottom by someone who has just inherited the code and
+has an afternoon. The order is the order the questions arrive: how big is this,
+where does it start, what depends on what, where did they stop, and what does
+the history say they were doing.
+
+No external assets, so it opens from a file:// URL, survives being e-mailed,
+and never sends a line of somebody's private source anywhere.
+
+PROVEN and INFERRED are kept visually distinct throughout. Structure is parsed
+from the syntax and is close to exact; reachability and dead code are lower
+bounds because Python dispatches in ways a parser cannot follow. A tool that
+blurs those two makes its confident half untrustworthy.
+"""
+
+import datetime
+import html
+import json
+import os
+
+_CSS = """
+:root{--bg:#f7f7f6;--fg:#1a1a18;--mut:#6b6b66;--line:#dcdcd6;--card:#fff;
+      --accent:#1f4d8f;--warn:#8a5a00;--warnbg:#fdf4e3;--ok:#2d6a4f;
+      --hot:#a13d2d;--hotbg:#fbecea}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){
+      --bg:#16161a;--fg:#e8e8e4;--mut:#9a9a94;--line:#32323a;--card:#1e1e24;
+      --accent:#7aa8e8;--warn:#e0b060;--warnbg:#2a2318;--ok:#7fc8a4;
+      --hot:#e08878;--hotbg:#2c1e1c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);padding:24px 16px;
+     font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+.wrap{max-width:1180px;margin:0 auto}
+h1{font-size:22px;margin:0 0 2px}
+h2{font-size:16px;margin:30px 0 4px;color:var(--accent)}
+h2 .n{color:var(--mut);font-weight:400;font-size:13px}
+.sub{color:var(--mut);font-size:13px}
+.lede{color:var(--mut);font-size:13px;margin:2px 0 12px;max-width:74ch}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0 4px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:8px;
+      padding:9px 13px;min-width:96px}
+.stat b{display:block;font-size:20px;line-height:1.2}
+.stat span{color:var(--mut);font-size:11.5px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:9px;
+      padding:13px 15px;margin-bottom:12px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:6px 9px;border-bottom:1px solid var(--line);
+      vertical-align:top}
+th{font-size:11.5px;color:var(--mut);text-transform:uppercase;
+   letter-spacing:.04em;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+.tablewrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);
+      border-radius:9px;margin-bottom:12px}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;border-radius:20px;padding:1px 9px;font-size:11.5px;
+     border:1px solid var(--line);margin:1px 3px 1px 0;white-space:nowrap}
+.tag.hot{background:var(--hotbg);color:var(--hot);border-color:transparent}
+.tag.warn{background:var(--warnbg);color:var(--warn);border-color:transparent}
+.proven{color:var(--ok);font-weight:600}
+.inferred{color:var(--warn);font-weight:600}
+.note{background:var(--warnbg);border:1px solid var(--line);border-radius:8px;
+      padding:10px 13px;margin:10px 0;font-size:12.5px;max-width:82ch}
+.bar{height:7px;border-radius:4px;background:var(--accent);display:inline-block;
+     vertical-align:middle}
+input[type=search]{width:100%;max-width:340px;padding:7px 10px;font-size:13px;
+     border:1px solid var(--line);border-radius:7px;background:var(--card);
+     color:var(--fg);margin-bottom:10px}
+details{margin:5px 0}
+summary{cursor:pointer;font-size:13px}
+.layer{display:flex;gap:8px;align-items:flex-start;margin-bottom:6px}
+.layer b{min-width:74px;font-size:12px;color:var(--mut);padding-top:2px}
+.chain{font-size:12.5px;color:var(--mut)}
+.empty{color:var(--mut);padding:8px 2px}
+@media(max-width:640px){body{padding:16px 12px}}
+"""
+
+_JS = """
+const q = document.getElementById('q');
+if (q) q.addEventListener('input', () => {
+  const n = q.value.toLowerCase();
+  document.querySelectorAll('tbody tr[data-search]').forEach(tr => {
+    tr.hidden = n && !tr.dataset.search.includes(n);
+  });
+});
+"""
+
+
+def _e(v):
+    return html.escape("" if v is None else str(v))
+
+
+def _stat(value, label):
+    return f'<div class="stat"><b>{_e(value)}</b><span>{_e(label)}</span></div>'
+
+
+def write_map(project, frontier, history, path, title=None, summary_totals=None):
+    """Write the HTML map. Returns `path`."""
+    title = title or f"Codebase map -- {os.path.basename(project.root)}"
+    mods = project.modules
+    total_loc = sum(m.loc for m in mods)
+    parse_errors = [m for m in mods if m.error]
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # -- overview
+    stats = "".join([
+        _stat(len(mods), "modules"),
+        _stat(f"{total_loc:,}", "lines"),
+        _stat(len(project.entry_points), "entry points"),
+        _stat(len(project.orphans), "orphans"),
+        _stat(len(project.cycles), "import cycles"),
+        _stat(len(parse_errors), "will not parse"),
+    ])
+
+    # -- entry points
+    if project.entry_points:
+        rows = "".join(
+            f'<tr><td class="mono">{_e(n)}</td><td>'
+            + "".join(f'<span class="tag">{_e(r)}</span>' for r in why)
+            + "</td></tr>" for n, why in project.entry_points)
+        entry_html = (f'<div class="tablewrap"><table><thead><tr><th>Module</th>'
+                      f"<th>Why it looks like a start point</th></tr></thead>"
+                      f"<tbody>{rows}</tbody></table></div>")
+    else:
+        entry_html = ('<div class="card empty">No entry point found. Either this '
+                      'is a library meant to be imported, or the program that '
+                      'drove it is not in this directory.</div>')
+
+    # -- layers
+    layers = project.layers()
+    unplaced = sorted(set(project.by_dotted) - set().union(*layers.values())
+                      if layers else set(project.by_dotted))
+    layer_rows = []
+    for depth in sorted(layers):
+        names = layers[depth]
+        label = "entry points" if depth == 0 else f"depth {depth}"
+        chips = "".join(f'<span class="tag">{_e(n)}</span>' for n in sorted(names))
+        layer_rows.append(f'<div class="layer"><b>{label}</b><div>{chips}</div></div>')
+    if unplaced:
+        chips = "".join(f'<span class="tag warn">{_e(n)}</span>' for n in unplaced)
+        layer_rows.append(f'<div class="layer"><b>unreached</b><div>{chips}</div></div>')
+    layers_html = f'<div class="card">{"".join(layer_rows) or "<span class=empty>No import structure found.</span>"}</div>'
+
+    # -- dependency table
+    fan = project.fan()
+    dep_rows = []
+    for name, out_n, in_n in fan:
+        imports = sorted(project.imports.get(name, ()))
+        ext = sorted(project.external.get(name, ()))[:8]
+        dep_rows.append(
+            f'<tr data-search="{_e((name + " " + " ".join(imports) + " " + " ".join(ext)).lower())}">'
+            f'<td class="mono">{_e(name)}</td>'
+            f'<td class="num">{in_n}</td><td class="num">{out_n}</td>'
+            f'<td>{"".join(f"<span class=tag>{_e(i)}</span>" for i in imports) or "<span class=sub>-</span>"}</td>'
+            f'<td>{"".join(f"<span class=tag>{_e(i)}</span>" for i in ext) or "<span class=sub>-</span>"}</td></tr>')
+    dep_html = (f'<div class="tablewrap"><table><thead><tr><th>Module</th>'
+                f"<th>Used&nbsp;by</th><th>Uses</th><th>Internal imports</th>"
+                f"<th>External</th></tr></thead><tbody>{''.join(dep_rows)}"
+                f"</tbody></table></div>")
+
+    # -- cycles
+    if project.cycles:
+        items = "".join(f'<li class="mono">{_e(" -> ".join(c))}</li>'
+                        for c in project.cycles[:20])
+        cycles_html = f'<div class="card"><ul>{items}</ul></div>'
+    else:
+        cycles_html = '<div class="card empty">No import cycles.</div>'
+
+    # -- frontier
+    hot = [r for r in frontier if r["score"] > 0]
+    top = max((r["score"] for r in hot), default=1) or 1
+    f_rows = []
+    for r in hot:
+        width = max(3, round(100 * r["score"] / top))
+        chips = "".join(
+            f'<span class="tag {"hot" if k in ("syntax_error","not_implemented","stub_pass","stub_ellipsis","orphan") else "warn"}">'
+            f"{_e(k.replace('_', ' '))} {v}</span>"
+            for k, v in sorted(r["counts"].items(), key=lambda kv: -kv[1]))
+        detail = []
+        for kind, hits in sorted(r["signals"].items()):
+            for text, lineno in hits[:6]:
+                where = f":{lineno}" if lineno else ""
+                detail.append(f'<div class="chain mono">{_e(kind)}{_e(where)} &mdash; {_e(text)}</div>')
+        body = ("<details><summary>evidence</summary>" + "".join(detail) + "</details>"
+                if detail else "")
+        f_rows.append(
+            f'<tr data-search="{_e((r["module"] + " " + " ".join(r["counts"])).lower())}">'
+            f'<td class="mono">{_e(r["module"])}</td>'
+            f'<td class="num">{r["loc"]}</td>'
+            f'<td class="num">{r["score"]}<br><span class="bar" style="width:{width}px"></span></td>'
+            f"<td>{chips}{body}</td></tr>")
+    frontier_html = (f'<div class="tablewrap"><table><thead><tr><th>Module</th>'
+                     f"<th>LOC</th><th>Score</th><th>Signals</th></tr></thead>"
+                     f"<tbody>{''.join(f_rows) or '<tr><td class=empty colspan=4>No unfinished-work signals found.</td></tr>'}"
+                     f"</tbody></table></div>")
+
+    # -- history
+    if history.get("available"):
+        tl = history["timeline"]
+        tl_rows = "".join(
+            f'<tr><td class="mono">{_e(month)}</td><td class="num">{len(paths)}</td>'
+            f'<td>{"".join(f"<span class=tag>{_e(os.path.basename(p))}</span>" for p in paths[:14])}</td></tr>'
+            for month, paths in tl.items())
+        cc_rows = "".join(
+            f'<tr><td class="num">{n}&times;</td><td class="mono">{_e(a)}</td>'
+            f'<td class="mono">{_e(b)}</td></tr>'
+            for a, b, n in history["co_change"][:20])
+        st_rows = "".join(
+            f'<tr><td class="mono">{_e(r["path"])}</td><td class="num">{r["commits"]}</td>'
+            f'<td>{_e(r["first_seen"])}</td><td>{_e(r["last_touched"])}</td>'
+            f'<td class="num">{r["days_quiet"]}</td><td>{_e(r["last_subject"][:70])}</td></tr>'
+            for r in history["stalled"][:20])
+        history_html = f"""
+<p class="lede">Authors in this history: {", ".join(_e(a) for a in history["authors"])}.</p>
+<h3 style="font-size:13.5px;margin:14px 0 4px">When each file first appeared</h3>
+<div class="tablewrap"><table><thead><tr><th>Month</th><th>New files</th>
+<th>Which</th></tr></thead><tbody>{tl_rows}</tbody></table></div>
+<h3 style="font-size:13.5px;margin:14px 0 4px">Files that change together</h3>
+<p class="lede">Repeated co-editing marks the code's real seams, which the
+directory layout often hides.</p>
+<div class="tablewrap"><table><thead><tr><th>Commits</th><th>File</th>
+<th>Changed with</th></tr></thead><tbody>{cc_rows or '<tr><td class=empty colspan=3>No file pair changed together more than once.</td></tr>'}</tbody></table></div>
+<h3 style="font-size:13.5px;margin:14px 0 4px">Started and left alone</h3>
+<p class="lede">Few commits and nothing since. Finished code gets revisited;
+abandoned code does not get started again.</p>
+<div class="tablewrap"><table><thead><tr><th>File</th><th>Commits</th>
+<th>First seen</th><th>Last touched</th><th>Days quiet</th><th>Last commit said</th>
+</tr></thead><tbody>{st_rows or '<tr><td class=empty colspan=6>Nothing stalled.</td></tr>'}</tbody></table></div>
+"""
+    else:
+        history_html = (f'<div class="card empty">No version history available &mdash; '
+                        f'{_e(history.get("reason", "unknown"))}. The rest of this '
+                        f"map is unaffected; only the chronology is missing.</div>")
+
+    # -- unreferenced
+    unref = project.unreferenced
+    u_rows = "".join(
+        f'<tr data-search="{_e((u["module"] + " " + u["name"]).lower())}">'
+        f'<td class="mono">{_e(u["module"])}</td><td class="mono">{_e(u["name"])}</td>'
+        f'<td>{_e(u["kind"])}</td><td class="num">{u["lineno"]}</td>'
+        f'<td class="sub">{_e(u["caveat"] or "")}</td></tr>' for u in unref[:400])
+
+    errors_html = ""
+    if parse_errors:
+        rows = "".join(f'<tr><td class="mono">{_e(m.relpath)}</td>'
+                       f"<td>{_e(m.error)}</td></tr>" for m in parse_errors)
+        errors_html = (f'<h2>Files that will not parse <span class="n">'
+                       f'({len(parse_errors)})</span></h2>'
+                       f'<p class="lede">A file that cannot be parsed was either written '
+                       f"for a different Python version, or left mid-edit. Either way it "
+                       f"is a finding, not a gap.</p>"
+                       f'<div class="tablewrap"><table><thead><tr><th>File</th>'
+                       f"<th>Problem</th></tr></thead><tbody>{rows}</tbody></table></div>")
+
+    doc = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>{_e(title)}</title><style>{_CSS}</style></head><body><div class="wrap">
+<h1>{_e(title)}</h1>
+<div class="sub">{_e(project.root)} &middot; mapped {stamp} by cobblerpy</div>
+<div class="stats">{stats}</div>
+
+<div class="note"><span class="proven">Proven</span> &mdash; module structure,
+imports, definitions, entry points and unfinished-work signals are read
+directly from the syntax.
+<span class="inferred">Inferred</span> &mdash; reachability and "nothing uses
+this" are LOWER BOUNDS. Python reaches code through dispatch tables, getattr,
+decorators, plugin registries and framework callbacks, none of which a parser
+can follow. Treat every such finding as "no static path was found", never as
+"dead".</div>
+
+<input type="search" id="q" placeholder="Filter the tables below...">
+
+<h2>Where it starts</h2>
+<p class="lede">Execution begins here. The reason is given because the evidence
+varies in strength: a <code>__main__</code> guard is near-certain, a suggestive
+filename is not.</p>
+{entry_html}
+
+<h2>How far each module sits from a start point</h2>
+<p class="lede">Shortest import path from an entry point. Roughly, how close a
+module is to the top of the program &mdash; and a reasonable reading order.</p>
+{layers_html}
+
+<h2>What depends on what <span class="n">({len(mods)} modules)</span></h2>
+{dep_html}
+
+<h2>Import cycles <span class="n">({len(project.cycles)})</span></h2>
+<p class="lede">Cycles usually mark a design that drifted rather than one that
+was planned, and they are where refactoring hurts most.</p>
+{cycles_html}
+
+<h2>Where the work stopped <span class="n">({len(hot)} modules with signals)</span></h2>
+<p class="lede">Ranked by weighted signal count. Read top-down, this is the order
+in which someone inheriting this code should look at it. Each signal is a fact
+about the source; whether it means the work is unfinished is your call, and the
+evidence is attached so you can make it quickly.</p>
+{frontier_html}
+
+{errors_html}
+
+<h2>What the history says</h2>
+{history_html}
+
+<h2>Defined but never referenced here <span class="n">({len(unref)})</span></h2>
+<p class="lede">No other code in this tree mentions these names. That is an
+observation, not a verdict &mdash; the caveat column says why each one might
+still be live.</p>
+<div class="tablewrap"><table><thead><tr><th>Module</th><th>Name</th><th>Kind</th>
+<th>Line</th><th>Might still be live because</th></tr></thead>
+<tbody>{u_rows or '<tr><td class=empty colspan=5>Everything defined here is referenced somewhere.</td></tr>'}</tbody></table></div>
+
+</div><script>{_JS}</script></body></html>"""
+
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(doc)
+    return path

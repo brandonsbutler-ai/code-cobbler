@@ -1,0 +1,174 @@
+"""Where the previous developer stopped, and what they meant to come back to.
+
+This is the part of the tool that earns its keep. Structure can be read from
+any codebase; what someone inheriting an unfinished one actually needs is a map
+of the frontier -- the places where work was started and left.
+
+Every signal here is a FACT ABOUT THE SOURCE, not a judgement. A `pass` body is
+a `pass` body; whether it is a deliberate no-op or an abandoned stub is for the
+reader to decide, and the tool's job is to put it in front of them with enough
+context to decide quickly. Signals carry a weight so they can be ranked, and a
+note saying what would make the signal innocent.
+"""
+
+import os
+from collections import defaultdict
+
+# weight, label, and the innocent explanation that must be offered alongside
+SIGNALS = {
+    "todo": (3, "explicit TODO/FIXME left in a comment",
+             "some teams use these as permanent annotations"),
+    "stub_pass": (4, "function body is only `pass`",
+                  "may be a deliberate no-op or an interface placeholder"),
+    "stub_ellipsis": (4, "function body is only `...`",
+                      "normal in .pyi stubs and Protocol definitions"),
+    "not_implemented": (5, "raises NotImplementedError",
+                        "expected in an abstract base class"),
+    "unused_import": (4, "imported but never used in the file",
+                      "may be re-exported deliberately, especially in __init__.py"),
+    "commented_code": (3, "a block of code left commented out",
+                       "sometimes kept as a worked example"),
+    "empty_except": (3, "exception caught and ignored",
+                     "occasionally intentional, but usually unfinished"),
+    "no_docstring": (1, "public definition with no docstring",
+                     "common in code that was never meant to be read by others"),
+    "promised_return": (3, "docstring describes a return value the code never returns",
+                        "the docstring may simply be stale"),
+    "syntax_error": (6, "file does not parse",
+                     "may target a different Python version"),
+    "orphan": (4, "nothing imports it and nothing starts from it",
+               "may be run directly, or reached by a tool outside this tree"),
+    "unreached": (2, "no import path reaches it from any entry point",
+                  "reachability is static; frameworks and plugins are invisible to it"),
+}
+
+
+def _unused_imports(module):
+    """Imported names the file never mentions again.
+
+    The single most reliable trace of interrupted work: someone pulls in a
+    library, writes the import, and stops before using it.
+    """
+    out = []
+    if module.relpath.endswith("__init__.py"):
+        return out                        # re-exporting is the point there
+    for target, alias, lineno, _level in module.imports:
+        if alias == "*":
+            continue
+        head = alias.split(".")[0]
+        if head in module.names_used:
+            continue
+        # A module imported for its side effects, or used only in a string
+        # (type annotations under `from __future__ import annotations`).
+        if any(head in s for s in module.strings):
+            continue
+        if head in ("annotations", "__future__"):
+            continue
+        out.append((alias, target, lineno))
+    return out
+
+
+def _empty_excepts(module):
+    """`except: pass` -- an error someone decided not to deal with yet."""
+    import ast
+    if module.error or not module.source:
+        return []
+    out = []
+    try:
+        tree = ast.parse(module.source)
+    except SyntaxError:
+        return []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler):
+            continue
+        body = [n for n in node.body if not isinstance(n, ast.Pass)]
+        if not body:
+            out.append(node.lineno)
+    return out
+
+
+def analyse_module(module):
+    """Every abandonment signal in one module, with line numbers."""
+    found = defaultdict(list)
+
+    if module.error:
+        if module.error.startswith("syntax error"):
+            found["syntax_error"].append((module.error, 0))
+        return dict(found)
+
+    for tag, text, lineno in module.todos:
+        found["todo"].append((f"{tag}: {text}", lineno))
+
+    for d in module.definitions:
+        if d.kind == "class":
+            continue
+        if d.body_kind == "pass":
+            found["stub_pass"].append((d.qualname, d.lineno))
+        elif d.body_kind == "ellipsis":
+            found["stub_ellipsis"].append((d.qualname, d.lineno))
+        elif d.body_kind == "raise":
+            found["not_implemented"].append((d.qualname, d.lineno))
+        if not d.docstring and not d.name.startswith("_") and d.kind != "method":
+            found["no_docstring"].append((d.qualname, d.lineno))
+        if (d.docstring and not d.returns and d.body_kind == "code"
+                and any(w in d.docstring.lower()
+                        for w in ("returns ", "return:", ":return", "-> "))):
+            found["promised_return"].append((d.qualname, d.lineno))
+
+    for alias, target, lineno in _unused_imports(module):
+        found["unused_import"].append((f"{alias} (from {target or 'import'})", lineno))
+
+    for lineno in module.commented_code:
+        found["commented_code"].append(("commented-out code", lineno))
+
+    for lineno in _empty_excepts(module):
+        found["empty_except"].append(("exception silently ignored", lineno))
+
+    return dict(found)
+
+
+def score(signals):
+    """Rank a module's frontier by weighted signal count."""
+    total = 0
+    for kind, hits in signals.items():
+        weight = SIGNALS.get(kind, (1,))[0]
+        # Diminishing returns: forty TODOs in one file is one situation, not
+        # forty, and without this a single noisy module buries everything else.
+        total += weight * (len(hits) ** 0.6)
+    return round(total, 1)
+
+
+def analyse_project(project):
+    """Abandonment signals for every module, ranked.
+
+    Returns a list of dicts sorted by score, highest first -- read top-down,
+    that is the order in which an inheritor should look at the code.
+    """
+    entry_names = {name for name, _ in project.entry_points}
+    rows = []
+    for module in project.modules:
+        key = module.dotted or module.relpath
+        signals = analyse_module(module)
+        if key in project.orphans:
+            signals["orphan"] = [("nothing imports this module", 0)]
+        elif key not in project.reachable and key not in entry_names:
+            signals["unreached"] = [("no static path from an entry point", 0)]
+        rows.append({
+            "module": key,
+            "relpath": module.relpath,
+            "loc": module.loc,
+            "score": score(signals),
+            "signals": signals,
+            "counts": {k: len(v) for k, v in signals.items()},
+        })
+    rows.sort(key=lambda r: (-r["score"], r["relpath"]))
+    return rows
+
+
+def summarise(rows):
+    """Totals per signal type across the project."""
+    totals = defaultdict(int)
+    for row in rows:
+        for kind, hits in row["signals"].items():
+            totals[kind] += len(hits)
+    return dict(sorted(totals.items(), key=lambda kv: -kv[1]))
