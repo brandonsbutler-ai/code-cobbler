@@ -168,7 +168,7 @@ Every option the command accepts. `--help` prints the same list.
 
 ```bash
 python3 -m unittest discover -s tests -v     # 84 tests, no pytest required
-python3 verify_e2e.py                        # 70 end-to-end claim checks
+python3 verify_e2e.py                        # 75 end-to-end claim checks
 ```
 
 `verify_e2e.py` checks the PRODUCT rather than its units. It builds a codebase whose every
