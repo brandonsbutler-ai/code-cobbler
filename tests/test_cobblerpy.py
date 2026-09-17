@@ -734,6 +734,77 @@ class TestMap(unittest.TestCase):
         # removing one changes nothing. Remove both and this goes red.
 
 
+class TestDeadEndNoise(unittest.TestCase):
+    """What the detector must NOT report, each measured against real code."""
+
+    def _ends(self, files):
+        from cobblerpy.deadends import find
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        return {d["qualname"] for d in find(s.project, s.modules_by_key, s.origins)}
+
+    def test_a_protocol_method_is_not_a_dead_end(self):
+        """An empty body inside a Protocol declares a shape.
+
+        The check looked at the DEFINITION's name -- `get`, `collect`, `run` --
+        when the thing that makes it idiomatic is the class it sits in. On one
+        real project six Protocol methods ranked above every actual stub.
+        """
+        found = self._ends({
+            "main.py": "import api\n\nif __name__ == '__main__':\n    api.go()\n",
+            "api.py": ("from typing import Protocol\n\n"
+                       "class Transport(Protocol):\n"
+                       "    def get(self, url): ...\n\n"
+                       "def go():\n    return 1\n"),
+        })
+        self.assertNotIn("Transport.get", found)
+
+    def test_an_abstract_method_is_not_a_dead_end(self):
+        found = self._ends({
+            "main.py": "import api\n\nif __name__ == '__main__':\n    api.go()\n",
+            "api.py": ("from abc import ABC, abstractmethod\n\n"
+                       "class Base(ABC):\n"
+                       "    @abstractmethod\n"
+                       "    def collect(self): ...\n\n"
+                       "def go():\n    return 1\n"),
+        })
+        self.assertNotIn("Base.collect", found)
+
+    def test_a_stub_in_a_test_module_is_not_a_dead_end(self):
+        """45 of 49 dead-ends across four real codebases were in tests.
+
+        They are fakes and doubles written on purpose. A reader inheriting a
+        codebase should never be told to start reading at one, and with them
+        in the list they WERE the list.
+        """
+        found = self._ends({
+            "main.py": "import api\n\nif __name__ == '__main__':\n    api.go()\n",
+            "api.py": "def go():\n    return 1\n",
+            "tests/test_api.py": ("class FakeClient:\n"
+                                  "    def send(self):\n        pass\n"),
+        })
+        self.assertNotIn("FakeClient.send", found)
+
+    def test_an_empty_init_is_not_a_dead_end(self):
+        """A class with nothing to initialise writes exactly this."""
+        found = self._ends({
+            "main.py": "import api\n\nif __name__ == '__main__':\n    api.go()\n",
+            "api.py": ("class Holder:\n    def __init__(self):\n        pass\n\n"
+                       "def go():\n    return Holder()\n"),
+        })
+        self.assertNotIn("Holder.__init__", found)
+
+    def test_a_real_stub_is_still_reported(self):
+        """Tightening creates false negatives; this is the guard against it."""
+        found = self._ends({
+            "main.py": "import api\n\nif __name__ == '__main__':\n    api.go()\n",
+            "api.py": ("def go():\n    return remediate(1)\n\n"
+                       "def remediate(finding):\n    pass\n"),
+        })
+        self.assertIn("remediate", found)
+
+
 class TestEvidenceCompleteness(unittest.TestCase):
     """A chip's count and the evidence behind it must not disagree silently."""
 
