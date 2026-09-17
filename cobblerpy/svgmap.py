@@ -14,7 +14,7 @@ through registries and getattr, while the others are read from the syntax.
 import html
 import json
 
-from .layout import NODE_H, NODE_W, state_of
+from .layout import BAR_H, NODE_H, NODE_W, state_of
 
 def state_for(node, name, project, deadends_by_module):
     """The state one module is in, for callers outside this module.
@@ -198,6 +198,13 @@ def render(graph, project, frontier_by_module, snippets_by_module,
         record = hist_files.get(relpath, {})
         authors = record.get("authors") or []
         owner = authors[0] if authors else "no history"
+        carries_on = continues_from.get(name)
+        spot = placed.get(name)
+        x = spot["x"] if spot else node["x"]
+        y = spot["y"] if spot else node["y"]
+        w = spot["w"] if spot else NODE_W
+        h = spot["h"] if spot else NODE_H
+        share = spot["share"] if spot else 0.0
         # Kept as drawn, keyed by module. The payload is assembled in a
         # SECOND loop below, where these names still exist but hold the last
         # card drawn -- every module briefly carried the same card because of
@@ -209,14 +216,8 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             "marks": marks,
             "title": f"{relpath} \u00b7 {size} \u00b7 {owner}",
             "stroke": stroke,
+            "share": share,
         }
-        carries_on = continues_from.get(name)
-        spot = placed.get(name)
-        x = spot["x"] if spot else node["x"]
-        y = spot["y"] if spot else node["y"]
-        w = spot["w"] if spot else NODE_W
-        h = spot["h"] if spot else NODE_H
-        compact = bool(spot and spot["small"])
         node_svg.append(
             f'<g class="node" data-name="{_e(name)}" data-state="{state}" '
             + (f'data-continues="{_e(carries_on["to"])}" ' if carries_on else "")
@@ -229,29 +230,32 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             # cut-out and the glowing edge is what carries the state.
             f'<rect class="card" x="{x}" y="{y}" width="{w}" '
             f'height="{h}" rx="8" stroke="{stroke}"/>'
-            # A short module gets a short card with its name on it and
-            # nothing else. The folder is drawn around it now, and the line
-            # count is the width -- so on a compact card both of those lines
-            # were repeating what the shape already said.
-            + (f'<text class="fname" x="{x + 9}" y="{y + 22}">'
-               f'{_e(_fit(filename, int((w - 18) / 7.4), keep_end=7))}</text>'
-               if compact else
-               f'<text class="fname" x="{x + 9}" y="{y + 22}">'
-               f'{_e(_fit(filename, int((w - 18) / 7.4), keep_end=7))}</text>'
-               f'<text class="meta" x="{x + 9}" y="{y + 40}">'
-               f'{_e(_fit(location, int((w - 18) / 6.2)))}</text>'
-               # Size and owner share a line: two facts, one row, and the
-               # card loses a quarter of its height.
-               f'<text class="meta owner" x="{x + 9}" y="{y + 56}">'
-               f'{_e(_fit(size + "  \u00b7  " + owner, int((w - 18) / 6.2)))}</text>')
-            + (f'<text class="badge" x="{x + w - 9}" y="{y + h - 8}" '
+            f'<text class="fname" x="{x + 9}" y="{y + 21}">'
+            f'{_e(_fit(filename, int((w - 18) / 7.4), keep_end=7))}</text>'
+            f'<text class="meta" x="{x + 9}" y="{y + 38}">'
+            f'{_e(_fit(location, int((w - 18) / 6.2)))}</text>'
+            # Size and owner share a line: two facts, one row, and the card
+            # loses a quarter of its height.
+            f'<text class="meta owner" x="{x + 9}" y="{y + 53}">'
+            f'{_e(_fit(size + "  \u00b7  " + owner, int((w - 18) / 6.2)))}</text>'
+            # How long the module is, as a length rather than as a shape.
+            # Every bar starts at the same x on every card, so a column of
+            # them reads like a chart. Sizing each card individually encoded
+            # the same fact, lined up with nothing, and read as a badly built
+            # brick wall.
+            f'<rect class="barbed" x="{x + 9}" y="{y + h - 12}" '
+            f'width="{w - 18}" height="{BAR_H}" rx="1.5"/>'
+            + (f'<rect class="bar" x="{x + 9}" y="{y + h - 12}" '
+               f'width="{max(2, round((w - 18) * share)):.0f}" '
+               f'height="{BAR_H}" rx="1.5" fill="{stroke}"/>' if share else "")
+            + (f'<text class="badge" x="{x + w - 9}" y="{y + h - 18}" '
                f'text-anchor="end">{badge_origin}</text>'
-               if badge_origin and not compact else "")
+               if badge_origin else "")
             + (f'<text class="marks" x="{x + w - 9}" '
-               f'y="{y + 20}" text-anchor="end">{marks}</text>'
+               f'y="{y + 19}" text-anchor="end">{marks}</text>'
                if marks else "")
             + (f'<text class="continues-mark" x="{x + w - 10}" '
-               f'y="{y + h - 7}" text-anchor="end">&#8594;&#8230;</text>'
+               f'y="{y + h - 18}" text-anchor="end">&#8594;&#8230;</text>'
                f'<title>this one stops; {_e(carries_on["relpath"])} is doing '
                f'the same work ({_e(", ".join(carries_on["shared"]))})</title>'
                if carries_on else "")
@@ -296,7 +300,7 @@ def render(graph, project, frontier_by_module, snippets_by_module,
     else:
         width, height = graph["width"], graph["height"]
 
-    svg = f"""<svg id="graph" viewBox="0 0 {width} {height}"
+    svg = f"""<svg id="graph" class="chart" viewBox="0 0 {width} {height}"
      width="{width}" height="{height}"
      xmlns="http://www.w3.org/2000/svg" role="img"
      aria-label="module dependency map">
