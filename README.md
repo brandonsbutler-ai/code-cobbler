@@ -94,7 +94,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 53 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 58 tests, no pytest required
 python3 verify_e2e.py                        # 62 end-to-end claim checks
 ```
 

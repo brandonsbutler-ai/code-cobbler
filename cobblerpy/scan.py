@@ -53,10 +53,10 @@ class Definition:
     """A function or class defined in a module."""
 
     __slots__ = ("name", "kind", "lineno", "end_lineno", "args", "docstring",
-                 "decorators", "is_async", "parent", "body_kind", "returns")
+                 "decorators", "is_async", "parent", "body_kind", "returns", "bases")
 
     def __init__(self, name, kind, lineno, end_lineno, args, docstring,
-                 decorators, is_async, parent, body_kind, returns):
+                 decorators, is_async, parent, body_kind, returns, bases=()):
         self.name = name
         self.kind = kind                  # "function" | "method" | "class"
         self.lineno = lineno
@@ -68,6 +68,11 @@ class Definition:
         self.parent = parent              # enclosing class, if any
         self.body_kind = body_kind        # "code" | "pass" | "ellipsis" | "raise"
         self.returns = returns            # True when any return carries a value
+        # Base class names as written: its own for a class, its enclosing
+        # class's for a method. An empty body inside a Protocol or an ABC is
+        # idiomatic, and without this the dead-end report put six Protocol
+        # methods above every real stub in the project.
+        self.bases = tuple(bases)
 
     @property
     def qualname(self):
@@ -136,6 +141,7 @@ class _Visitor(ast.NodeVisitor):
     def __init__(self, module):
         self.m = module
         self._class_stack = []
+        self._base_stack = []
 
     # -- imports ---------------------------------------------------------
     def visit_Import(self, node):
@@ -198,6 +204,12 @@ class _Visitor(ast.NodeVisitor):
             decorators=[_name_of(d) for d in node.decorator_list],
             is_async=is_async,
             parent=parent,
+            # For a class, its own bases. For a method, the bases of the class
+            # that contains it -- which is what decides whether an empty body
+            # is idiomatic.
+            bases=([_name_of(b) for b in node.bases]
+                   if isinstance(node, ast.ClassDef)
+                   else (self._base_stack[-1] if self._base_stack else [])),
             body_kind=self._body_kind(node),
             returns=returns,
         ))
@@ -213,7 +225,9 @@ class _Visitor(ast.NodeVisitor):
     def visit_ClassDef(self, node):
         self._record_def(node, "class")
         self._class_stack.append(node.name)
+        self._base_stack.append([_name_of(b) for b in node.bases])
         self.generic_visit(node)
+        self._base_stack.pop()
         self._class_stack.pop()
 
     # -- references ------------------------------------------------------
