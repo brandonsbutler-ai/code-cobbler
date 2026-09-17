@@ -1533,6 +1533,9 @@ class TestTrace(unittest.TestCase):
                   origins=s.origins, modules_by_key=s.modules_by_key)
         with open(out, encoding="utf-8") as fh:
             doc = fh.read()
+        # Kept for tests that must assert about the STYLESHEET, not just the
+        # markup -- a vein's paint is decided by the cascade, not by the tag.
+        self._doc = doc
         js = re.findall(r"<script>(.*?)</script>", doc, re.S)[-1]
         stub = """
 const made = {};
@@ -1905,13 +1908,27 @@ console.log(JSON.stringify({markup: document.getElementById('trace').innerHTML})
         states = dict(re.findall(r'data-name="([^"]+)" data-state="([^"]+)"', markup))
         self.assertEqual(states.get("lib"), "live")
         self.assertEqual(states.get("work"), "unfinished")
-        # every vein carries a condition gradient, none the old flat stroke
+        # Every vein carries a condition gradient as an INLINE STYLE, not as a
+        # presentation attribute -- and that distinction is the whole test.
+        #
+        # A presentation attribute loses to ANY stylesheet declaration, and the
+        # trace <svg> itself carries class="chart", so `.chart .edge{stroke:...}`
+        # matched every vein and repainted it flat grey. The markup was right and
+        # the render was wrong: getComputedStyle in a real browser returned
+        # rgb(38,43,54) on a path whose stroke attribute was url(#vein_...).
+        # An inline style beats a stylesheet rule, so the paint survives the
+        # cascade wherever the svg is nested.
         veins = re.findall(
-            r'<path class="edge"[^>]*stroke="url\(#(vein_[a-z]+_[a-z]+_\d+)\)"',
+            r'<path class="edge"[^>]*style="stroke:url\(#(vein_[a-z]+_[a-z]+_\d+)\)"',
             markup)
         self.assertTrue(veins, "no vein carries a condition gradient")
-        flat = re.findall(r'<path class="edge"(?![^>]*stroke="url\(#vein_)', markup)
+        flat = re.findall(
+            r'<path class="edge"(?![^>]*style="stroke:url\(#vein_)', markup)
         self.assertEqual(flat, [], "a vein is not coloured by condition")
+        # ...and no stylesheet rule may out-rank it with !important.
+        self.assertNotRegex(
+            self._doc, r"\.(chart|edge)[^{}]*\{[^{}]*stroke:[^;}]*!important",
+            "an !important stroke rule would beat the inline gradient")
         # the lib->work vein flows live -> unfinished
         crossing = [v for v in veins if v.startswith("vein_live_unfinished_")]
         self.assertTrue(crossing, f"no live->unfinished vein among {veins}")
