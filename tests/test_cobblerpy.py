@@ -734,6 +734,49 @@ class TestMap(unittest.TestCase):
         # removing one changes nothing. Remove both and this goes red.
 
 
+class TestEvidenceCompleteness(unittest.TestCase):
+    """A chip's count and the evidence behind it must not disagree silently."""
+
+    def test_a_truncated_evidence_list_says_how_many_it_left_out(self):
+        """The list is capped at six per kind; the chip shows the true count.
+
+        A reader who opens the evidence to check a chip reading "commented
+        code 7" counted six lines and could not tell whether the count was
+        wrong or the list was short.
+        """
+        body = "\n".join(f"# x = {i}" for i in range(9))
+        t = Tree({
+            "main.py": "import mod\n\nif __name__ == '__main__':\n    mod.go()\n",
+            "mod.py": f"{body}\n\ndef go():\n    return 1\n",
+        })
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            page = Page(fh.read())
+        listed = page.text.count("commented_code:")
+        self.assertEqual(listed, 6, "the cap itself changed; update this test")
+        self.assertIn("and 3 more commented code", page.text)
+
+    def test_an_untruncated_list_says_nothing_extra(self):
+        t = Tree({
+            "main.py": "import mod\n\nif __name__ == '__main__':\n    mod.go()\n",
+            "mod.py": "# x = 1\n# y = 2\n\ndef go():\n    return 1\n",
+        })
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            page = Page(fh.read())
+        self.assertNotIn("more commented code", page.text)
+
+
 class TestExport(unittest.TestCase):
     def _graph(self, tree):
         from cobblerpy.layout import compute
