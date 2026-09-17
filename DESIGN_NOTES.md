@@ -320,3 +320,53 @@ and matching effects together, which a repository small enough to build inside a
 not generate. A unit test that drove `find()` over such a fixture asserted against an empty list
 and passed with the filter deleted; it was removed rather than kept green. The evidence for both
 gates is the measurement above.
+
+
+---
+
+## Who this is for (the author, 2026-09-17)
+
+Recorded because it changes what "done" means for several features, and because the tool had
+been drifting towards being a general codebase-describer rather than something aimed at anyone
+in particular.
+
+> "The CobblerPy is going to be used by a company that uses python heavily for development.
+> Lets imagine that they are a software shop that is building for customers in the healthcare
+> industry, they have a pretty high turnover rate for their developers, and that was the call to
+> arms for this product, they were dissapointed in how many streams of code they had to just
+> abandon because their developers kept leaving when they were mid stream, and the new developers
+> werent able to 'pick up where the last guy left off' so they had a ton of abandoned code, all
+> of it written with a different developers preference, and when the new developer came in, they
+> would try to pick it up, but would end up just starting over, so now, with 4 full fresh
+> restarts of half completed code built up, they need a solution that will be able to better
+> illustrate the previous trains of thought and could recommend a path forward. This both
+> prevents a full restart, and gives the new developer confidence that he is on the right path,
+> along with cutting down on the time to completion/ROI on picking up the code rather than
+> re-writing."
+
+Four things follow from it, in order of how badly the tool currently falls short.
+
+**1. Competing attempts are not detected at all.** The stated situation is four restarts of ONE
+effort. Everything in the tool today looks at one module at a time, or at one module and its
+successor. Nothing says "these four files are the same job, attempted four times". That is the
+single most valuable thing it could say to this customer and it cannot say it.
+
+**2. There is no recommendation.** The frontier is a ranked list of facts. Ranked facts are not a
+path forward, and the brief asks for one explicitly. A recommendation here does not mean guessing
+motive -- that stays out. It means: of the attempts at this job, THIS one is furthest along, here
+is what it still lacks, and here is what the others have that it does not.
+
+**3. Confidence is the actual product.** "Gives the new developer confidence that he is on the
+right path." A rewrite is rarely a technical decision; it is what a developer does when they
+cannot tell whether continuing is safe. Every finding therefore has to carry its evidence in a
+form the reader can check in seconds, because a recommendation nobody can verify buys nothing --
+they will rewrite anyway and be right to.
+
+**4. Style varies by author, so style cannot be a signal.** "All of it written with a different
+developers preference." Anything keyed on naming conventions, formatting or docstring habits will
+read four authors as four qualities of work. Signals must be structural.
+
+### Not for this customer
+
+Motive still stays out. "Why did they stop" is not recoverable and a guess at it would undermine
+the one thing the brief actually asks for, which is grounds for trusting the rest.
