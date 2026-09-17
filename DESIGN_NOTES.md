@@ -57,6 +57,30 @@ wikis. Costs almost nothing to emit and means the map can live in a repository's
 
 ---
 
+### A detector is only as good as its false-positive rate, and that has to be measured
+
+Three of this tool's own detectors were wrong most of the time, and none of them was
+detectably wrong from reading the code. Each was found by running the tool over two real
+trees and checking every finding against the source.
+
+| Detector | Was | Is | What was wrong |
+|---|---|---|---|
+| tagged comments | 641 on the corpus | 75 | `tag in text.upper()` — TEMP hides in "attempts", BUG in "debug", NOTE in "DESIGN_NOTES" |
+| promised return | 165 | 7 | the word "returns" anywhere in a docstring, including prose about what something else returns |
+| commented-out code | 22 | 15 | trailing annotations counted as disabled code |
+| unused import | 11 (this repo) | 0 | four were already marked `# noqa: F401` |
+| unreachable | 369 `maybe` | 57 | modules a named tool loads were not treated as places execution begins |
+
+The findings feed the score that ranks where the work stopped, so a detector that is 90%
+noise does not merely add rows — it reorders the list somebody reads first.
+
+**The rule that follows:** a finding the reader can dismiss in five seconds teaches them to
+dismiss the next one, and the next one might be true. Precision is not a nicety here; it is
+the whole basis on which anything else in the report gets believed.
+
+**And measure it on real trees.** Every one of these passed its unit tests. The corpus —
+975 modules of somebody's real, half-finished work — is what showed the rate.
+
 ### Colour has to mean something specific
 
 Green and red imply a judgement, so the legend must say exactly what each colour is derived from,

@@ -817,6 +817,38 @@ def verify_documentation():
     for name in ("README.md", "DESIGN_NOTES.md", "LICENSE", "pyproject.toml"):
         check(f"{name} is present", os.path.isfile(os.path.join(ROOT, name)))
 
+    # The install and build instructions are claims about files in this repo,
+    # and they are the claims a reader acts on FIRST -- before they have any
+    # reason to doubt the tool. A README that names the wrong executable is
+    # the first thing somebody meets and the last thing anyone re-reads.
+    with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as _fh:
+        _readme = _fh.read()
+    with open(os.path.join(ROOT, "pyproject.toml"), "rb") as _fh:
+        _proj = tomllib.load(_fh)["project"]
+    check("the README quotes the real minimum Python version",
+          _proj["requires-python"].lstrip(">=").split(",")[0] in _readme,
+          _proj["requires-python"])
+    _scripts = set(_proj.get("scripts") or {})
+    check("the README names the commands the package installs",
+          all(name in _readme for name in _scripts), sorted(_scripts))
+    _extras = set(_proj.get("optional-dependencies") or {})
+    check("the README names the optional extra the window needs",
+          all(f"[{name}]" in _readme for name in _extras), sorted(_extras))
+
+    with open(os.path.join(ROOT, "packaging", "build_standalone.py"),
+              encoding="utf-8") as _fh:
+        _builder = _fh.read()
+    _names = dict(re.findall(r'^(CLI_NAME|APP_NAME) = "([^"]+)"', _builder, re.M))
+    check("the builder defines both executable names", len(_names) == 2, _names)
+    for _which, _name in sorted(_names.items()):
+        check(f"the README names the {_which.split('_')[0].lower()} executable "
+              f"the build produces ({_name}), for both platforms",
+              f"dist/{_name}" in _readme and f"dist\\{_name}" in _readme, _name)
+    check("the README says a Windows build produces an .exe",
+          '.exe' in _readme and 'name + ".exe"' in _builder)
+    check("the README says where the Linux desktop entry goes",
+          "cobblerpy.desktop" in _readme and "cobblerpy.desktop" in _builder)
+
     # The colour table in DESIGN_NOTES is a claim about what the map draws. It
     # described a four-colour vocabulary (green/amber/red/grey) for a long
     # while after the map had moved to seven named states, which is the exact
