@@ -271,7 +271,7 @@ function snippet(sn){
       const cls = hit ? ' class="hit"' : '';
       const note = hit ? '   <span class="ln">&lt;-- ' + esc(hit.join('; ')) + '</span>' : '';
       out += '<span' + cls + '><span class="ln">' + String(n).padStart(4) + '</span>  '
-           + esc(line) + note + '</span>\n';
+           + esc(line) + note + '</span>\\n';
     });
     out += '</pre>';
     prev = r.start + r.lines.length - 1;

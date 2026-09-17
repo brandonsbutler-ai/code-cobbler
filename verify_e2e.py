@@ -481,6 +481,77 @@ def verify_map_and_exports(root, workdir):
     _dangling = sorted(_reached - _declared)
     check("every element the script reaches for exists",
           not _dangling, _dangling)
+    # THE SCRIPT HAS TO PARSE. This is the check that was missing.
+    #
+    # _JS is a plain triple-quoted Python string, so a backslash-n written in
+    # it becomes a REAL NEWLINE in the emitted JavaScript. One sat inside a
+    # string literal, which made the whole script a syntax error -- so no
+    # click, no panel and no hover dimming worked on any map this tool has
+    # ever produced. Every existing check passed throughout, because they all
+    # read the PAYLOAD and the MARKUP, and a payload is perfectly valid inside
+    # a script that never runs.
+    #
+    # Two checks, because neither alone is enough: a string literal must not
+    # span a line (which needs nothing installed), and where node is available
+    # the script is actually executed against a stub DOM.
+    _own_js = "".join(re.findall(r"<script>(.*?)</script>", _svg, re.S)[-1:])
+    def _spans_a_line(line):
+        """True when a quote opens on this line and does not close on it.
+
+        Counting quotes is not enough: an apostrophe inside a double-quoted
+        string, or a double quote inside a single-quoted one, makes the count
+        odd on a line that is perfectly fine. This walks the line instead,
+        tracking which quote opened the string and honouring backslashes.
+        """
+        quote, i = None, 0
+        while i < len(line):
+            ch = line[i]
+            if quote:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = None
+            elif ch in "'\"":
+                quote = ch
+            elif ch == "/" and line[i:i + 2] == "//":
+                break
+            i += 1
+        return quote is not None
+
+    _unterminated = [f"line {_n}: {_line.strip()[:60]}"
+                     for _n, _line in enumerate(_own_js.splitlines(), 1)
+                     if _spans_a_line(_line)]
+    check("no string literal in the map's script spans a line",
+          not _unterminated, _unterminated[:3])
+
+    if shutil.which("node"):
+        _ids = list(set(re.findall(r'id="([^"]+)"', _svg)))
+        _stub = ("const made={};function el(i){if(!made[i])made[i]={id:i,"
+                 "textContent:'',innerHTML:'',dataset:{},classList:{toggle(){},"
+                 "remove(){},contains(){return false}},addEventListener(){},"
+                 "scrollTop:0,scrollIntoView(){},closest(){return null}};"
+                 "return made[i];}"
+                 f"const KNOWN=new Set({_ids});"
+                 "global.CSS={escape:s=>s};"
+                 "global.document={getElementById:i=>KNOWN.has(i)?el(i):null,"
+                 "querySelectorAll:()=>[],querySelector:()=>null,"
+                 "addEventListener(){}};")
+        _probe = ("\nconst _k=Object.keys(DATA)[0];openModule(_k);"
+                  "\nif(!document.getElementById('pbody').innerHTML.length)"
+                  "throw new Error('the panel rendered nothing');")
+        _tmp = os.path.join(workdir, "map_script.js")
+        with open(_tmp, "w", encoding="utf-8") as _fh:
+            _fh.write(_stub + "\n" + _own_js + _probe)
+        _r = subprocess.run(["node", _tmp], capture_output=True, text=True,
+                            timeout=300)
+        check("the map's script loads and a click fills the panel",
+              _r.returncode == 0,
+              (_r.stderr or "").strip().splitlines()[:2])
+    else:
+        check("node not installed, so the script was not executed", True,
+              "install node to have this checked properly")
+
     check("relations in the panel are followable",
           "data-goto" in _svg and "scrollIntoView" in _svg)
     check("the summary is embedded once, not twice",
