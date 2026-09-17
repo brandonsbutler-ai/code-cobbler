@@ -50,7 +50,33 @@ body{margin:0;background:var(--bg);color:var(--fg);padding:24px 16px;
 /* Geared for 1920. The old 1180px cap used 41% of a wide screen and left the
    graph in a letterbox; the tables are the widest thing here and they were
    the ones being squeezed. */
-.wrap{max-width:1680px;margin:0 auto}
+/* Chart left, detail right. The tables used to stack under the chart and the
+   page ran to ten thousand lines; now the selection has somewhere to appear
+   that the reader is already looking at. */
+.wrap{max-width:1900px;margin:0 auto;display:flex;gap:26px;align-items:flex-start}
+.left{flex:1 1 auto;min-width:0}
+#panel{flex:0 0 420px;position:sticky;top:18px;max-height:calc(100vh - 36px);
+       overflow:auto;background:var(--card);border:1px solid var(--line);
+       border-radius:10px}
+#panel .phead{position:sticky;top:0;background:var(--card);padding:13px 16px;
+       border-bottom:1px solid var(--line);border-radius:10px 10px 0 0}
+#panel .phead b{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+       font-size:13.5px;display:block}
+#panel #pbody{padding:14px 16px 20px}
+#panel h4{font-size:10.5px;letter-spacing:.9px;text-transform:uppercase;
+       color:var(--mut);margin:16px 0 6px}
+#panel h4:first-child{margin-top:0}
+#panel pre{background:var(--sunk);border:1px solid var(--line2);border-radius:6px;
+       padding:9px 11px;overflow:auto;font-size:11.5px;line-height:1.5;margin:0 0 8px}
+#panel table{font-size:11.5px}
+#panel .tablewrap{margin-bottom:6px}
+#panel a.goto{color:var(--accent);cursor:pointer;text-decoration:underline;
+       text-underline-offset:2px}
+#panel a.goto:hover{color:var(--fg)}
+#panel .de{background:var(--sunk);border-left:3px solid var(--hot);border-radius:6px;
+       padding:8px 11px;margin-bottom:7px;font-size:12px}
+@media(max-width:1180px){.wrap{display:block}
+  #panel{position:static;max-height:none;margin-top:20px;width:100%}}
 h1{font-size:22px;margin:0 0 2px}
 h2{font-size:16px;margin:30px 0 4px;color:var(--accent)}
 h2 .n{color:var(--mut);font-weight:400;font-size:13px}
@@ -115,6 +141,8 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
                   stroke-dasharray:7 5;opacity:.75}
 #graph .continues:hover{opacity:1;stroke-width:2.4}
 #graph marker#continues path{stroke:#ff6ec7}
+#graph .node.selected .card{stroke-width:3;
+                            filter:drop-shadow(0 0 11px currentColor)}
 #graph .node:hover .card{stroke-width:2.5;
                          filter:drop-shadow(0 0 9px currentColor)}
 /* Type size is NOT the lever for fitting more on screen. Shrinking the card
@@ -254,7 +282,6 @@ function snippet(sn){
 function openModule(name){
   const d = DATA[name];
   if(!d) return;
-  document.getElementById('dtitle').textContent = name;
   // The verdict leads. A card is clicked to answer one of two questions --
   // "is this where it goes" or "is this a dead end" -- and everything below
   // is the evidence for whichever one applies. Putting the facts first and
@@ -265,6 +292,9 @@ function openModule(name){
     h += '<div class="verdict ' + esc(v.kind) + '">'
        + '<b>' + esc(v.headline) + '</b>'
        + '<div class="ln">' + esc(v.detail) + '</div>'
+       + (v.other
+          ? '<div class="ln">the other side: <a class="goto" data-goto="'
+            + esc(v.otherModule || '') + '">' + esc(v.other) + '</a></div>' : '')
        + (v.shared && v.shared.length
           ? '<div class="ln">shares ' + esc(v.shared.join(', ')) + '</div>' : '')
        + (v.facts && v.facts.length
@@ -302,15 +332,30 @@ function openModule(name){
     }
   }
 
+  // Relations are LINKS, not text. Tracing what a module is tied to -- or
+  // what it was planned to be tied to -- is the reason somebody opens this
+  // panel, and reading a name they then have to hunt for on the chart is the
+  // opposite of tracing it.
+  const link = n => DATA[n]
+      ? '<a class="goto" data-goto="' + esc(n) + '">' + esc(n) + '</a>'
+      : esc(n);
   h += '<h4>Connections</h4><p class="facts">';
-  h += 'uses: ' + (d.uses.length ? d.uses.map(esc).join(', ') : 'nothing internal');
-  h += '<br>used by: ' + (d.used_by.length ? d.used_by.map(esc).join(', ') : 'nothing');
+  h += 'uses: ' + (d.uses.length ? d.uses.map(link).join(', ') : 'nothing internal');
+  h += '<br>used by: ' + (d.used_by.length ? d.used_by.map(link).join(', ') : 'nothing');
   if(d.external.length) h += '<br>external: ' + d.external.map(esc).join(', ');
   h += '</p>';
 
   h += '<h4>Source</h4>' + snippet(d.snippets);
-  document.getElementById('dbody').innerHTML = h;
-  document.getElementById('detail').showModal();
+  // Into the panel beside the chart. The old handler called showModal() on a
+  // dialog the page never contained, so clicking a module did nothing at all
+  // -- silently, because getElementById returns null and the exception dies
+  // in the handler.
+  document.getElementById('ptitle').textContent = name;
+  document.getElementById('phint').textContent = d.why || '';
+  document.getElementById('pbody').innerHTML = h;
+  document.querySelectorAll('#graph .node').forEach(
+    o => o.classList.toggle('selected', o.dataset.name === name));
+  document.getElementById('panel').scrollTop = 0;
 }
 
 document.querySelectorAll('#graph .node').forEach(g => {
@@ -330,8 +375,35 @@ document.querySelectorAll('#graph .node').forEach(g => {
   g.addEventListener('mouseleave', () =>
     document.querySelectorAll('#graph .node').forEach(o => o.classList.remove('dim')));
 });
-document.getElementById('dclose')?.addEventListener('click',
-  () => document.getElementById('detail').close());
+// Nothing selected: the panel shows the project. Pressing Escape returns to
+// it rather than leaving the reader on a module they have finished with.
+function showProject(){
+  document.getElementById('ptitle').textContent = 'project summary';
+  document.getElementById('phint').textContent = 'click a module for its detail';
+  document.getElementById('pbody').innerHTML =
+    document.getElementById('summarySource').innerHTML;
+  document.querySelectorAll('#graph .node').forEach(
+    o => o.classList.remove('selected'));
+}
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape') showProject();
+});
+showProject();          // the panel starts on the project
+
+// Following a relation selects it and brings it into view, so a trace is a
+// sequence of clicks rather than a search through the chart each time.
+document.addEventListener('click', e => {
+  const a = e.target.closest('.goto');
+  if(!a) return;
+  e.preventDefault();
+  const name = a.dataset.goto;
+  if(!name || !DATA[name]) return;
+  openModule(name);
+  const node = document.querySelector('#graph .node[data-name="'
+    + CSS.escape(name) + '"]');
+  if(node && node.scrollIntoView)
+    node.scrollIntoView({block: 'center', inline: 'center'});
+});
 
 const q = document.getElementById('q');
 if (q) q.addEventListener('input', () => {
@@ -731,10 +803,29 @@ abandoned code does not get started again.</p>
                        f'<div class="tablewrap"><table><thead><tr><th>File</th>'
                        f"<th>Problem</th></tr></thead><tbody>{rows}</tbody></table></div>")
 
+    # ONE panel, docked to the right of the chart.
+    #
+    # These tables used to stack below the map -- past ten thousand lines on a
+    # 975-module project -- so finding the row for the module you just clicked
+    # meant scrolling to hunt for it. The chart is the page now and the panel
+    # sits beside it: click a module and the panel holds that module, or leave
+    # nothing selected and it holds the project. Nothing is lost and nothing
+    # is stacked underneath.
+    summary_html = (
+        f'<h4>where the work stopped</h4>{frontier_html}'
+        f'<h4>the same job, started over</h4>{attempts_html}'
+        f'<h4>where the effort went instead</h4>{forks_html}'
+        f'<h4>what the history says</h4>{history_html}'
+        f'<h4>where it starts</h4>{entry_html}'
+        f'<h4>how far from a start point</h4>{layers_html}'
+        f'<h4>what depends on what</h4>{dep_html}'
+        f'<h4>import cycles</h4>{cycles_html}'
+        f'{errors_html}')
+
     doc = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>{_e(title)}</title><style>{_CSS}</style></head><body><div class="wrap">
+<title>{_e(title)}</title><style>{_CSS}</style></head><body><div class="wrap"><div class="left">
 <h1>{_e(title)}</h1>
 <div class="sub">{_e(project.root)} &middot; mapped {stamp} by cobblerpy</div>
 <div class="stats">{stats}</div>
@@ -763,65 +854,19 @@ work.</p>
 
 <input type="search" id="q" placeholder="Filter the tables below...">
 
-<h2>Where it starts</h2>
-<p class="lede">Execution begins here. The reason is given because the evidence
-varies in strength: a <code>__main__</code> guard is near-certain, a suggestive
-filename is not.</p>
-{entry_html}
+</div><!-- /left column -->
 
-<h2>How far each module sits from a start point</h2>
-<p class="lede">Shortest import path from an entry point. Roughly, how close a
-module is to the top of the program &mdash; and a reasonable reading order.</p>
-{layers_html}
-
-<h2>What depends on what <span class="n">({len(mods)} modules)</span></h2>
-{dep_html}
-
-<h2>Import cycles <span class="n">({len(project.cycles)})</span></h2>
-<p class="lede">Cycles usually mark a design that drifted rather than one that
-was planned, and they are where refactoring hurts most.</p>
-{cycles_html}
-
-<h2>Where the work stopped <span class="n">({len(hot)} modules with signals)</span></h2>
-<p class="lede">Ranked by weighted signal count. Read top-down, this is the order
-in which someone inheriting this code should look at it. Each signal is a fact
-about the source; whether it means the work is unfinished is your call, and the
-evidence is attached so you can make it quickly.</p>
-{frontier_html}
-
-<h2>The same job, started over <span class="n">({len(attempts)})</span></h2>
-<p class="lede">Modules that define enough of the same things to be attempts at
-one piece of work rather than separate pieces. The percentage is how much of
-what THAT FILE started is filled in &mdash; not a share of some finished
-feature &mdash; and the facts behind it are beside it. Matching is on shared
-definition names and never on style, because each attempt was written to a
-different developer's taste and scoring that would rank the tidiest author
-rather than the furthest-advanced work.</p>
-{attempts_html}
-
-<h2>Where the effort went instead <span class="n">({len(forks)})</span></h2>
-<p class="lede"><strong>A hypothesis, not a finding.</strong> Work rarely stops;
-it forks. A module goes quiet while a similar one carries on, and the pairing is
-the most useful thing the history can say about a dead patch. A candidate has to
-be doing the same KIND of work by another route &mdash; at least two of shared
-vocabulary, same package, historical co-change and matching outside effects must
-agree &mdash; because timing alone returns whichever file changes in every
-commit. Two modules can resemble each other and have nothing to do with each
-other; the reasons are on every row so you can dismiss a wrong one in seconds.</p>
-{forks_html}
-
-{errors_html}
-
-<h2>What the history says</h2>
-{history_html}
-
-<h2>Defined but never referenced here <span class="n">({len(unref)})</span></h2>
-<p class="lede">No other code in this tree mentions these names. That is an
-observation, not a verdict &mdash; the caveat column says why each one might
-still be live.</p>
-<div class="tablewrap"><table><thead><tr><th>Module</th><th>Name</th><th>Kind</th>
-<th>Line</th><th>Might still be live because</th></tr></thead>
-<tbody>{u_rows or '<tr><td class=empty colspan=5>Everything defined here is referenced somewhere.</td></tr>'}</tbody></table></div>
+<aside id="panel" aria-live="polite">
+  <div class="phead">
+    <b id="ptitle">project summary</b>
+    <span id="phint" class="ln">click a module for its detail</span>
+  </div>
+  <div id="pbody"></div>
+</aside>
+<!-- One copy. Rendering the summary into the panel AND keeping a hidden
+     original put every table in the page twice, which on a 975-module project
+     is megabytes of duplicate markup. The panel is filled from here on load. -->
+<div id="summarySource" hidden>{summary_html}</div>
 
 </div><script>{_JS.replace("__PAYLOAD__", payload)}</script></body></html>"""
 
