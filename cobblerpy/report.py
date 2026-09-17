@@ -48,6 +48,11 @@ _CSS = """
       --hot:#a13d2d;--hotbg:#fbecea;--violet:#6b3fa0;
       --barbg:#fff}}
 *{box-sizing:border-box}
+/* `hidden` has to beat a class. The UA stylesheet's [hidden]{display:none} is
+   one attribute selector and loses to any class rule, so `.tracebar{display:
+   flex}` on an element with hidden set drew the trace bar over a map nobody
+   was tracing -- and #trace, an empty SVG, took space under it. */
+[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--fg);padding:0 0 28px;
      font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 /* Geared for 1920. The old 1180px cap used 41% of a wide screen and left the
@@ -234,6 +239,17 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 #graph .meta{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
              fill:var(--mut)}
 #graph .cut{stroke:var(--line);stroke-width:1.5;stroke-dasharray:3 6}
+/* Folder boxes. The folder was already on every card, in 11px grey, 975
+   times; drawing it once as a container says the same thing without being
+   read. The two numbers on the label are the ones that decide where to look
+   first, and the boxes are ordered by the second of them. */
+#graph .fbox{fill:var(--sunk);stroke:var(--line2);stroke-width:1}
+#graph .fname-lbl{font:600 12.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+      fill:var(--fg)}
+#graph .fmeta{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
+      fill:var(--mut)}
+#graph .continues-mark{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
+      fill:#ff6ec7}
 #graph .cutlabel{font:10.5px ui-monospace,SFMono-Regular,Menlo,monospace;
                  fill:var(--mut);letter-spacing:.6px}
 /* Centred in its container. A chart narrower than the page used to sit hard
@@ -803,10 +819,12 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
                 "relpath": module.relpath,
             }
     dead = deadends_by_module(find_deadends(project, modules_by_key, origins))
+    from .layout import compute_folders
+    folders = compute_folders(project, modules_by_key)
     svg, payload = svgmap.render(graph, project, frontier_by_module,
                                  snippets_by_module, dead, origins,
                                  history=history, modules_by_key=modules_by_key,
-                                 attempts=attempts)
+                                 attempts=attempts, folders=folders)
     # The product is CodeCobbler. The tool is cobblerpy -- that is the name
     # on the command, the package and the import, and it stays. The subject is
     # whatever folder was read. All three used to be mashed into one <h1>.
@@ -1256,13 +1274,13 @@ can follow. Treat every such finding as "no static path was found", never as
 "dead".</div>
 
 <h2>The map</h2>
-<p class="lede">Read it top to bottom. Each row is one step further from a start
-point, so the top of the chart is where execution begins and everything below it is
-something that row depends on. Each card carries the filename, where it lives, how big
-it is and who last touched it. Click one for its source, its signals and what it connects
-to. A doubled bar instead of an arrowhead marks a call that reaches a body with nothing in
-it, and a dashed pink line means this module stopped and another one is doing the same
-work.</p>
+<p class="lede">One box per folder, biggest first, so the top of the chart is
+where the work went. Inside a box, a card is as wide as its module is long &mdash; a
+2,000-line module is visibly bigger than a 200-line one &mdash; and short modules carry
+their filename alone, because the folder is drawn around them and the line count is the
+width. Nothing is connected up here on purpose: every connection on a chart this size
+has to be followed by eye. Click a card and the rest of the map goes away, leaving that
+module with what imports it above and what it imports below.</p>
 <div class="mapzone">
 <div class="tracebar" id="tracebar" hidden>
   <span class="ln">tracing</span><b id="traceof"></b>

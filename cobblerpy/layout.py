@@ -250,3 +250,145 @@ def _legacy_state_of(node):
     if node["score"] > 0:
         return "warm", "carries signals of unfinished work"
     return "clean", "reachable, no unfinished-work signals found"
+
+
+# -- the folder overview ---------------------------------------------------
+#
+# The other layout on this page answers "how far is this from a start point",
+# which is the right question once you know what you are looking at and the
+# wrong one first. Opening on it gave the reader 975 identical rectangles
+# wrapped eight to a row down twelve thousand pixels, with no landmark
+# anywhere: the folder each card lived in was printed on the card, in 11px
+# grey, 975 times, instead of being drawn.
+#
+# This one answers the two questions somebody actually opens a map with --
+# what is in here, and where did the work go. Folders are boxes, so things
+# that belong together are together and nothing has to be traced. Cards are
+# as wide as their module is long, so the eye lands on the big work before
+# reading a single filename. Relationships are not drawn at all; clicking a
+# card gives that module's own trace, which is where an edge is worth
+# following.
+
+CHART_W = 1200       # fits the chart column at 1920 without sideways scroll
+BOX_PAD = 11
+BOX_LABEL_H = 25
+BOX_GAP = 14
+CARD_GAP = 10
+
+# Two card sizes, not a continuum: a card either has room for its three lines
+# of text or it does not, and a smoothly shrinking one spends the range in
+# between on text nobody can read.
+CARD_H = 66
+CARD_H_SMALL = 34
+CARD_W_MIN = 116
+CARD_W_MAX = 300
+SMALL_LOC = 120      # below this, filename only
+
+# Fixed anchors rather than this project's own min and max, so a card of a
+# given width means the same number of lines in every project cobblerpy maps.
+# One 25,000-line outlier would otherwise squash everything else flat.
+WIDTH_AT_MIN_LOC = 40
+WIDTH_AT_MAX_LOC = 2400
+
+
+def card_width(loc):
+    """Card width for a module of `loc` lines, on a log scale.
+
+    Log, not linear: the 25,556-line file in the corpus is 280 times the
+    median one, and a linear scale would draw the median as a sliver. Log
+    keeps a 2,000-line module visibly bigger than a 200-line one, which is
+    the comparison a reader actually makes.
+    """
+    import math
+    loc = max(0, int(loc or 0))
+    if loc <= WIDTH_AT_MIN_LOC:
+        return CARD_W_MIN
+    if loc >= WIDTH_AT_MAX_LOC:
+        return CARD_W_MAX
+    low, high = math.log10(WIDTH_AT_MIN_LOC), math.log10(WIDTH_AT_MAX_LOC)
+    share = (math.log10(loc) - low) / (high - low)
+    return int(round(CARD_W_MIN + share * (CARD_W_MAX - CARD_W_MIN)))
+
+
+def _pack(modules, inner_width):
+    """Cards into rows, left to right, wrapping. Returns (rows, height).
+
+    Sorted biggest first, so a row holds cards of similar size and its height
+    is not set by one outlier sitting next to a dozen small ones.
+    """
+    placed, row, row_w, y, rows = [], [], 0, 0, []
+    for module in sorted(modules, key=lambda m: (-(m.loc or 0), m.relpath)):
+        width = card_width(module.loc)
+        if row and row_w + CARD_GAP + width > inner_width:
+            rows.append((row, y))
+            y += max(h for _m, _w, h in row) + CARD_GAP
+            row, row_w = [], 0
+        height = CARD_H_SMALL if (module.loc or 0) < SMALL_LOC else CARD_H
+        row.append((module, width, height))
+        row_w += width + (CARD_GAP if row_w else 0)
+    if row:
+        rows.append((row, y))
+        y += max(h for _m, _w, h in row)
+    for row, top in rows:
+        x = 0
+        for module, width, height in row:
+            placed.append((module, x, top, width, height))
+            x += width + CARD_GAP
+    return placed, y
+
+
+def compute_folders(project, modules_by_key=None, chart_width=CHART_W):
+    """Modules grouped into their own folders, sized by how long they are.
+
+    Boxes are laid out on shelves: a folder is as wide as it needs to be up to
+    the chart width, and small folders share a row rather than each taking a
+    full-width band of their own. Sixteen of the corpus's thirty folders hold
+    three modules or fewer.
+    """
+    import os
+    groups = defaultdict(list)
+    for module in project.modules:
+        folder = os.path.dirname(module.relpath).replace("\\", "/") or ""
+        groups[folder or "the project root"].append(module)
+
+    inner_max = chart_width - 2 * BOX_PAD
+    boxes = []
+    for folder, modules in groups.items():
+        widest = max(card_width(m.loc) for m in modules)
+        total = sum(card_width(m.loc) + CARD_GAP for m in modules) - CARD_GAP
+        label_w = int(len(folder) * 7.4 + 96 + 24)
+        inner = min(inner_max, max(widest, total, label_w))
+        placed, inner_h = _pack(modules, inner)
+        boxes.append({
+            "folder": folder,
+            "modules": len(modules),
+            "loc": sum(m.loc or 0 for m in modules),
+            "cards": placed,
+            "w": inner + 2 * BOX_PAD,
+            "h": inner_h + BOX_LABEL_H + 2 * BOX_PAD,
+        })
+    # Most code first. "Where did the year go" is answered by the order.
+    boxes.sort(key=lambda b: (-b["loc"], b["folder"]))
+
+    nodes, x, y, shelf_h = {}, 0, 0, 0
+    for box in boxes:
+        if x and x + box["w"] > chart_width:
+            x, y = 0, y + shelf_h + BOX_GAP
+            shelf_h = 0
+        box["x"], box["y"] = x, y
+        for module, cx, cy, cw, ch in box["cards"]:
+            key = module.dotted or module.relpath
+            nodes[key] = {
+                "x": x + BOX_PAD + cx,
+                "y": y + BOX_LABEL_H + BOX_PAD + cy,
+                "w": cw, "h": ch, "loc": module.loc or 0,
+                "small": ch == CARD_H_SMALL, "folder": box["folder"],
+            }
+        shelf_h = max(shelf_h, box["h"])
+        x += box["w"] + BOX_GAP
+    height = y + shelf_h
+
+    for box in boxes:
+        del box["cards"]
+    return {"boxes": boxes, "nodes": nodes,
+            "width": chart_width, "height": height}

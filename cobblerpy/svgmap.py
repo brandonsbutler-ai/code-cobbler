@@ -86,7 +86,7 @@ def _e(v):
 
 def render(graph, project, frontier_by_module, snippets_by_module,
            deadends_by_module, origins, history=None, modules_by_key=None,
-           attempts=None):
+           attempts=None, folders=None):
     """SVG plus the JSON payload the panel reads. Returns (svg, payload).
 
     A node carries four facts -- filename, where it lives, how big it is and
@@ -160,6 +160,24 @@ def render(graph, project, frontier_by_module, snippets_by_module,
                 f'{_e(group["resume_relpath"])} is further along'
                 f'</title></path>')
 
+    # The overview draws folders, not flow. Positions and card sizes come
+    # from the folder layout; `nodes` keeps supplying depth and the counts,
+    # which are properties of the module and not of where it is drawn.
+    placed = (folders or {}).get("nodes") or {}
+
+    # The continuation survives the loss of its line, as a mark on the card
+    # that stopped. A dashed path across a 1,240 x 13,000 chart could only be
+    # followed by eye, which is the thing being taken out; a mark says "this
+    # one carries on somewhere" in place, and the panel names the file.
+    continues_from = {}
+    for group in attempts:
+        winner = group.get("resume_at")
+        for attempt in group.get("attempts", []):
+            if attempt["module"] != winner:
+                continues_from[attempt["module"]] = {
+                    "to": winner, "relpath": group.get("resume_relpath", ""),
+                    "shared": list(group.get("shared", []))[:4]}
+
     node_svg = []
     cards = {}
     for name, node in sorted(nodes.items()):
@@ -170,11 +188,7 @@ def render(graph, project, frontier_by_module, snippets_by_module,
         prefix = name.rsplit(".", 1)[0][:26] if "." in name else ""
         marks = sum(node["counts"].values())
         origin = origins.get(name, {}).get("origin", "")
-        badge = ""
-        if origin in ("untracked", "vendored"):
-            badge = (f'<text class="badge" x="{node["x"] + NODE_W - 9}" '
-                     f'y="{node["y"] + NODE_H - 8}" text-anchor="end">'
-                     f'{origin}</text>')
+        badge_origin = origin if origin in ("untracked", "vendored") else ""
         module = modules_by_key.get(name)
         relpath = getattr(module, "relpath", name.replace(".", "/") + ".py")
         filename = relpath.rsplit("/", 1)[-1]
@@ -196,37 +210,58 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             "title": f"{relpath} \u00b7 {size} \u00b7 {owner}",
             "stroke": stroke,
         }
-        x, y = node["x"], node["y"]
+        carries_on = continues_from.get(name)
+        spot = placed.get(name)
+        x = spot["x"] if spot else node["x"]
+        y = spot["y"] if spot else node["y"]
+        w = spot["w"] if spot else NODE_W
+        h = spot["h"] if spot else NODE_H
+        compact = bool(spot and spot["small"])
         node_svg.append(
             f'<g class="node" data-name="{_e(name)}" data-state="{state}" '
-            f'tabindex="0" role="button" aria-label="{_e(name)}: {_e(why)}">'
+            + (f'data-continues="{_e(carries_on["to"])}" ' if carries_on else "")
+            + f'tabindex="0" role="button" aria-label="{_e(name)}: {_e(why)}">'
             # The exact path on hover. A truncated label should never be the
             # last word on which file a card is -- on a 975-module project 79
             # of them are still not unique after middle-truncation.
             f'<title>{_e(relpath)} &#183; {_e(size)} &#183; {_e(owner)}</title>'
             # The fill is the panel's own background, so the card reads as a
             # cut-out and the glowing edge is what carries the state.
-            f'<rect class="card" x="{x}" y="{y}" width="{NODE_W}" '
-            f'height="{NODE_H}" rx="8" stroke="{stroke}"/>'
-            f'<text class="fname" x="{x + 9}" y="{y + 22}">'
-            f'{_e(_fit(filename, 16, keep_end=7))}</text>'
-            f'<text class="meta" x="{x + 9}" y="{y + 40}">'
-            f'{_e(_fit(location, 19))}</text>'
-            # Size and owner share a line: two facts, one row, and the card
-            # loses a quarter of its height.
-            f'<text class="meta owner" x="{x + 9}" y="{y + 56}">'
-            f'{_e(_fit(size + "  \u00b7  " + owner, 19))}</text>'
-            f'{badge}'
-            + (f'<text class="marks" x="{x + NODE_W - 9}" '
+            f'<rect class="card" x="{x}" y="{y}" width="{w}" '
+            f'height="{h}" rx="8" stroke="{stroke}"/>'
+            # A short module gets a short card with its name on it and
+            # nothing else. The folder is drawn around it now, and the line
+            # count is the width -- so on a compact card both of those lines
+            # were repeating what the shape already said.
+            + (f'<text class="fname" x="{x + 9}" y="{y + 22}">'
+               f'{_e(_fit(filename, int((w - 18) / 7.4), keep_end=7))}</text>'
+               if compact else
+               f'<text class="fname" x="{x + 9}" y="{y + 22}">'
+               f'{_e(_fit(filename, int((w - 18) / 7.4), keep_end=7))}</text>'
+               f'<text class="meta" x="{x + 9}" y="{y + 40}">'
+               f'{_e(_fit(location, int((w - 18) / 6.2)))}</text>'
+               # Size and owner share a line: two facts, one row, and the
+               # card loses a quarter of its height.
+               f'<text class="meta owner" x="{x + 9}" y="{y + 56}">'
+               f'{_e(_fit(size + "  \u00b7  " + owner, int((w - 18) / 6.2)))}</text>')
+            + (f'<text class="badge" x="{x + w - 9}" y="{y + h - 8}" '
+               f'text-anchor="end">{badge_origin}</text>'
+               if badge_origin and not compact else "")
+            + (f'<text class="marks" x="{x + w - 9}" '
                f'y="{y + 20}" text-anchor="end">{marks}</text>'
                if marks else "")
+            + (f'<text class="continues-mark" x="{x + w - 10}" '
+               f'y="{y + h - 7}" text-anchor="end">&#8594;&#8230;</text>'
+               f'<title>this one stops; {_e(carries_on["relpath"])} is doing '
+               f'the same work ({_e(", ".join(carries_on["shared"]))})</title>'
+               if carries_on else "")
             + "</g>")
 
     edge_svg.extend(continuation_svg)
 
     # A rule across the chart where the connected part ends, labelled. Without
     # it the pool below reads as deeper levels of the same tree.
-    if graph.get("detached_y") is not None:
+    if not folders and graph.get("detached_y") is not None:
         y = graph["detached_y"]
         edge_svg.append(
             f'<line class="cut" x1="8" y1="{y:.0f}" '
@@ -234,8 +269,35 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             f'<text class="cutlabel" x="14" y="{y - 7:.0f}">'
             f'nothing above reaches the {graph["detached_count"]} below</text>')
 
-    svg = f"""<svg id="graph" viewBox="0 0 {graph['width']} {graph['height']}"
-     width="{graph['width']}" height="{graph['height']}"
+    # The folder boxes. Drawn first so every card sits on top of its own
+    # box, and labelled with the two numbers that decide where to look: how
+    # many modules are in there, and how many lines.
+    box_svg = []
+    for box in (folders or {}).get("boxes", []):
+        box_svg.append(
+            f'<g class="folder" data-folder="{_e(box["folder"])}">'
+            f'<rect class="fbox" x="{box["x"]}" y="{box["y"]}" '
+            f'width="{box["w"]}" height="{box["h"]}" rx="10"/>'
+            f'<text class="fname-lbl" x="{box["x"] + 12}" '
+            f'y="{box["y"] + 17}">{_e(box["folder"])}</text>'
+            f'<text class="fmeta" x="{box["x"] + box["w"] - 12}" '
+            f'y="{box["y"] + 17}" text-anchor="end">'
+            f'{box["modules"]:,} file{"s" if box["modules"] != 1 else ""}'
+            f' &#183; {box["loc"]:,} lines</text></g>')
+
+    if folders:
+        # No connections in the overview. Every one of them crossed the whole
+        # chart and had to be followed by eye, which is the thing the reader
+        # said was hard; a module's own connections are one click away in its
+        # trace, laid out short enough to read.
+        edge_svg = []
+        continuation_svg = []
+        width, height = folders["width"], folders["height"]
+    else:
+        width, height = graph["width"], graph["height"]
+
+    svg = f"""<svg id="graph" viewBox="0 0 {width} {height}"
+     width="{width}" height="{height}"
      xmlns="http://www.w3.org/2000/svg" role="img"
      aria-label="module dependency map">
   <defs>
@@ -248,6 +310,7 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             markerWidth="9" markerHeight="9" orient="auto"><path
             d="M0,1 L9,5 L0,9" fill="none" stroke-width="1.4"/></marker>
   </defs>
+  <g class="folders">{''.join(box_svg)}</g>
   <g class="edges">{''.join(edge_svg)}</g>
   <g class="nodes">{''.join(node_svg)}</g>
 </svg>"""
@@ -334,13 +397,11 @@ def render(graph, project, frontier_by_module, snippets_by_module,
 # time a colour moves, and this project has already shipped one that did.
 _LINK_CHIP = (
     '<span class="chip static">'
-    '<svg width="26" height="10" aria-hidden="true">'
-    '<path d="M1,5 L20,5" stroke="#ff6ec7" stroke-width="1.6" fill="none" '
-    'stroke-dasharray="5 4"/><path d="M19,2 L25,5 L19,8" stroke="#ff6ec7" '
-    'stroke-width="1.4" fill="none"/></svg>continuation'
-    '<span class="def">&mdash; probable continuation: this stopped, and that '
-    'one is doing the same work (inferred from shared definition names)'
-    '</span></span>')
+    '<i style="background:#2a1220;border-color:#ff6ec7;color:#ff6ec7">'
+    '&#8594;</i>continuation'
+    '<span class="def">&mdash; a card marked &#8594;&#8230; stopped, and '
+    'another file is doing the same work; click it for the name (inferred '
+    'from shared definition names)</span></span>')
 
 KEYBAR = _LINK_CHIP + "".join(
     f'<button type="button" class="chip" data-state="{state}" '
