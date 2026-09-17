@@ -113,15 +113,33 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 #graph marker#continues path{stroke:#ff6ec7}
 #graph .node:hover .card{stroke-width:2.5;
                          filter:drop-shadow(0 0 9px currentColor)}
+/* Type size is NOT the lever for fitting more on screen. Shrinking the card
+   text to 9.5px bought a narrower chart at the cost of making somebody lean
+   in on a 1920 laptop, which is the wrong trade. The footprint came down by
+   losing a row and most of the gutter instead, and the type went back up. */
 #graph .fname{font:600 12.5px ui-monospace,SFMono-Regular,Menlo,monospace;
               fill:var(--fg)}
 #graph .meta{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
              fill:var(--mut)}
+#graph .node{cursor:pointer}
 #graph .meta.owner{fill:var(--faint)}
 #graph .marks{font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;
               fill:currentColor}
 #graph .badge{font:9.5px ui-monospace,SFMono-Regular,Menlo,monospace;
               fill:var(--faint);letter-spacing:.5px}
+/* The verdict at the top of the panel. Green when this is the file to carry
+   on from, pink when the flow stops here, muted when another attempt got
+   further -- the same three colours the chart uses, so the panel and the
+   picture agree without the reader checking. */
+.verdict{border-radius:8px;padding:11px 13px;margin:0 0 12px;
+         border:1px solid var(--line)}
+.verdict b{font-size:14px}
+.verdict.resume{background:rgba(126,231,135,.09);border-color:var(--ok)}
+.verdict.resume b{color:var(--ok)}
+.verdict.superseded{background:var(--sunk)}
+.verdict.superseded b{color:var(--mut)}
+.verdict.deadend{background:rgba(255,110,199,.08);border-color:#ff6ec7}
+.verdict.deadend b{color:#ff6ec7}
 .attempt{margin-bottom:18px}
 .wall{background:var(--hotbg);border:1px solid var(--hot);border-left:3px solid var(--hot);
       border-radius:8px;padding:10px 13px;margin:8px 0 12px}
@@ -229,7 +247,27 @@ function openModule(name){
   const d = DATA[name];
   if(!d) return;
   document.getElementById('dtitle').textContent = name;
-  let h = '<p class="facts">' + esc(d.state) + ' &mdash; ' + esc(d.why)
+  // The verdict leads. A card is clicked to answer one of two questions --
+  // "is this where it goes" or "is this a dead end" -- and everything below
+  // is the evidence for whichever one applies. Putting the facts first and
+  // the verdict nowhere made the reader do the joining.
+  let h = '';
+  if(d.verdict){
+    const v = d.verdict;
+    h += '<div class="verdict ' + esc(v.kind) + '">'
+       + '<b>' + esc(v.headline) + '</b>'
+       + '<div class="ln">' + esc(v.detail) + '</div>'
+       + (v.shared && v.shared.length
+          ? '<div class="ln">shares ' + esc(v.shared.join(', ')) + '</div>' : '')
+       + (v.facts && v.facts.length
+          ? '<div class="ln">' + v.facts.map(esc).join('<br>') + '</div>' : '')
+       + '</div>';
+  } else if(d.deadends && d.deadends.length){
+    h += '<div class="verdict deadend"><b>this is a dead end</b>'
+       + '<div class="ln">execution reaches this module and stops inside it. '
+       + 'The lines are below, with the callers that get here.</div></div>';
+  }
+  h += '<p class="facts">' + esc(d.state) + ' &mdash; ' + esc(d.why)
         + ' &middot; ' + d.loc + ' lines &middot; depth ' + d.depth
         + ' &middot; origin: ' + esc(d.origin) + '</p>';
 
