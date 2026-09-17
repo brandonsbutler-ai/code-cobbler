@@ -65,6 +65,10 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
      border:1px solid var(--line);margin:1px 3px 1px 0;white-space:nowrap}
 .tag.hot{background:var(--hotbg);color:var(--hot);border-color:transparent}
 .chain.more{color:var(--mut);font-style:italic}
+.attempt{margin-bottom:18px}
+.attempt-head{margin-bottom:7px}
+tr.lead td{background:color-mix(in srgb,var(--ok) 9%,transparent)}
+.tag.ok{background:var(--ok);color:#fff;border-color:transparent}
 .cont{padding:5px 0;border-bottom:1px dotted var(--line)}
 .cont:last-child{border-bottom:none}
 .cont .mono{margin-right:7px}
@@ -232,7 +236,7 @@ def _stat(value, label):
 
 
 def write_map(project, frontier, history, path, title=None, summary_totals=None,
-              origins=None, modules_by_key=None, forks=None):
+              origins=None, modules_by_key=None, forks=None, attempts=None):
     """Write the HTML map. Returns `path`.
 
     `forks` is diversion.find()'s output. The caller usually has it already --
@@ -248,6 +252,10 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
         from .diversion import find as _find_forks
         forks = _find_forks(project, modules_by_key, history, frontier)
     forks = forks or []
+    if attempts is None:
+        from .attempts import find as _find_attempts
+        attempts = _find_attempts(project, modules_by_key, origins)
+    attempts = attempts or []
     frontier_by_module = {r["module"]: r for r in frontier}
 
     # The graph, the source behind each node, and the points where the flow
@@ -404,6 +412,47 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
                      f"<tbody>{''.join(f_rows) or '<tr><td class=empty colspan=4>No unfinished-work signals found.</td></tr>'}"
                      f"</tbody></table></div>")
 
+    # -- the same job, started over
+    #
+    # Placed above everything else because on the codebase this was built for
+    # it is the finding that changes the next hour: reading one attempt beats
+    # rewriting a fifth. The percentage is a proportion of what that file
+    # itself started, not of an imagined finished feature, and the facts that
+    # produced it are printed beside it so the reader can disagree.
+    if attempts:
+        blocks = []
+        for group in attempts[:8]:
+            rows = []
+            for a in group["attempts"]:
+                lead = a["module"] == group["resume_at"]
+                rows.append(
+                    f'<tr class="{ "lead" if lead else "" }">'
+                    f'<td class="num">{a["percent"]}%</td>'
+                    f'<td class="mono">{_e(a["relpath"])}'
+                    f'{" <span class=\"tag ok\">resume here</span>" if lead else ""}'
+                    f'</td><td>'
+                    + "".join(f'<div class="ln">{_e(f)}</div>' for f in a["facts"])
+                    + "</td></tr>")
+            extra = "".join(
+                f'<div class="ln">{_e(mod)} has '
+                f'{_e(", ".join(names)) if names else "the only tests for this job"}'
+                f"</div>"
+                for mod, names in group["elsewhere"].items())
+            blocks.append(
+                f'<div class="attempt"><div class="attempt-head">'
+                f'<b>{len(group["attempts"])} attempts at one job</b>'
+                f'<span class="ln"> &middot; sharing '
+                f'{_e(", ".join(group["shared"][:6]))}</span></div>'
+                f'<div class="tablewrap"><table><tbody>{"".join(rows)}</tbody>'
+                f"</table></div>{extra}</div>")
+        attempts_html = "".join(blocks)
+        if len(attempts) > 8:
+            attempts_html += (f'<p class="lede">{len(attempts) - 8} more groups '
+                              f"not shown.</p>")
+    else:
+        attempts_html = ('<p class="empty">No two modules define enough of the '
+                         'same things to look like restarts of one job.</p>')
+
     # -- where the effort went instead
     #
     # Next to the frontier on purpose: the frontier says where work STOPPED,
@@ -548,6 +597,16 @@ in which someone inheriting this code should look at it. Each signal is a fact
 about the source; whether it means the work is unfinished is your call, and the
 evidence is attached so you can make it quickly.</p>
 {frontier_html}
+
+<h2>The same job, started over <span class="n">({len(attempts)})</span></h2>
+<p class="lede">Modules that define enough of the same things to be attempts at
+one piece of work rather than separate pieces. The percentage is how much of
+what THAT FILE started is filled in &mdash; not a share of some finished
+feature &mdash; and the facts behind it are beside it. Matching is on shared
+definition names and never on style, because each attempt was written to a
+different developer's taste and scoring that would rank the tidiest author
+rather than the furthest-advanced work.</p>
+{attempts_html}
 
 <h2>Where the effort went instead <span class="n">({len(forks)})</span></h2>
 <p class="lede"><strong>A hypothesis, not a finding.</strong> Work rarely stops;

@@ -734,6 +734,189 @@ class TestMap(unittest.TestCase):
         # removing one changes nothing. Remove both and this goes red.
 
 
+class TestCompetingAttempts(unittest.TestCase):
+    """Four restarts of one job, which is the case this was built for."""
+
+    FOUR_ATTEMPTS = {
+        "app/__init__.py": "",
+        "app/main.py": "from app import claims_v3\n\n"
+                       "if __name__ == '__main__':\n    claims_v3.serve()\n",
+        # oldest, barely started, and holds the only tests
+        "app/intake.py": (
+            "import json\n\n"
+            "def parse_claim(raw):\n    return json.loads(raw)\n\n"
+            "def validate_claim(claim):\n    pass\n\n"
+            "def submit_claim(claim):\n    pass\n"),
+        # a restart, further along
+        "app/intake_new.py": (
+            "import json\n\n"
+            "def parse_claim(raw):\n    return json.loads(raw)\n\n"
+            "def validate_claim(claim):\n    return True\n\n"
+            "def normalise_codes(claim):\n    pass\n\n"
+            "def submit_claim(claim):\n    raise NotImplementedError\n"),
+        # the furthest along, and the one main actually imports
+        "app/claims_v3.py": (
+            "import json\n\n"
+            "def parse_claim(raw):\n    return json.loads(raw)\n\n"
+            "def validate_claim(claim):\n    return True\n\n"
+            "def normalise_codes(claim):\n    return claim\n\n"
+            "def price_claim(claim):\n    return claim\n\n"
+            "def submit_claim(claim):\n    pass\n\n"
+            "def serve():\n    return True\n"),
+        "tests/__init__.py": "",
+        "tests/test_intake.py": (
+            "from app import intake\n\n"
+            "def test_parse():\n    assert intake.parse_claim('{}') == {}\n\n"
+            "def test_validate():\n    assert intake.validate_claim({}) is None\n"),
+    }
+
+    def _groups(self, files):
+        from cobblerpy.attempts import find
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        return find(s.project, s.modules_by_key, s.origins)
+
+    def test_the_restarts_are_found_as_one_group(self):
+        groups = self._groups(self.FOUR_ATTEMPTS)
+        self.assertEqual(len(groups), 1, "the restarts were not grouped")
+        self.assertEqual(len(groups[0]["attempts"]), 3,
+                         [a["module"] for a in groups[0]["attempts"]])
+        self.assertIn("submit_claim", groups[0]["shared"])
+
+    def test_the_furthest_along_attempt_is_named(self):
+        """The one main imports, with the most bodies filled in."""
+        groups = self._groups(self.FOUR_ATTEMPTS)
+        self.assertEqual(groups[0]["resume_at"], "app.claims_v3")
+        percents = [a["percent"] for a in groups[0]["attempts"]]
+        self.assertEqual(percents, sorted(percents, reverse=True),
+                         "attempts are not ordered by how far along they are")
+
+    def test_the_gap_in_the_best_attempt_is_named(self):
+        """It has to say what is still missing, or it is only a ranking."""
+        groups = self._groups(self.FOUR_ATTEMPTS)
+        facts = " ".join(groups[0]["resume_facts"])
+        self.assertIn("submit_claim", facts)
+        self.assertIn("reachable from an entry point", facts)
+
+    def test_what_the_others_have_is_carried_across(self):
+        """intake.py holds the only tests; that must not be lost with it."""
+        groups = self._groups(self.FOUR_ATTEMPTS)
+        self.assertIn("app.intake", groups[0]["elsewhere"])
+        intake = next(a for a in groups[0]["attempts"]
+                      if a["module"] == "app.intake")
+        self.assertGreater(intake["tests"], 0)
+
+    def test_docstrings_do_not_change_the_ranking(self):
+        """Each attempt was written to a different taste.
+
+        Scoring documentation habits ranks the tidiest author rather than the
+        furthest-advanced work, which is the opposite of what is wanted.
+
+        The two attempts here are deliberately CLOSE -- four definitions each,
+        one stub apart. An earlier version of this test used the four-attempt
+        fixture, where the leader is forty points clear and no documentation
+        bonus could have flipped it, so it passed with docstrings scored.
+        """
+        close = {
+            "app/__init__.py": "",
+            # BOTH are reachable, so reachability cannot separate them and the
+            # only thing left between the two scores is how many bodies are
+            # filled in -- which is small enough for a documentation bonus to
+            # overturn, if one existed.
+            "app/main.py": ("from app import ledger\nfrom app import ledger_v2\n\n"
+                            "if __name__ == '__main__':\n"
+                            "    ledger.post_journal(1)\n"
+                            "    ledger_v2.settle_batch(1)\n"),
+            "app/ledger.py": (
+                '"""Ledger, first pass."""\n\n'
+                'def reconcile_ledger(x):\n    """Reconcile it."""\n    return x\n\n'
+                'def post_journal(x):\n    """Post it."""\n    return x\n\n'
+                'def settle_batch(x):\n    """Settle it."""\n    pass\n\n'
+                'def audit_trail(x):\n    """Audit it."""\n    pass\n'),
+            "app/ledger_v2.py": (
+                "def reconcile_ledger(x):\n    return x\n\n"
+                "def post_journal(x):\n    return x\n\n"
+                "def settle_batch(x):\n    return x\n\n"
+                "def audit_trail(x):\n    pass\n"),
+        }
+        groups = self._groups(close)
+        self.assertEqual(len(groups), 1)
+        winner = groups[0]["resume_at"]
+        self.assertEqual(winner, "app.ledger_v2",
+                         "the fully documented but less finished attempt won")
+        spread = (groups[0]["attempts"][0]["percent"]
+                  - groups[0]["attempts"][1]["percent"])
+        self.assertLess(spread, 25,
+                        f"the attempts are {spread} points apart, so this "
+                        f"fixture cannot detect a documentation bonus")
+
+    def test_a_clean_project_reports_nothing(self):
+        """The failure that would make this noise rather than a finding."""
+        groups = self._groups({
+            "app/__init__.py": "",
+            "app/main.py": "from app import store\n\n"
+                           "if __name__ == '__main__':\n    store.persist({})\n",
+            "app/store.py": "def persist(row):\n    return row\n\n"
+                            "def fetch_row(key):\n    return key\n\n"
+                            "def drop_table(name):\n    return name\n",
+            "app/report.py": "def render_html(rows):\n    return rows\n\n"
+                             "def render_csv(rows):\n    return rows\n\n"
+                             "def summarise(rows):\n    return rows\n",
+        })
+        self.assertEqual(groups, [])
+
+    GENERIC_TWINS = {
+        # FIVE shared names, all of them generic and all long enough to pass
+        # the length filter -- so only the generic list itself can reject this.
+        # An earlier version shared main/run/setup, of which `run` is too short
+        # and the rest too few, so the test passed with the list deleted.
+        "a.py": ("def configure():\n    pass\n\ndef validate():\n    pass\n\n"
+                 "def process():\n    pass\n\ndef serialize():\n    pass\n\n"
+                 "def teardown():\n    pass\n"),
+        "b.py": ("def configure():\n    return 1\n\ndef validate():\n    return 1\n\n"
+                 "def process():\n    return 1\n\ndef serialize():\n    return 1\n\n"
+                 "def teardown():\n    return 1\n"),
+    }
+
+    def test_generic_names_alone_do_not_group_two_files(self):
+        """Every module configures, validates and processes something."""
+        self.assertEqual(self._groups(self.GENERIC_TWINS), [])
+
+    def test_two_shared_names_are_not_enough(self):
+        """Two files can share a pair of names by being the same SHAPE.
+
+        Three is the threshold, so a fixture sharing exactly two must produce
+        nothing and the same fixture with a third must produce a group --
+        otherwise nothing here tests the threshold at all.
+        """
+        two = {
+            "a.py": ("def reconcile_ledger(x):\n    return x\n\n"
+                     "def post_journal(x):\n    return x\n\n"
+                     "def only_in_a(x):\n    return x\n"),
+            "b.py": ("def reconcile_ledger(x):\n    return x\n\n"
+                     "def post_journal(x):\n    return x\n\n"
+                     "def only_in_b(x):\n    return x\n"),
+        }
+        self.assertEqual(self._groups(two), [], "two shared names grouped")
+        three = dict(two)
+        for name in ("a.py", "b.py"):
+            three[name] += "\ndef settle_batch(x):\n    return x\n"
+        self.assertEqual(len(self._groups(three)), 1,
+                         "three shared names did not group")
+
+    def test_a_group_always_carries_the_names_that_made_it_one(self):
+        """A merged group used to print with no evidence attached.
+
+        Intersecting pairwise sets as the group grew emptied them: A and B can
+        share three names, B and C another three, and all three share nothing.
+        """
+        groups = self._groups(self.FOUR_ATTEMPTS)
+        for group in groups:
+            self.assertTrue(group["shared"],
+                            "a group was reported with no shared names")
+
+
 class TestDiversionNoise(unittest.TestCase):
     """A fork is specific to one abandoned effort, or it is not a fork."""
 
