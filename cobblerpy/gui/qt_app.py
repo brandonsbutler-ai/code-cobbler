@@ -284,6 +284,45 @@ def build(qt, session=None):
             self.rightScroll.hide()
             outer.addWidget(self.rightScroll, 1)
 
+            # A hidden widget claims no space, so with the findings panel away
+            # the layout had nothing to give the leftover width to and centred
+            # the fixed-width controls in the middle of the window. This takes
+            # that space instead, and steps aside when there are findings.
+            # Rather than an empty half-window on first launch, the space says
+            # what the survey will produce. It is the same three findings the
+            # right-hand column will hold, so the empty state teaches the
+            # layout instead of looking like something failed to load.
+            self.filler = QtWidgets.QWidget()
+            self.filler.setObjectName("root")
+            fl = QtWidgets.QVBoxLayout(self.filler)
+            fl.setContentsMargins(18, 26, 26, 24)
+            fl.setSpacing(0)
+            fl.addWidget(self._label("WHAT A SURVEY TELLS YOU", "cap"))
+            fl.addSpacing(14)
+            for heading, body in (
+                    ("the same job, started over",
+                     "which files are competing attempts at one piece of work, "
+                     "how much of each is filled in, and which one to carry on "
+                     "from"),
+                    ("where the work stopped",
+                     "modules ranked by signals of unfinished work, with the "
+                     "evidence attached so you can disagree with the ranking"),
+                    ("the map",
+                     "every module, what reaches it, and the source behind each "
+                     "finding \u2014 one self-contained HTML file, nothing "
+                     "uploaded")):
+                panel = QtWidgets.QFrame()
+                panel.setObjectName("row")
+                pl = QtWidgets.QVBoxLayout(panel)
+                pl.setContentsMargins(14, 11, 14, 12)
+                pl.setSpacing(4)
+                pl.addWidget(self._label(heading, "modname"))
+                pl.addWidget(self._label(body, "quiet", True))
+                fl.addWidget(panel)
+                fl.addSpacing(9)
+            fl.addStretch(1)
+            outer.addWidget(self.filler, 1)
+
         # -- loading
         def _choose(self):
             chosen = QtWidgets.QFileDialog.getExistingDirectory(
@@ -342,6 +381,7 @@ def build(qt, session=None):
                     widget.deleteLater()
             self.findings.addStretch(1)
             self.rightScroll.hide()
+            self.filler.show()
 
         def _add(self, widget):
             self.findings.insertWidget(self.findings.count() - 1, widget)
@@ -373,6 +413,7 @@ def build(qt, session=None):
                 self._add(self._spacer(9))
                 self._add(self._frontier_panel(result.frontier[:8]))
             self.rightScroll.show()
+            self.filler.hide()
 
         def _spacer(self, height):
             widget = QtWidgets.QWidget()

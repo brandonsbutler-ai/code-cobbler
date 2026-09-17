@@ -4,3 +4,6 @@ __pycache__/
 out/
 dist/
 build/
+dist/
+build/
+*.spec
