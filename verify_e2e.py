@@ -534,6 +534,7 @@ def verify_map_and_exports(root, workdir):
                  "return made[i];}"
                  f"const KNOWN=new Set({_ids});"
                  "global.CSS={escape:s=>s};"
+                 "global.window={addEventListener(){},removeEventListener(){}};"
                  "global.document={getElementById:i=>KNOWN.has(i)?el(i):null,"
                  "querySelectorAll:()=>[],querySelector:()=>null,"
                  "addEventListener(){}};")

@@ -299,32 +299,29 @@ def render(graph, project, frontier_by_module, snippets_by_module,
     return svg, json.dumps(payload).replace("<", "\\u003c").replace(">", "\\u003e")
 
 
-# The dashed link has to be in the legend too. A line on a diagram that
-# nothing explains is worse than no line: the reader either ignores it or
-# invents a meaning for it, and this one is the only INFERENCE on the map.
-_LINK_KEY = (
-    '<span class="key"><svg width="26" height="10" aria-hidden="true">'
+# One key, two sizes. The same entries carry their sentence until the key is
+# pinned under the title bar, at which point the sentences are taken off and
+# what is left is the swatch and the word -- which is all "what was orange
+# again?" needs. Writing the words twice, once in a strip of chips and once in
+# a block of definitions underneath, said the same thing in the same place and
+# made the reader check whether the two agreed.
+#
+# Built from _PALETTE. A key written next to a palette goes stale the first
+# time a colour moves, and this project has already shipped one that did.
+_LINK_CHIP = (
+    '<span class="chip static">'
+    '<svg width="26" height="10" aria-hidden="true">'
     '<path d="M1,5 L20,5" stroke="#ff6ec7" stroke-width="1.6" fill="none" '
     'stroke-dasharray="5 4"/><path d="M19,2 L25,5 L19,8" stroke="#ff6ec7" '
-    'stroke-width="1.4" fill="none"/></svg>'
-    'probable continuation &mdash; this stopped, and that one is doing the '
-    'same work (inferred from shared definition names)</span>')
+    'stroke-width="1.4" fill="none"/></svg>continuation'
+    '<span class="def">&mdash; probable continuation: this stopped, and that '
+    'one is doing the same work (inferred from shared definition names)'
+    '</span></span>')
 
-LEGEND = _LINK_KEY + "".join(
-    f'<span class="key"><i style="background:{fill};border-color:{stroke}"></i>'
-    f'{html.escape(state)} &mdash; {html.escape(desc)}</span>'
-    for state, (stroke, fill, desc) in _PALETTE.items())
-
-# The same seven colours with the sentences taken off, so the key can ride
-# under the title bar the whole way down a twelve-thousand-pixel chart. The
-# question it answers is "what was orange again?", which needs the word, not
-# the definition -- the definitions stay directly below it, read once.
-#
-# Built from _PALETTE like LEGEND is. A key hand-written next to a palette is
-# a key that goes stale the first time a colour moves.
-KEYBAR = "".join(
+KEYBAR = _LINK_CHIP + "".join(
     f'<button type="button" class="chip" data-state="{state}" '
-    f'title="{html.escape(desc)}" aria-pressed="false">'
+    f'aria-pressed="false">'
     f'<i style="background:{fill};border-color:{stroke}"></i>'
-    f'{html.escape(state)}</button>'
+    f'{html.escape(state)}'
+    f'<span class="def">&mdash; {html.escape(desc)}</span></button>'
     for state, (stroke, fill, desc) in _PALETTE.items())
