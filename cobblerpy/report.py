@@ -516,11 +516,21 @@ function openModule(name){
 
 document.querySelectorAll('#graph .node').forEach(g => {
   const name = g.dataset.name;
-  // Click opens the detail AND drops the overview for this module's own
-  // trace. Showing the neighbours in place, dimmed, still leaves them
-  // scattered down twelve thousand pixels -- the reader wanted the other
-  // nine hundred gone, not faded.
-  g.addEventListener('click', () => { openModule(name); enterTrace(name); });
+  // Hover traces it, click pins it. Exploring by pointer is the whole
+  // point -- you should not have to commit to a module to see its path --
+  // but you do have to be able to settle on one and go read the panel
+  // without the chart changing under you on the way there.
+  g.addEventListener('mouseenter', () => {
+    if(pinned) return;
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => enterTrace(name, false), HOVER_MS);
+  });
+  g.addEventListener('mouseleave', () => clearTimeout(hoverTimer));
+  g.addEventListener('click', () => {
+    clearTimeout(hoverTimer);
+    openModule(name);
+    enterTrace(name, true);
+  });
   g.addEventListener('keydown', e => {
     if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openModule(name); }
   });
@@ -598,6 +608,16 @@ sizeKey();
 // second layout rather than a copy of the first one.
 const NODE_W = 138, NODE_H = 66, X_GAP = 24, Y_GAP = 30;
 const TRACE_MAX = 260;   // larger than the whole closure of anything measured
+// Left out of a trace: a path that ends inside a module, and a file that does
+// not parse. Neither is a route to anywhere, so neither belongs in a picture
+// of where the work goes. Everything that might still be a path stays --
+// including `maybe`, which is by far the largest group on a real project and
+// means "no static path FOUND", not "no path".
+const TRACE_HIDE = ['deadend', 'broken'];
+// Hovering a card traces it; the dwell stops a chart of 975 cards from
+// redrawing the SVG every time the pointer crosses one on its way somewhere.
+const HOVER_MS = 170;
+let hoverTimer = null, pinned = null;
 const graphSvg = document.getElementById('graph');
 const traceSvg = document.getElementById('trace');
 const tracebar = document.getElementById('tracebar');
@@ -605,6 +625,7 @@ let tracing = null;
 
 function reach(seed, edge){
   const seen = new Map();
+  const left_out = [];
   let level = 0, frontier = [seed];
   while(frontier.length && seen.size < TRACE_MAX){
     const next = [];
@@ -613,12 +634,19 @@ function reach(seed, edge){
       const from = DATA[name];
       for(const other of ((from && from[edge]) || [])){
         if(other === seed || seen.has(other) || !DATA[other]) continue;
+        if(TRACE_HIDE.indexOf(DATA[other].state) >= 0){
+          // A dead end and a file that will not parse are both terminal, so
+          // dropping one cannot cut the chain behind it.
+          left_out.push(other);
+          continue;
+        }
         seen.set(other, level);
         next.push(other);
       }
     }
     frontier = next;
   }
+  seen.left_out = left_out;
   return seen;
 }
 
@@ -696,29 +724,37 @@ function drawTrace(seed){
     + '<path d="M0,0 L8,4 L0,8 z"/></marker></defs>'
     + '<g class="edges">' + edges.join('').replace(/url\(#arrow\)/g, 'url(#tarrow)')
     + '</g><g class="nodes">' + parts.join('') + '</g>';
-  return {shown: placed.size, above: above.size, below: below.size};
+  return {shown: placed.size, above: above.size, below: below.size,
+          left_out: (above.left_out || []).concat(below.left_out || []).length};
 }
 
-function enterTrace(name){
+function enterTrace(name, pin){
   if(!DATA[name] || !traceSvg) return;
+  if(pin) pinned = name;
   const counted = drawTrace(name);
   tracing = name;
   graphSvg.hidden = true;
   traceSvg.hidden = false;
   tracebar.hidden = false;
   document.getElementById('traceof').textContent = name;
+  document.getElementById('tracehow').textContent =
+    pinned ? 'pinned' : 'hovering';
+  const left = counted.left_out
+    ? ' \u00b7 ' + counted.left_out + ' left out: a dead end or a file that '
+      + 'does not parse is not a route anywhere'
+    : '';
   document.getElementById('tracecount').textContent =
-    counted.shown === 1
+    (counted.shown === 1
       ? 'on its own -- nothing imports it, and it imports nothing internal'
       : counted.above + ' above it, ' + counted.below + ' below it, out of '
-        + Object.keys(DATA).length + ' modules';
+        + Object.keys(DATA).length + ' modules') + left;
   if(mapwrap) mapwrap.scrollTop = 0;
   sizeKey();
   traceSvg.querySelectorAll('.node').forEach(g => {
     const other = g.dataset.name;
     g.addEventListener('click', () => {
       openModule(other);
-      if(other !== tracing) enterTrace(other);      // follow the thread
+      if(other !== tracing) enterTrace(other, true);   // follow the thread
     });
     g.addEventListener('keydown', e => {
       if(e.key === 'Enter' || e.key === ' '){
@@ -730,6 +766,8 @@ function enterTrace(name){
 
 function leaveTrace(){
   tracing = null;
+  pinned = null;
+  clearTimeout(hoverTimer);
   if(traceSvg) traceSvg.hidden = true;
   if(tracebar) tracebar.hidden = true;
   if(graphSvg) graphSvg.hidden = false;
@@ -1283,7 +1321,7 @@ has to be followed by eye. Click a card and the rest of the map goes away, leavi
 module with what imports it above and what it imports below.</p>
 <div class="mapzone">
 <div class="tracebar" id="tracebar" hidden>
-  <span class="ln">tracing</span><b id="traceof"></b>
+  <span class="ln" id="tracehow">hovering</span><b id="traceof"></b>
   <span class="ln" id="tracecount"></span>
   <button type="button" id="traceout">show the whole map</button>
 </div>

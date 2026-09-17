@@ -1194,8 +1194,12 @@ class TestTrace(unittest.TestCase):
         # a -> b -> c, plus d beside c, and an island nothing touches.
         "a.py": 'import b\nif __name__ == "__main__":\n    b.go()\n',
         "b.py": "import c\nimport d\ndef go():\n    c.run(); d.run()\n",
-        "c.py": "def run():\n    pass\n",
-        "d.py": "def run():\n    pass\n",
+        # Real bodies. `def run(): pass` is a DEAD END -- execution reaches
+        # it and stops inside it -- and the trace leaves those out, so the
+        # first version of this fixture tested the filter by accident and
+        # nothing else.
+        "c.py": "def run():\n    return 1\n",
+        "d.py": "def run():\n    return 2\n",
         "island.py": "x = 1\n",
     }
 
@@ -1273,7 +1277,8 @@ console.log(JSON.stringify({
                          "the trace kept the wrong modules")
         self.assertNotIn("island", rows,
                          "a module with no connection to b survived")
-        self.assertEqual(seen["counted"], {"shown": 4, "above": 1, "below": 2})
+        self.assertEqual(seen["counted"], {"shown": 4, "above": 1, "below": 2,
+                                           "left_out": 0})
         # Laid out by distance from the module that was clicked: its importer
         # above it, the two it imports below, on one row between them.
         self.assertLess(rows["a"], rows["b"])
@@ -1290,8 +1295,106 @@ console.log(JSON.stringify({
   counted: counted,
   markup: document.getElementById('trace').innerHTML}));
 """)
-        self.assertEqual(seen["counted"], {"shown": 1, "above": 0, "below": 0})
+        self.assertEqual(seen["counted"], {"shown": 1, "above": 0, "below": 0,
+                                           "left_out": 0})
         self.assertEqual(sorted(self._rows(seen["markup"])), ["island"])
+
+    def test_a_dead_end_is_left_out_of_the_trace_and_counted(self):
+        """A path that stops inside a module is not a route to anywhere.
+
+        Kept separate from the fixture above precisely because that one used
+        to contain dead ends without meaning to: a filter tested only by
+        accident is a filter nobody has tested.
+        """
+        import json, re, shutil, subprocess
+        if not shutil.which("node"):
+            self.skipTest("node not installed")
+        t = Tree({
+            "a.py": 'import b\nif __name__ == "__main__":\n    b.go()\n',
+            "b.py": "import c\nimport stub\ndef go():\n    return c.run()\n",
+            "c.py": "def run():\n    return 1\n",
+            "stub.py": "def later():\n    pass\n",
+        })
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            doc = fh.read()
+        payload = json.loads(
+            re.search(r"const DATA = (\{.*?\});\n", doc, re.S).group(1)
+            .replace("\\u003c", "<").replace("\\u003e", ">"))
+        self.assertEqual(payload["stub"]["state"], "deadend",
+                         "the fixture has no dead end in it, so the filter is "
+                         "not being tested")
+        self.assertIn("stub", payload["b"]["uses"])
+        js = re.findall(r"<script>(.*?)</script>", doc, re.S)[-1]
+        stub_dom = """
+const made = {};
+function fake(id){ return {id: id, textContent: '', innerHTML: '', hidden: false,
+  dataset: {}, scrollTop: 0, attrs: {}, setAttribute(k,v){ this.attrs[k]=v; },
+  addEventListener(){}, scrollIntoView(){}, closest(){ return null; },
+  classList:{toggle(){}, remove(){}, contains(){ return false; }},
+  querySelectorAll(){ return []; }}; }
+function el(id){ if(!made[id]) made[id] = fake(id); return made[id]; }
+global.CSS = {escape: s => s};
+global.window = {addEventListener(){}, removeEventListener(){}};
+global.document = {getElementById: id => el(id), querySelectorAll: () => [],
+  querySelector: sel => sel === '.mapwrap' ? el('mapwrap') : null,
+  addEventListener(){}};
+"""
+        probe = """
+const counted = drawTrace('b');
+console.log(JSON.stringify({counted: counted,
+  markup: document.getElementById('trace').innerHTML}));
+"""
+        script = os.path.join(t.dir, "deadend.js")
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(stub_dom + "\n" + js + probe)
+        r = subprocess.run(["node", script], capture_output=True, text=True,
+                           timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-900:])
+        seen = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(seen["counted"]["left_out"], 1,
+                         "the dead end was not left out")
+        self.assertNotIn('data-name="stub"', seen["markup"])
+        self.assertIn('data-name="c"', seen["markup"],
+                      "the filter took a live module with it")
+
+    def test_hover_traces_and_click_pins(self):
+        """A hover trace must not stick; a pinned one must.
+
+        Without the pin, moving the pointer off the card on the way to the
+        panel redraws the chart under you and you lose what you were reading.
+        """
+        seen = self._run("""
+const hits = [];
+enterTrace('b', false);
+hits.push({of: document.getElementById('traceof').textContent,
+           how: document.getElementById('tracehow').textContent});
+enterTrace('c', false);               // still free to follow the pointer
+hits.push({of: document.getElementById('traceof').textContent,
+           how: document.getElementById('tracehow').textContent});
+enterTrace('c', true);                // clicked: settle here
+hits.push({of: document.getElementById('traceof').textContent,
+           how: document.getElementById('tracehow').textContent});
+leaveTrace();
+// And hover again AFTERWARDS. A pin that outlives its trace does not show
+// up until the next hover, which then silently does nothing.
+enterTrace('a', false);
+hits.push({of: document.getElementById('traceof').textContent,
+           how: document.getElementById('tracehow').textContent,
+           graph: document.getElementById('graph').hidden});
+console.log(JSON.stringify(hits));
+""")
+        self.assertEqual([h["of"] for h in seen], ["b", "c", "c", "a"])
+        self.assertEqual([h["how"] for h in seen],
+                         ["hovering", "hovering", "pinned", "hovering"],
+                         "the pin outlived the trace it belonged to")
+        self.assertEqual(seen[-1]["graph"], True,
+                         "the hover after leaving did not re-enter a trace")
 
     def test_entering_a_trace_hides_the_overview_and_says_what_it_left_out(self):
         seen = self._run("""
