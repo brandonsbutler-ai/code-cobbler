@@ -273,26 +273,33 @@ summary{cursor:pointer;font-size:13px}
 .layer b{min-width:74px;font-size:12px;color:var(--mut);padding-top:2px}
 .chain{font-size:12.5px;color:var(--mut)}
 .empty{color:var(--mut);padding:8px 2px}
-.legend{display:flex;flex-wrap:wrap;gap:12px;margin:0 0 10px;font-size:12px;
-        color:var(--mut)}
-.key{display:flex;align-items:center;gap:5px}
-.key i{width:11px;height:11px;border-radius:3px;border:1px solid;display:inline-block}
-/* The key, always on screen. The chart is twelve thousand pixels tall on a
-   real project, so a legend that sits above it answers "what was orange
-   again?" for the first screen only. This one rides under the title bar --
-   and only for as long as the map is on screen, because it is sticky inside
-   .mapzone rather than inside the column. The sentences stay below it: they
-   are read once, the colours are referred to continuously. */
+/* The key, always on screen, and only one of it. The chart is twelve
+   thousand pixels tall on a real project, so a legend above it answers "what
+   was orange again?" for the first screen only. This one rides under the
+   title bar -- and only for as long as the map is on screen, because it is
+   sticky inside .mapzone rather than inside the column.
+   It carries its definitions until the moment it pins, then drops them and
+   keeps the swatch and the word, which is all the question needs. The earlier
+   version printed the words twice, once as chips and once as a block of
+   definitions below, which says the same thing in the same place and leaves
+   the reader checking whether the two agree. */
 .mapzone{position:relative}
+.keysentinel{height:1px}
 .keybar{position:sticky;top:var(--barh);z-index:30;display:flex;flex-wrap:wrap;
         gap:6px;align-items:center;padding:8px 0 9px;background:var(--bg);
         border-bottom:1px solid var(--line2);margin-bottom:9px}
+.keybar.pinned{padding:6px 0 7px}
 .keybar .chip{display:flex;align-items:center;gap:6px;cursor:pointer;
-        font:12px/1 inherit;color:var(--mut);background:var(--card);
-        border:1px solid var(--line);border-radius:999px;padding:5px 11px 5px 8px}
+        font:12px/1.35 inherit;color:var(--mut);background:var(--card);
+        border:1px solid var(--line);border-radius:999px;padding:5px 11px 5px 8px;
+        text-align:left}
+.keybar .chip.static{cursor:default}
 .keybar .chip i{width:11px;height:11px;border-radius:3px;border:1px solid;
-        display:inline-block}
+        display:inline-block;flex:none}
+.keybar .chip .def{color:var(--faint)}
+.keybar.pinned .chip .def{display:none}
 .keybar .chip:hover{color:var(--fg);border-color:var(--mut)}
+.keybar .chip.static:hover{color:var(--mut);border-color:var(--line)}
 .keybar .chip[aria-pressed="true"]{color:var(--fg);border-color:var(--fg);
         background:var(--sunk)}
 .keybar .hint{color:var(--faint);font-size:11.5px;margin-left:4px}
@@ -505,11 +512,27 @@ function applyFilter(){
     : ('showing ' + only + ' only \u00b7 Esc clears');
 }
 document.querySelectorAll('.keybar .chip').forEach(c => {
+  if(!c.dataset.state) return;          // the continuation key is not a state
   c.addEventListener('click', () => {
     only = (only === c.dataset.state) ? null : c.dataset.state;
     applyFilter();
   });
 });
+
+// Full size until it pins, then swatch and word only. Measured against the
+// title bar rather than a number, so the two cannot drift: the key is pinned
+// exactly when it has caught up with the bottom of the bar.
+const keybar = document.querySelector('.keybar');
+const topbar = document.querySelector('.topbar');
+function sizeKey(){
+  if(!keybar || !topbar) return;
+  keybar.classList.toggle(
+    'pinned',
+    keybar.getBoundingClientRect().top <= topbar.getBoundingClientRect().bottom);
+}
+window.addEventListener('scroll', sizeKey, {passive:true});
+window.addEventListener('resize', sizeKey, {passive:true});
+sizeKey();
 
 document.addEventListener('keydown', e => {
   if(e.key === 'Escape'){ only = null; applyFilter(); showProject(); }
@@ -1023,9 +1046,9 @@ to. A doubled bar instead of an arrowhead marks a call that reaches a body with 
 it, and a dashed pink line means this module stopped and another one is doing the same
 work.</p>
 <div class="mapzone">
+<div class="keysentinel" id="keytop"></div>
 <div class="keybar">{svgmap.KEYBAR}<span class="hint" id="keyhint">click a colour to
 show only those &middot; Esc clears</span></div>
-<div class="legend">{svgmap.LEGEND}</div>
 <div class="mapwrap">{svg}</div>
 </div>
 

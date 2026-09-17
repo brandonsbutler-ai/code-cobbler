@@ -867,6 +867,7 @@ function el(i){ if(!made[i]) made[i] = {id:i, textContent:'', innerHTML:'x',
   addEventListener(){}, scrollTop:0, scrollIntoView(){}, closest(){return null}};
   return made[i]; }
 global.CSS = {escape: s => s};
+global.window = {addEventListener(){}, removeEventListener(){}};
 global.document = {
   getElementById: i => el(i),
   querySelectorAll: sel => sel.indexOf('chip') >= 0 ? CHIPS : NODES,
@@ -902,6 +903,94 @@ console.log(JSON.stringify({
                       "the key does not say what it is showing")
         self.assertEqual(cleared["off"], [],
                          "clicking the same colour again did not clear it")
+
+    def test_the_key_drops_its_definitions_only_once_it_has_pinned(self):
+        """Full size while it is in place, swatch and word once it rides.
+
+        There is ONE key. It used to be two -- a strip of chips and a block of
+        definitions below it -- which printed every state name twice in the
+        same place and left the reader checking whether the two agreed.
+        """
+        import json
+        import re
+        import shutil
+        import subprocess
+        if not shutil.which("node"):
+            self.skipTest("node not installed")
+        t = Tree({"run.py": 'import lib\nif __name__ == "__main__":\n    lib.go()\n',
+                  "lib.py": "def go():\n    pass  # TODO: finish\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            doc = fh.read()
+        page = Page(doc)
+        # The definitions are IN the key, not in a second block beside it.
+        self.assertEqual(page.find("div", **{"class": "legend"}), [],
+                         "the separate definitions block is still being emitted")
+        keytext = page.text_in("div", **{"class": "keybar"})
+        flat = "".join(page.text_parts)
+        from cobblerpy import svgmap
+        for state, (_stroke, _fill, desc) in svgmap._PALETTE.items():
+            self.assertIn(desc, keytext, f"{state} lost its definition")
+            # Once on the page, full stop. Counting the WORD would not work --
+            # "unfinished" legitimately appears inside live's sentence too --
+            # so the definition itself is what must not be repeated.
+            self.assertEqual(flat.count(desc), 1,
+                             f"{state}'s definition is printed twice")
+            self.assertEqual(
+                len(page.find("button", **{"data-state": state})), 1,
+                f"{state} has more than one chip")
+        js = re.findall(r"<script>(.*?)</script>", doc, re.S)[-1]
+        stub = """
+const kb = {cls:new Set(), top: 400,
+  classList:{toggle(c,on){on?kb.cls.add(c):kb.cls.delete(c)},
+             remove(c){kb.cls.delete(c)}, contains(c){return kb.cls.has(c)}},
+  getBoundingClientRect(){return {top: kb.top};}};
+const tb = {getBoundingClientRect(){return {bottom: 52};}};
+const scrollHandlers = [];
+const made = {};
+function el(i){ if(!made[i]) made[i] = {id:i, textContent:'', innerHTML:'x',
+  dataset:{}, classList:{toggle(){},remove(){},contains(){return false}},
+  addEventListener(){}, scrollTop:0, scrollIntoView(){}, closest(){return null}};
+  return made[i]; }
+global.CSS = {escape: s => s};
+global.window = {addEventListener(t,f){ if(t === 'scroll') scrollHandlers.push(f); },
+                 removeEventListener(){}};
+global.document = {
+  getElementById: i => el(i),
+  querySelectorAll: () => [],
+  querySelector: sel => sel === '.keybar' ? kb
+                      : sel === '.topbar' ? tb : null,
+  addEventListener(){}};
+"""
+        probe = """
+const state = () => kb.classList.contains('pinned');
+const seen = {atRest: state()};
+kb.top = 52;                     // caught up with the bottom of the bar
+scrollHandlers.forEach(f => f());
+seen.pinned = state();
+kb.top = 400;                    // scrolled back up
+scrollHandlers.forEach(f => f());
+seen.releasedAgain = state();
+console.log(JSON.stringify(seen));
+"""
+        script = os.path.join(t.dir, "pin.js")
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(stub + "\n" + js + probe)
+        r = subprocess.run(["node", script], capture_output=True, text=True,
+                           timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
+        seen = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(
+            seen, {"atRest": False, "pinned": True, "releasedAgain": False},
+            f"the key does not change size when it pins: {seen}")
+        # And the collapse is a real rule, not a class nothing styles.
+        self.assertIn(".keybar.pinned .chip .def{display:none}",
+                      doc.replace("\n", ""))
 
     def test_no_two_css_rules_claim_the_same_bare_class(self):
         """A second `.name{}` silently overrides the first.
@@ -1571,6 +1660,10 @@ class TestEvidenceCompleteness(unittest.TestCase):
                 "return made[i];}"
                 f"const KNOWN=new Set({ids});"
                 "global.CSS={escape:s=>s};"
+                # A browser always has `window`. Three hand-written stubs is
+                # how a new global gets added to the script and two of them
+                # start failing on the next unrelated change.
+                "global.window={addEventListener(){},removeEventListener(){}};"
                 "global.document={getElementById:i=>KNOWN.has(i)?el(i):null,"
                 "querySelectorAll:()=>[],querySelector:()=>null,"
                 "addEventListener(){}};")
