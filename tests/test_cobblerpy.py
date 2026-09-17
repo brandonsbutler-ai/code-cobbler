@@ -1017,17 +1017,178 @@ console.log(JSON.stringify(seen));
                 depth += (body[i] == "{") - (body[i] == "}")
                 i += 1
             body = body[:at.start()] + body[i:]
+        # ANY selector, not just a bare class -- the first version of this
+        # check looked at bare classes only and sat green over three more
+        # duplicates: `#graph .node{cursor:pointer}` written out twice
+        # verbatim, and `.marks` and `.badge` each declared at one font size
+        # and silently redeclared at another a hundred lines later.
+        #
+        # Counted only where the selector stands ALONE. `th,td{...}` followed
+        # by `th{...}` is the ordinary shared-then-specific idiom, not a
+        # collision, and flagging it would train the reader to ignore this.
         seen = {}
         for selectors, _decls in re.findall(r"([^{}]+)\{([^{}]*)\}", body):
-            for sel in selectors.split(","):
-                sel = sel.strip()
-                if re.fullmatch(r"\.[A-Za-z][\w-]*", sel):
-                    seen[sel] = seen.get(sel, 0) + 1
+            parts = [" ".join(p.split()) for p in selectors.split(",") if p.strip()]
+            if len(parts) == 1:
+                seen[parts[0]] = seen.get(parts[0], 0) + 1
         dupes = sorted(k for k, n in seen.items() if n > 1)
-        self.assertEqual(dupes, [], f"one class, two rules: {dupes}")
+        self.assertEqual(dupes, [], f"one selector, two rules: {dupes}")
         self.assertIn(".topbar", seen,
-                      "the scan found no bare class selectors, so it is not "
+                      "the scan found no selectors at all, so it is not "
                       "looking at the stylesheet")
+        self.assertIn("th,td", [" ".join(x.split()) for x in
+                                re.findall(r"([^{}]+)\{", body)],
+                      "the shared-then-specific case is gone from the "
+                      "stylesheet, so this no longer proves it is allowed")
+
+
+class TestTrace(unittest.TestCase):
+    """Clicking a module removes the rest of the map and lays out what is left.
+
+    Run against the map's own script, because every part of this is decided in
+    the browser: which modules survive, what row each one lands in, and what
+    the bar says was left out.
+    """
+
+    FIXTURE = {
+        # a -> b -> c, plus d beside c, and an island nothing touches.
+        "a.py": 'import b\nif __name__ == "__main__":\n    b.go()\n',
+        "b.py": "import c\nimport d\ndef go():\n    c.run(); d.run()\n",
+        "c.py": "def run():\n    pass\n",
+        "d.py": "def run():\n    pass\n",
+        "island.py": "x = 1\n",
+    }
+
+    def _run(self, probe):
+        import json, re, shutil, subprocess
+        if not shutil.which("node"):
+            self.skipTest("node not installed")
+        t = Tree(self.FIXTURE)
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            doc = fh.read()
+        js = re.findall(r"<script>(.*?)</script>", doc, re.S)[-1]
+        stub = """
+const made = {};
+function fake(id){
+  return {id: id, textContent: '', innerHTML: '', hidden: false, dataset: {},
+          scrollTop: 0, attrs: {}, kids: [],
+          setAttribute(k, v){ this.attrs[k] = v; },
+          addEventListener(){}, scrollIntoView(){}, closest(){ return null; },
+          classList:{toggle(){}, remove(){}, contains(){ return false; }},
+          querySelectorAll(){ return parseNodes(this.innerHTML); }};
+}
+function el(id){ if(!made[id]) made[id] = fake(id); return made[id]; }
+// Read back what the trace actually drew, from the markup it produced.
+function parseNodes(markup){
+  const out = [];
+  const re = /<g class="node([^"]*)" data-name="([^"]+)" data-state="([^"]+)"/g;
+  let m;
+  while((m = re.exec(markup))) out.push({cls: m[1], name: m[2], state: m[3],
+                                         dataset:{name: m[2]},
+                                         addEventListener(){}});
+  return out;
+}
+global.CSS = {escape: s => s};
+global.window = {addEventListener(){}, removeEventListener(){}};
+global.document = {
+  getElementById: id => el(id),
+  querySelectorAll: () => [],
+  querySelector: sel => sel === '.mapwrap' ? el('mapwrap') : null,
+  addEventListener(){}};
+"""
+        script = os.path.join(t.dir, "trace.js")
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(stub + "\n" + js + probe)
+        r = subprocess.run(["node", script], capture_output=True, text=True,
+                           timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-900:])
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def _rows(self, markup):
+        """Row index per module, read out of the y of each card."""
+        import re
+        rows = {}
+        for block in re.findall(r'<g class="node[^>]*data-name="([^"]+)"[^>]*>'
+                                r'.*?<rect class="card" x="[\d.]+" y="([\d.]+)"',
+                                markup, re.S):
+            rows.setdefault(block[0], float(block[1]))
+        return rows
+
+    def test_tracing_a_module_keeps_only_what_it_connects_to(self):
+        seen = self._run("""
+const counted = drawTrace('b');
+console.log(JSON.stringify({
+  counted: counted,
+  markup: document.getElementById('trace').innerHTML}));
+""")
+        markup = seen["markup"]
+        rows = self._rows(markup)
+        self.assertEqual(sorted(rows), ["a", "b", "c", "d"],
+                         "the trace kept the wrong modules")
+        self.assertNotIn("island", rows,
+                         "a module with no connection to b survived")
+        self.assertEqual(seen["counted"], {"shown": 4, "above": 1, "below": 2})
+        # Laid out by distance from the module that was clicked: its importer
+        # above it, the two it imports below, on one row between them.
+        self.assertLess(rows["a"], rows["b"])
+        self.assertLess(rows["b"], rows["c"])
+        self.assertEqual(rows["c"], rows["d"],
+                         "two modules at the same distance are on two rows")
+        self.assertIn('class="node seed" data-name="b"', markup,
+                      "the module being traced is not marked")
+
+    def test_a_module_nothing_connects_to_traces_to_itself(self):
+        seen = self._run("""
+const counted = drawTrace('island');
+console.log(JSON.stringify({
+  counted: counted,
+  markup: document.getElementById('trace').innerHTML}));
+""")
+        self.assertEqual(seen["counted"], {"shown": 1, "above": 0, "below": 0})
+        self.assertEqual(sorted(self._rows(seen["markup"])), ["island"])
+
+    def test_entering_a_trace_hides_the_overview_and_says_what_it_left_out(self):
+        seen = self._run("""
+enterTrace('b');
+const after = {graph: document.getElementById('graph').hidden,
+               trace: document.getElementById('trace').hidden,
+               bar: document.getElementById('tracebar').hidden,
+               of: document.getElementById('traceof').textContent,
+               count: document.getElementById('tracecount').textContent};
+leaveTrace();
+const back = {graph: document.getElementById('graph').hidden,
+              trace: document.getElementById('trace').hidden,
+              bar: document.getElementById('tracebar').hidden};
+console.log(JSON.stringify({after: after, back: back}));
+""")
+        self.assertEqual(seen["after"]["graph"], True,
+                         "the overview is still drawn behind the trace")
+        self.assertEqual(seen["after"]["trace"], False)
+        self.assertEqual(seen["after"]["bar"], False)
+        self.assertEqual(seen["after"]["of"], "b")
+        self.assertIn("out of 5 modules", seen["after"]["count"],
+                      "the bar does not say what was left out")
+        self.assertEqual(seen["back"], {"graph": False, "trace": True,
+                                        "bar": True},
+                         "leaving the trace did not restore the whole map")
+
+    def test_the_trace_draws_the_same_card_text_as_the_overview(self):
+        """One truncation rule, applied in Python, used by both views."""
+        seen = self._run("""
+drawTrace('b');
+console.log(JSON.stringify({markup: document.getElementById('trace').innerHTML,
+                            card: DATA['b'].card}));
+""")
+        self.assertIsNotNone(seen["card"], "the card text never reached the payload")
+        self.assertIn(seen["card"]["name"], seen["markup"])
+        self.assertIn(seen["card"]["meta"], seen["markup"])
+        self.assertEqual(seen["card"]["name"], "b.py")
 
 
 class TestConventions(unittest.TestCase):

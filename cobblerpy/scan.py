@@ -109,6 +109,10 @@ class Module:
         self.names_used = set()
         self.toplevel_effects = []        # statements that run on import
         self.has_main_guard = False
+        # `#!/usr/bin/env python` on line 1. The author is saying this file is
+        # run as a program, which is the strongest statement available about a
+        # module nothing imports -- stronger than any guess from its name.
+        self.shebang = None
         self.effects = {}                 # category -> [(name, lineno)]
         self.todos = []                   # (tag, text, lineno)
         self.commented_code = []          # linenos that look like disabled code
@@ -130,7 +134,8 @@ class Module:
             "imports": self.imports,
             "definitions": [d.as_dict() for d in self.definitions],
             "calls": self.calls, "toplevel_effects": self.toplevel_effects,
-            "has_main_guard": self.has_main_guard, "effects": self.effects,
+            "has_main_guard": self.has_main_guard, "shebang": self.shebang,
+            "effects": self.effects,
             "todos": self.todos, "commented_code": self.commented_code,
         }
 
@@ -415,6 +420,17 @@ def _toplevel_effects(tree):
     return out
 
 
+def _shebang(source):
+    """The interpreter line, if the file has one.
+
+    Only a `#!` on the very first line counts -- that is the only place the
+    kernel looks, so a `#!` anywhere else is an ordinary comment and treating
+    it as an execution signal would be inventing one.
+    """
+    first = (source or "").split("\n", 1)[0].strip()
+    return first if first.startswith("#!") else None
+
+
 def _has_main_guard(tree):
     for node in ast.walk(tree):
         if not isinstance(node, ast.If):
@@ -459,6 +475,7 @@ def scan_file(path, root):
         _read_comments(module, source)
         return module
 
+    module.shebang = _shebang(source)
     module.docstring = ast.get_docstring(tree)
     _Visitor(module).visit(tree)
     module.toplevel_effects = _toplevel_effects(tree)
