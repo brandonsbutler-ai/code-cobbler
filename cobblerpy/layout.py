@@ -117,7 +117,9 @@ def compute(project, frontier_by_module=None):
     # lines at the same depth.
     # Ten per row rather than eight: the narrower card pays for two more
     # columns inside the same page width, so a long row becomes fewer lines.
-    ROW_MAX = 10
+    # Eight per row. The chart column is two thirds of the page now, so a
+    # ten-wide chart overflowed it and brought the horizontal scrollbar back.
+    ROW_MAX = 8
 
     widest = min(max((len(v) for v in order.values()), default=1), ROW_MAX)
     row_index, placed_rows = {}, 0

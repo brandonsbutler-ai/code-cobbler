@@ -16,6 +16,22 @@ import json
 
 from .layout import NODE_H, NODE_W, state_of
 
+def state_for(node, name, project, deadends_by_module):
+    """The state one module is in, for callers outside this module.
+
+    The report needs the same answer the chart draws, and recomputing it from
+    a different set of rules is how a legend and a picture come to disagree.
+    """
+    def _is_test(key):
+        parts = str(key).lower().replace("-", "_").split(".")
+        return any(p in ("tests", "test", "conftest") or p.startswith("test_")
+                   or p.endswith("_test") for p in parts)
+    tested = any(name in project.imports.get(k, ())
+                 for k in project.by_dotted if _is_test(k))
+    return state_of(node, tested=tested,
+                    deadend=bool(deadends_by_module.get(name)))
+
+
 def _fit(text, chars, keep_end=0):
     """Truncate to fit a card. The full value is on hover and in the panel.
 
@@ -53,19 +69,15 @@ _PALETTE = {
                    "execution reaches here and stops inside it"),
     "maybe":      ("#bc8cff", "#1b1526",
                    "no static path reaches it -- an inference, not a verdict"),
-
-    "clean":     ("#2d6a4f", "#e7f2ec", "reachable, no unfinished-work signals"),
-    "warm":      ("#8a5a00", "#fdf4e3", "carries signals of unfinished work"),
-    "hot":       ("#a13d2d", "#fbecea", "several signals of unfinished work"),
-    "broken":    ("#7b2d26", "#f7dedb", "this file does not parse"),
-    "orphan":    ("#5a4b8a", "#efecf8", "nothing imports it, nothing starts from it"),
-    "unreached": ("#6b6b66", "#ececea", "no static path from an entry point (inference)"),
-    # Execution reaches this module and stops inside it. Not the same fact as
-    # "carries signals of unfinished work", so not the same colour: this is
-    # the boundary where somebody put the pen down.
-    "deadend": ("#b0247f", "#fbe9f4",
-                "execution reaches here and stops"),
+    "broken":     ("#f4796b", "#2a1614", "this file does not parse"),
 }
+
+# Every state the layout can return has an entry above, and nothing else does.
+# Leftovers from the previous vocabulary sat here and were rendered into the
+# legend, so the map explained nine colours while drawing six -- two of them
+# saying the same thing in different words.
+assert not (set(_PALETTE) - {"confirmed", "tested", "live", "unfinished",
+                             "deadend", "maybe", "broken"}), _PALETTE
 
 
 def _e(v):

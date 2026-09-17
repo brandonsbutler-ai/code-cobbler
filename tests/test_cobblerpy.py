@@ -1353,6 +1353,41 @@ class TestDeadEndNoise(unittest.TestCase):
 
 
 class TestEvidenceCompleteness(unittest.TestCase):
+
+    def _render_panel(self, page_html, module):
+        """Run the map's own script and return what the panel renders.
+
+        The detail is built in the browser now, so a test that reads the
+        static HTML tests nothing about it. Skipped where node is absent.
+        """
+        import json, re as _re, shutil as _sh, subprocess as _sp, tempfile as _tf
+        if not _sh.which("node"):
+            self.skipTest("node not installed")
+        js = _re.findall(r"<script>(.*?)</script>", page_html, _re.S)[-1]
+        ids = list(set(_re.findall(r'id="([^"]+)"', page_html)))
+        stub = ("const made={};function el(i){if(!made[i])made[i]={id:i,"
+                "textContent:'',innerHTML:'',dataset:{},classList:{toggle(){},"
+                "remove(){},contains(){return false}},addEventListener(){},"
+                "scrollTop:0,scrollIntoView(){},closest(){return null}};"
+                "return made[i];}"
+                f"const KNOWN=new Set({ids});"
+                "global.CSS={escape:s=>s};"
+                "global.document={getElementById:i=>KNOWN.has(i)?el(i):null,"
+                "querySelectorAll:()=>[],querySelector:()=>null,"
+                "addEventListener(){}};")
+        probe = (f"\nopenModule({json.dumps(module)});"
+                 "\nprocess.stdout.write(document.getElementById('pbody').innerHTML);")
+        with _tf.NamedTemporaryFile("w", suffix=".js", delete=False,
+                                    encoding="utf-8") as fh:
+            fh.write(stub + "\n" + js + probe)
+            path = fh.name
+        try:
+            r = _sp.run(["node", path], capture_output=True, text=True, timeout=300)
+        finally:
+            os.unlink(path)
+        self.assertEqual(r.returncode, 0, r.stderr[:400])
+        return r.stdout
+
     """A chip's count and the evidence behind it must not disagree silently."""
 
     def test_a_truncated_evidence_list_says_how_many_it_left_out(self):
@@ -1375,9 +1410,29 @@ class TestEvidenceCompleteness(unittest.TestCase):
                   origins=s.origins, modules_by_key=s.modules_by_key)
         with open(out, encoding="utf-8") as fh:
             page = Page(fh.read())
-        listed = page.text.count("commented_code:")
-        self.assertEqual(listed, 6, "the cap itself changed; update this test")
-        self.assertIn("and 3 more commented code", page.text)
+        # The evidence moved onto the module's own panel when the tables
+        # below the chart went away; it is rendered by the click handler from
+        # the payload, so the payload is where it can be verified.
+        import json as _json, re as _re
+        with open(out, encoding="utf-8") as fh:
+            raw = fh.read()
+        data = _json.loads(_re.search(r"const DATA = (\{.*?\});\n", raw, _re.S)
+                           .group(1).replace("\\u003c", "<").replace("\\u003e", ">"))
+        hits = data["mod"]["signals"].get("commented_code", [])
+        self.assertEqual(len(hits), 9, "the fixture changed")
+        # Rendered by the click handler, so the handler is what gets run. The
+        # count is in the payload either way; what needs proving is that the
+        # panel SAYS how many it left out.
+        rendered = self._render_panel(raw, "mod")
+        # Counted by CLASS, not by the signal's name: the source snippet
+        # below carries a marker on each annotated line, so counting the name
+        # counted the evidence lines plus every marker in the code.
+        # Scoped to THIS signal kind. Counting every evidence line counted the
+        # module's lone no_docstring hit as well, which is a seventh line and
+        # nothing to do with the cap being tested here.
+        self.assertEqual(rendered.count('class="ln ev">commented_code:'), 6,
+                         "the cap itself changed; update this test")
+        self.assertIn("and 3 more commented code", rendered)
 
     def test_an_untruncated_list_says_nothing_extra(self):
         t = Tree({
