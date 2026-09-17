@@ -92,6 +92,10 @@ def compute(project, frontier_by_module=None):
     placed = {n for names in layers.values() for n in names}
     unreached = sorted(set(project.by_dotted) - placed)
     if unreached:
+        # Appended as further rows, these read as DEEPER LEVELS of the same
+        # tree -- rows of grey that look like the flow petering out, and then
+        # colour "picking back up" four rows down. Nothing above reaches any
+        # of them. They are a separate pool, and the gap below says so.
         layers[max(layers, default=-1) + 1] = unreached
 
     edges = [(a, b) for a, targets in project.imports.items() for b in targets
@@ -117,7 +121,10 @@ def compute(project, frontier_by_module=None):
 
     widest = min(max((len(v) for v in order.values()), default=1), ROW_MAX)
     row_index, placed_rows = {}, 0
+    detached_from = (max(order) if unreached and len(order) > 1 else None)
     for depth in sorted(order):
+        if depth == detached_from:
+            placed_rows += 1          # a blank row, so the pool reads as apart
         row_index[depth] = placed_rows
         placed_rows += max(1, -(-len(order[depth]) // ROW_MAX))   # ceil
 
@@ -171,10 +178,58 @@ def compute(project, frontier_by_module=None):
     width = MARGIN * 2 + widest * (NODE_W + X_GAP) - X_GAP
     height = MARGIN * 2 + placed_rows * (NODE_H + Y_GAP) - Y_GAP
     return {"nodes": nodes, "edges": routed,
-            "width": max(width, 320), "height": max(height, 200)}
+            "width": max(width, 320), "height": max(height, 200),
+            # Where the connected part of the chart ends. Everything at or
+            # below this y is reached by nothing above it.
+            "detached_y": (MARGIN + (row_index[detached_from] - 1)
+                           * (NODE_H + Y_GAP) + NODE_H / 2
+                           if detached_from is not None else None),
+            "detached_count": len(unreached)}
 
 
-def state_of(node):
+def state_of(node, tested=False, deadend=False):
+    """The colour band a node belongs in, and why.
+
+    Six bands, and the order below is the order of certainty. What a reader
+    wants from this chart is the PATH THAT WORKS -- which files are reached,
+    exercised and finished -- and that was not sayable before: every reachable
+    module was one of three shades of "has signals or does not", with nothing
+    distinguishing code a test actually runs from code nobody has ever called.
+
+        confirmed  reached from an entry point AND exercised by a test AND
+                   carrying no unfinished-work signals
+        tested     a test exercises it, but it is not finished
+        live       reached, finished, but no test touches it
+        unfinished reached, and carrying signals
+        deadend    execution reaches it and stops inside
+        maybe      no static path reaches it -- an INFERENCE, never a verdict
+
+    Grey stays distinct from red for the reason it always did: "no static path
+    reaches this" is a statement about a language that dispatches through
+    registries and getattr, not a statement that the code is dead.
+    """
+    if deadend:
+        return "deadend", "execution reaches here and stops inside it"
+    if node["orphan"]:
+        return "maybe", "nothing imports it and nothing starts from it"
+    if node["unreached"]:
+        return "maybe", "no static path from an entry point (inference, not proof)"
+    if node["counts"].get("syntax_error"):
+        return "broken", "this file does not parse"
+    real = {k: v for k, v in node["counts"].items()
+            if k not in ("no_docstring", "unreached")}
+    if tested and not real:
+        return "confirmed", "reached from a start point and exercised by a test"
+    if tested:
+        return "tested", "a test exercises it, but it still carries signals"
+    if not real:
+        return "live", "reached from a start point, nothing unfinished in it"
+    if node["score"] >= 8:
+        return "unfinished", "several signals of unfinished work"
+    return "unfinished", "carries signals of unfinished work"
+
+
+def _legacy_state_of(node):
     """The colour band a node belongs in, and why.
 
     Kept in one place because the legend has to say exactly what each colour is
