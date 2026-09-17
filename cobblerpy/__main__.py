@@ -114,6 +114,29 @@ def _print_summary(s, limit=12):
         print("\n  totals: " + ", ".join(f"{k.replace('_', ' ')} {v}"
                                          for k, v in s.totals.items()))
 
+    # Competing attempts first: on the codebase this was built for, "these
+    # four files are the same job" is the sentence that decides whether the
+    # next hour is spent reading or rewriting.
+    from .attempts import find as find_attempts
+    groups = find_attempts(s.project, s.modules_by_key, s.origins)
+    if groups:
+        print("\nTHE SAME JOB, STARTED OVER")
+        for group in groups[:3]:
+            print(f"  {len(group['attempts'])} attempts share "
+                  f"{', '.join(group['shared'][:4])}")
+            for attempt in group["attempts"]:
+                mark = "->" if attempt["module"] == group["resume_at"] else "  "
+                print(f"   {mark} {attempt['percent']:>3}%  {attempt['relpath']}")
+            print(f"      resume at {group['resume_relpath']} "
+                  f"({group['resume_percent']}% of what it started)")
+            for fact in group["resume_facts"]:
+                print(f"        {fact}")
+            for module, extra in group["elsewhere"].items():
+                has = ", ".join(extra) if extra else "the only tests for this job"
+                print(f"        {module} has {has}")
+        if len(groups) > 3:
+            print(f"  ... and {len(groups) - 3} more groups")
+
     forks = []
     if h_available(s):
         from .diversion import find as find_forks

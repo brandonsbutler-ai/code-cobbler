@@ -56,6 +56,33 @@ varies in strength. A `__main__` guard is near-certain; a suggestive filename is
 **What depends on what** -- the import graph, how far each module sits from a start point, which
 modules everything leans on, and any import cycles.
 
+**The same job, started over** -- modules that define enough of the same things to be attempts
+at one piece of work rather than separate pieces, ranked by how much of what each one started is
+filled in, with the gaps named:
+
+```
+4 attempts share normalise_codes, parse_claim, submit_claim, validate_claim
+ ->  75%  app/claims_v3.py
+     42%  app/claims_ingest.py
+     35%  app/intake_new.py
+     33%  app/intake.py
+    resume at app/claims_v3.py (75% of what it started)
+      5 of 6 definitions have bodies
+      still stubbed: submit_claim
+      reachable from an entry point
+      app.claims_ingest has audit_claim
+      app.intake has the only tests for this job
+```
+
+Matching is on shared definition names and **never on style**. Each attempt was written to a
+different developer's taste, so anything keyed on naming conventions, formatting or docstring
+habits would rank the tidiest author rather than the furthest-advanced work. Documentation is
+not scored at all, and there is a test that documenting a weaker attempt does not make it win.
+
+The percentage is a proportion of what that file itself started, not of an imagined finished
+feature. It answers "how much of this attempt is filled in", which is the question that decides
+whether continuing beats starting over.
+
 **Where the work stopped** -- modules ranked by weighted signals of unfinished work, so reading
 top-down gives you an order to look at the code in:
 
@@ -119,7 +146,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 60 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 69 tests, no pytest required
 python3 verify_e2e.py                        # 62 end-to-end claim checks
 ```
 
