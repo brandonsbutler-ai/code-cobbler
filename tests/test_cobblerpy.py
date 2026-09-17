@@ -1056,20 +1056,47 @@ class TestFolderOverview(unittest.TestCase):
         with open(out, encoding="utf-8") as fh:
             return s, fh.read()
 
-    def test_a_longer_module_gets_a_wider_card(self):
-        from cobblerpy.layout import card_width, CARD_W_MIN, CARD_W_MAX
-        self.assertEqual(card_width(0), CARD_W_MIN)
-        self.assertEqual(card_width(5), CARD_W_MIN)
-        self.assertEqual(card_width(999999), CARD_W_MAX)
-        widths = [card_width(n) for n in (60, 200, 700, 2000)]
-        self.assertEqual(widths, sorted(widths), widths)
-        self.assertEqual(len(set(widths)), len(widths),
-                         f"different sizes drew the same width: {widths}")
+    def test_a_longer_module_gets_a_longer_size_bar(self):
+        """Every card is one size; the BAR carries the line count.
+
+        Cards used to be sized individually. It encoded the right fact and
+        drew a badly built brick wall -- no column lined up with the one
+        above it -- and unaligned areas are the weaker comparison anyway:
+        people read lengths off a shared baseline far more accurately than
+        they judge rectangles that share nothing.
+        """
+        from cobblerpy.layout import size_share
+        self.assertEqual(size_share(0), 0.0)
+        self.assertEqual(size_share(5), 0.0)
+        self.assertEqual(size_share(999999), 1.0)
+        shares = [size_share(n) for n in (60, 200, 700, 2000)]
+        self.assertEqual(shares, sorted(shares), shares)
+        self.assertEqual(len(set(shares)), len(shares),
+                         f"different sizes drew the same bar: {shares}")
         # Log, not linear: ten times the lines is nowhere near ten times the
-        # card, or the 25,556-line module in the corpus draws the median one
+        # bar, or the 25,556-line module in the corpus draws the median one
         # as a sliver.
-        self.assertLess(card_width(2000) - card_width(200),
-                        (card_width(200) - card_width(20)) * 4)
+        self.assertLess(size_share(2000) - size_share(200),
+                        (size_share(200) - size_share(20)) * 4)
+
+    def test_every_card_is_one_size_and_sits_on_an_even_column(self):
+        from cobblerpy.layout import compute_folders, CARD_W, CARD_H
+        files = {f"pkg/m{i}.py": "x = 1\n" * (i * 53 % 1400 + 3) for i in range(30)}
+        files["run.py"] = 'if __name__ == "__main__":\n    pass\n'
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        nodes = compute_folders(s.project, s.modules_by_key)["nodes"]
+        self.assertEqual({(n["w"], n["h"]) for n in nodes.values()},
+                         {(CARD_W, CARD_H)}, "the cards are not all one size")
+        pkg = [n for n in nodes.values() if n["folder"] == "pkg"]
+        columns = sorted({n["x"] for n in pkg})
+        self.assertGreater(len(columns), 1, "everything landed in one column")
+        gaps = {round(b - a) for a, b in zip(columns, columns[1:])}
+        self.assertEqual(len(gaps), 1,
+                         f"the columns are not evenly spaced: {sorted(gaps)}")
+        self.assertGreater(len({round(n["share"], 3) for n in pkg}), 1,
+                           "the bar does not vary, so nothing carries size")
 
     def test_every_module_is_inside_its_own_folder_box(self):
         from cobblerpy.layout import compute_folders
@@ -1203,7 +1230,7 @@ class TestTrace(unittest.TestCase):
         "island.py": "x = 1\n",
     }
 
-    def _run(self, probe):
+    def _run(self, probe, graph_nodes=()):
         import json, re, shutil, subprocess
         if not shutil.which("node"):
             self.skipTest("node not installed")
@@ -1219,10 +1246,17 @@ class TestTrace(unittest.TestCase):
         js = re.findall(r"<script>(.*?)</script>", doc, re.S)[-1]
         stub = """
 const made = {};
+// `hidden` reads the ATTRIBUTE here, exactly as it does on a real <svg>:
+// SVGElement has no `hidden` property, so assigning one changes nothing that
+// CSS can see. The old stub made `.hidden = true` work, and the map shipped
+// with a trace bar announcing a trace over an overview that never went away.
 function fake(id){
-  return {id: id, textContent: '', innerHTML: '', hidden: false, dataset: {},
+  return {id: id, textContent: '', innerHTML: '', dataset: {},
           scrollTop: 0, attrs: {}, kids: [],
+          get hidden(){ return 'hidden' in this.attrs; },
           setAttribute(k, v){ this.attrs[k] = v; },
+          removeAttribute(k){ delete this.attrs[k]; },
+          hasAttribute(k){ return k in this.attrs; },
           addEventListener(){}, scrollIntoView(){}, closest(){ return null; },
           classList:{toggle(){}, remove(){}, contains(){ return false; }},
           querySelectorAll(){ return parseNodes(this.innerHTML); }};
@@ -1238,14 +1272,26 @@ function parseNodes(markup){
                                          addEventListener(){}});
   return out;
 }
+// Stand-ins for the overview's cards, so the listeners the page wires up
+// at load can be fired and the result read off the nodes themselves.
+const GRAPH_NODES = %s.map(name => {
+  const n = {dataset: {name: name}, cls: new Set(), on: {},
+             addEventListener(type, fn){ this.on[type] = fn; },
+             setAttribute(){}, scrollIntoView(){}, closest(){ return null; }};
+  n.classList = {toggle(c, want){ want ? n.cls.add(c) : n.cls.delete(c); },
+                 remove(c){ n.cls.delete(c); },
+                 contains(c){ return n.cls.has(c); }};
+  return n;
+});
+global.GRAPH_NODES = GRAPH_NODES;
 global.CSS = {escape: s => s};
 global.window = {addEventListener(){}, removeEventListener(){}};
 global.document = {
   getElementById: id => el(id),
-  querySelectorAll: () => [],
+  querySelectorAll: sel => sel.indexOf('#graph .node') >= 0 ? GRAPH_NODES : [],
   querySelector: sel => sel === '.mapwrap' ? el('mapwrap') : null,
   addEventListener(){}};
-"""
+""" % json.dumps(list(graph_nodes))
         script = os.path.join(t.dir, "trace.js")
         with open(script, "w", encoding="utf-8") as fh:
             fh.write(stub + "\n" + js + probe)
@@ -1299,6 +1345,85 @@ console.log(JSON.stringify({
                                            "left_out": 0})
         self.assertEqual(sorted(self._rows(seen["markup"])), ["island"])
 
+    def test_a_wide_level_wraps_instead_of_running_off_the_chart(self):
+        """One module imported by many put them all on one row.
+
+        `_license` in the corpus has 147 modules above it. They were laid out
+        on a single row two and a half thousand pixels wide, off the side of
+        the page, while the levels above sat empty in the middle of it.
+        """
+        import json, re, shutil, subprocess
+        if not shutil.which("node"):
+            self.skipTest("node not installed")
+        files = {f"u{i}.py": "import core\ndef go():\n    return core.run()\n"
+                 for i in range(30)}
+        files["core.py"] = "def run():\n    return 1\n"
+        files["main.py"] = ("import u0\nif __name__ == '__main__':\n"
+                            "    u0.go()\n")
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            doc = fh.read()
+        js = re.findall(r"<script>(.*?)</script>", doc, re.S)[-1]
+        stub = """
+const made = {};
+function fake(id){ return {id: id, textContent: '', innerHTML: '',
+  dataset: {}, scrollTop: 0, attrs: {},
+  get hidden(){ return 'hidden' in this.attrs; },
+  setAttribute(k,v){ this.attrs[k]=v; }, removeAttribute(k){ delete this.attrs[k]; },
+  addEventListener(){}, scrollIntoView(){}, closest(){ return null; },
+  classList:{toggle(){}, remove(){}, contains(){ return false; }},
+  querySelectorAll(){ return []; }}; }
+function el(id){ if(!made[id]) made[id] = fake(id); return made[id]; }
+global.CSS = {escape: s => s};
+global.window = {addEventListener(){}, removeEventListener(){}};
+global.document = {getElementById: id => el(id), querySelectorAll: () => [],
+  querySelector: sel => sel === '.mapwrap' ? el('mapwrap') : null,
+  addEventListener(){}};
+"""
+        probe = """
+drawTrace('core');
+const svg = document.getElementById('trace');
+const cards = [];
+const re = /<rect class="card" x="([\\d.]+)" y="([\\d.]+)" width="([\\d.]+)" height="([\\d.]+)"/g;
+let m; while((m = re.exec(svg.innerHTML))) cards.push([+m[1], +m[2], +m[3], +m[4]]);
+console.log(JSON.stringify({
+  cards: cards.length,
+  rects: cards,
+  rightmost: Math.max.apply(null, cards.map(c => c[0] + c[2])),
+  declared: +svg.attrs.width,
+  rows: new Set(cards.map(c => c[1])).size}));
+"""
+        script = os.path.join(t.dir, "wrap.js")
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(stub + "\n" + js + probe)
+        r = subprocess.run(["node", script], capture_output=True, text=True,
+                           timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-900:])
+        seen = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertGreaterEqual(seen["cards"], 31,
+                                "the fixture is not wide enough to wrap")
+        self.assertLessEqual(seen["rightmost"], seen["declared"],
+                             "a card is drawn past the edge of the chart")
+        self.assertGreater(seen["rows"], 2,
+                           "thirty cards on one level did not wrap onto "
+                           "several rows")
+        # And nothing sits on top of anything else. Counting rows is not
+        # enough: a level that stops advancing lands its rows on the level
+        # below, and a level drawn on one line piles every card in it on the
+        # same spot -- both leave the row count exactly as it was.
+        rects = seen["rects"]
+        for i, a in enumerate(rects):
+            for b in rects[i + 1:]:
+                apart = (a[0] + a[2] <= b[0] or b[0] + b[2] <= a[0]
+                         or a[1] + a[3] <= b[1] or b[1] + b[3] <= a[1])
+                self.assertTrue(apart, f"two cards overlap: {a} {b}")
+
     def test_a_dead_end_is_left_out_of_the_trace_and_counted(self):
         """A path that stops inside a module is not a route to anywhere.
 
@@ -1333,8 +1458,11 @@ console.log(JSON.stringify({
         js = re.findall(r"<script>(.*?)</script>", doc, re.S)[-1]
         stub_dom = """
 const made = {};
-function fake(id){ return {id: id, textContent: '', innerHTML: '', hidden: false,
-  dataset: {}, scrollTop: 0, attrs: {}, setAttribute(k,v){ this.attrs[k]=v; },
+function fake(id){ return {id: id, textContent: '', innerHTML: '',
+  dataset: {}, scrollTop: 0, attrs: {},
+  get hidden(){ return 'hidden' in this.attrs; },
+  setAttribute(k,v){ this.attrs[k]=v; }, removeAttribute(k){ delete this.attrs[k]; },
+  hasAttribute(k){ return k in this.attrs; },
   addEventListener(){}, scrollIntoView(){}, closest(){ return null; },
   classList:{toggle(){}, remove(){}, contains(){ return false; }},
   querySelectorAll(){ return []; }}; }
@@ -1363,38 +1491,65 @@ console.log(JSON.stringify({counted: counted,
         self.assertIn('data-name="c"', seen["markup"],
                       "the filter took a live module with it")
 
-    def test_hover_traces_and_click_pins(self):
-        """A hover trace must not stick; a pinned one must.
+    def test_only_a_click_opens_the_flowchart(self):
+        """Run the handlers the page actually wires up.
 
-        Without the pin, moving the pointer off the card on the way to the
-        panel redraws the chart under you and you lose what you were reading.
+        Hover used to draw the trace, which REPLACES the chart -- and on a
+        grid you have to mouse across in order to scroll it, that meant the
+        overview was gone the moment the pointer touched a card, with nothing
+        to bring it back. Hover greys out the unrelated cards; the flowchart
+        is a click.
+
+        Checked by firing the real listeners against real stand-in nodes and
+        reading what happened to them, not by looking for words in the
+        script: `toggle('dim', false)` contains the word dim and greys out
+        nothing, and an assertion that reads the source cannot tell.
         """
         seen = self._run("""
-const hits = [];
-enterTrace('b', false);
-hits.push({of: document.getElementById('traceof').textContent,
-           how: document.getElementById('tracehow').textContent});
-enterTrace('c', false);               // still free to follow the pointer
-hits.push({of: document.getElementById('traceof').textContent,
-           how: document.getElementById('tracehow').textContent});
-enterTrace('c', true);                // clicked: settle here
-hits.push({of: document.getElementById('traceof').textContent,
-           how: document.getElementById('tracehow').textContent});
-leaveTrace();
-// And hover again AFTERWARDS. A pin that outlives its trace does not show
-// up until the next hover, which then silently does nothing.
-enterTrace('a', false);
-hits.push({of: document.getElementById('traceof').textContent,
-           how: document.getElementById('tracehow').textContent,
-           graph: document.getElementById('graph').hidden});
-console.log(JSON.stringify(hits));
+// The overview's nodes, wired by the page at load. GRAPH_NODES is what
+// document.querySelectorAll('#graph .node') handed it.
+const by = {};
+GRAPH_NODES.forEach(n => { by[n.dataset.name] = n; });
+by['b'].on.mouseenter();
+const dimmed = GRAPH_NODES.filter(n => n.cls.has('dim')).map(n => n.dataset.name);
+const tracedOnHover = !document.getElementById('graph').hidden;
+by['b'].on.mouseleave();
+const afterLeave = GRAPH_NODES.filter(n => n.cls.has('dim')).map(n => n.dataset.name);
+by['b'].on.click();
+console.log(JSON.stringify({
+  dimmed: dimmed.sort(), afterLeave: afterLeave,
+  overviewSurvivedHover: tracedOnHover,
+  overviewGoneAfterClick: document.getElementById('graph').hidden,
+  of: document.getElementById('traceof').textContent}));
+""", graph_nodes=["a", "b", "c", "d", "island"])
+        # b imports c and d and is imported by a, so only the island greys.
+        self.assertEqual(seen["dimmed"], ["island"],
+                         "hovering greyed out the wrong cards")
+        self.assertEqual(seen["afterLeave"], [],
+                         "the grey did not lift when the pointer left")
+        self.assertTrue(seen["overviewSurvivedHover"],
+                        "hovering still replaces the whole map")
+        self.assertTrue(seen["overviewGoneAfterClick"],
+                        "clicking no longer opens the flowchart")
+        self.assertEqual(seen["of"], "b")
+
+    def test_the_flowchart_keeps_only_the_associated_modules(self):
+        seen = self._run("""
+enterTrace('b', true);
+const shown = [];
+const re = /data-name="([^"]+)"/g; let m;
+const markup = document.getElementById('trace').innerHTML;
+while((m = re.exec(markup))) shown.push(m[1]);
+console.log(JSON.stringify({shown: shown.sort(),
+  graph: document.getElementById('graph').hidden,
+  of: document.getElementById('traceof').textContent}));
 """)
-        self.assertEqual([h["of"] for h in seen], ["b", "c", "c", "a"])
-        self.assertEqual([h["how"] for h in seen],
-                         ["hovering", "hovering", "pinned", "hovering"],
-                         "the pin outlived the trace it belonged to")
-        self.assertEqual(seen[-1]["graph"], True,
-                         "the hover after leaving did not re-enter a trace")
+        self.assertEqual(seen["shown"], ["a", "b", "c", "d"],
+                         "the flowchart kept something unassociated, or lost "
+                         "something associated")
+        self.assertEqual(seen["graph"], True,
+                         "the rest of the map is still drawn behind it")
+        self.assertEqual(seen["of"], "b")
 
     def test_entering_a_trace_hides_the_overview_and_says_what_it_left_out(self):
         seen = self._run("""

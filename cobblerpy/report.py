@@ -64,10 +64,14 @@ body{margin:0;background:var(--bg);color:var(--fg);padding:0 0 28px;
 /* Two thirds chart, one third detail. The chart was shifted left and left at
    its own width, so the page got wider without the chart getting wider with
    it. */
-.wrap{max-width:2100px;margin:0 auto;padding:22px 16px 0;
+/* Three to one, not two to one. The chart is the page; the panel is a
+   caption on whatever is selected, and it was being given a third of a 1920
+   screen to hold one module's detail. Side padding comes down with it,
+   because a gutter is not doing any work here. */
+.wrap{max-width:2100px;margin:0 auto;padding:22px 10px 0;
       display:flex;gap:24px;align-items:flex-start}
-.left{flex:2 1 0;min-width:0}
-#panel{flex:1 1 0;min-width:340px;max-width:660px;position:sticky;
+.left{flex:3 1 0;min-width:0}
+#panel{flex:1 1 0;min-width:360px;max-width:540px;position:sticky;
        top:calc(var(--barh) + 14px);max-height:calc(100vh - var(--barh) - 28px);
        overflow:auto;background:var(--card);border:1px solid var(--line);
        border-radius:10px}
@@ -172,10 +176,12 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 /* The graph. Cards are cut-outs -- their fill is the panel's own background --
    and the state is carried by a glowing edge instead of a colour wash, which
    keeps four lines of text legible inside every one of them. */
-#graph .card{fill:var(--card);stroke-width:1.5;
+.chart .card{fill:var(--card);stroke-width:1.5;
              filter:drop-shadow(0 0 4px currentColor)}
-#graph .node{color:var(--accent);cursor:pointer}
-/* Trace. Clicking a module removes every module it has nothing to do with
+.chart .node{color:var(--accent);cursor:pointer}
+/* Both charts share the card styles through .chart; only the
+   things that are particular to a trace are scoped to #trace.
+   Trace. Clicking a module removes every module it has nothing to do with
    and lays the survivors out by distance from it, rather than dimming them
    where they sit -- a dimmed chart is still twelve thousand pixels tall and
    still has to be followed with a finger. The median module on a 975-module
@@ -196,70 +202,77 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 #trace .node{cursor:pointer}
 #trace .lvl{font:10.5px ui-monospace,SFMono-Regular,Menlo,monospace;
       fill:var(--faint);letter-spacing:.7px}
+#trace .edge{stroke:var(--mut);stroke-width:1.6}
+#trace marker#tarrow path{fill:var(--mut)}
 #trace .seed .card{stroke-width:3;filter:drop-shadow(0 0 12px currentColor)}
 /* Six states, and the reader should be able to trace the working path by
    colour alone: cyan is confirmed, blue is under test, green is live. */
-#graph .node[data-state="confirmed"]  .card{stroke:#33d6c8;stroke-width:2}
-#graph .node[data-state="confirmed"]  {color:#33d6c8}
-#graph .node[data-state="tested"]     .card{stroke:#58a6ff}
-#graph .node[data-state="tested"]     {color:#58a6ff}
-#graph .node[data-state="live"]       .card{stroke:#7ee787}
-#graph .node[data-state="live"]       {color:#7ee787}
-#graph .node[data-state="unfinished"] .card{stroke:var(--warn)}
-#graph .node[data-state="unfinished"] {color:var(--warn)}
-#graph .node[data-state="broken"]     .card{stroke:var(--hot)}
-#graph .node[data-state="broken"]     {color:var(--hot)}
-#graph .node[data-state="maybe"]      .card{stroke:var(--violet);opacity:.55}
-#graph .node[data-state="maybe"]      {color:var(--violet)}
-#graph .node[data-state="maybe"]:hover .card{opacity:1}
+.chart .node[data-state="confirmed"]  .card{stroke:#33d6c8;stroke-width:2}
+.chart .node[data-state="confirmed"]  {color:#33d6c8}
+.chart .node[data-state="tested"]     .card{stroke:#58a6ff}
+.chart .node[data-state="tested"]     {color:#58a6ff}
+.chart .node[data-state="live"]       .card{stroke:#7ee787}
+.chart .node[data-state="live"]       {color:#7ee787}
+.chart .node[data-state="unfinished"] .card{stroke:var(--warn)}
+.chart .node[data-state="unfinished"] {color:var(--warn)}
+.chart .node[data-state="broken"]     .card{stroke:var(--hot)}
+.chart .node[data-state="broken"]     {color:var(--hot)}
+.chart .node[data-state="maybe"]      .card{stroke:var(--violet);opacity:.55}
+.chart .node[data-state="maybe"]      {color:var(--violet)}
+.chart .node[data-state="maybe"]:hover .card{opacity:1}
 /* A dead end is its own state: execution reaches this module and stops
    inside it, which is not the same fact as "carries signals of unfinished
    work" and should not share its colour. */
-#graph .node[data-state="deadend"]   .card{stroke:#ff6ec7;stroke-width:2}
-#graph .node[data-state="deadend"]   {color:#ff6ec7}
+.chart .node[data-state="deadend"]   .card{stroke:#ff6ec7;stroke-width:2}
+.chart .node[data-state="deadend"]   {color:#ff6ec7}
 
 /* The one hypothesis on the map: this module stopped, and THAT one is doing
    the same work. Dashed because it is inferred from shared definition names
    rather than read from an import, and every one carries its reason in a
    tooltip. */
-#graph .continues{stroke:#ff6ec7;stroke-width:1.6;fill:none;
+.chart .continues{stroke:#ff6ec7;stroke-width:1.6;fill:none;
                   stroke-dasharray:7 5;opacity:.75}
-#graph .continues:hover{opacity:1;stroke-width:2.4}
+.chart .continues:hover{opacity:1;stroke-width:2.4}
 #graph marker#continues path{stroke:#ff6ec7}
-#graph .node.selected .card{stroke-width:3;
+.chart .node.selected .card{stroke-width:3;
                             filter:drop-shadow(0 0 11px currentColor)}
-#graph .node:hover .card{stroke-width:2.5;
+.chart .node:hover .card{stroke-width:2.5;
                          filter:drop-shadow(0 0 9px currentColor)}
 /* Type size is NOT the lever for fitting more on screen. Shrinking the card
    text to 9.5px bought a narrower chart at the cost of making somebody lean
    in on a 1920 laptop, which is the wrong trade. The footprint came down by
    losing a row and most of the gutter instead, and the type went back up. */
-#graph .fname{font:600 12.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+.chart .fname{font:600 12.5px ui-monospace,SFMono-Regular,Menlo,monospace;
               fill:var(--fg)}
-#graph .meta{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
+.chart .meta{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
              fill:var(--mut)}
-#graph .cut{stroke:var(--line);stroke-width:1.5;stroke-dasharray:3 6}
+.chart .cut{stroke:var(--line);stroke-width:1.5;stroke-dasharray:3 6}
 /* Folder boxes. The folder was already on every card, in 11px grey, 975
    times; drawing it once as a container says the same thing without being
    read. The two numbers on the label are the ones that decide where to look
    first, and the boxes are ordered by the second of them. */
-#graph .fbox{fill:var(--sunk);stroke:var(--line2);stroke-width:1}
-#graph .fname-lbl{font:600 12.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+.chart .fbox{fill:var(--sunk);stroke:var(--line2);stroke-width:1}
+.chart .fname-lbl{font:600 12.5px ui-monospace,SFMono-Regular,Menlo,monospace;
       fill:var(--fg)}
-#graph .fmeta{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
+.chart .fmeta{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
       fill:var(--mut)}
-#graph .continues-mark{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
+.chart .continues-mark{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
       fill:#ff6ec7}
-#graph .cutlabel{font:10.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+/* How long the module is, read down a column rather than compared as areas.
+   The bed is always full width, so an empty-looking bar is a short file and
+   not a card that failed to draw. */
+.chart .barbed{fill:var(--line2)}
+.chart .bar{opacity:.85}
+.chart .cutlabel{font:10.5px ui-monospace,SFMono-Regular,Menlo,monospace;
                  fill:var(--mut);letter-spacing:.6px}
 /* Centred in its container. A chart narrower than the page used to sit hard
    against the left margin with a field of empty to its right, which reads as
    something failing to load rather than as a small project. */
 .graphbox{display:flex;justify-content:center}
-#graph .meta.owner{fill:var(--faint)}
-#graph .marks{font:600 10px ui-monospace,SFMono-Regular,Menlo,monospace;
+.chart .meta.owner{fill:var(--faint)}
+.chart .marks{font:600 10px ui-monospace,SFMono-Regular,Menlo,monospace;
               fill:var(--mut)}
-#graph .badge{font:8.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+.chart .badge{font:8.5px ui-monospace,SFMono-Regular,Menlo,monospace;
               fill:var(--mut);letter-spacing:.03em}
 /* The verdict at the top of the panel. Green when this is the file to carry
    on from, pink when the flow stops here, muted when another attempt got
@@ -345,24 +358,24 @@ summary{cursor:pointer;font-size:13px}
 /* Picked one colour out of the key: everything else steps back. Separate
    from .dim, which is the hover relation highlight -- the two are answering
    different questions and clearing one must not clear the other. */
-#graph .node.off rect{opacity:.07}
-#graph .node.off text{opacity:.09}
+.chart .node.off rect{opacity:.07}
+.chart .node.off text{opacity:.09}
 .mapwrap{overflow:auto;background:var(--card);border:1px solid var(--line);
          border-radius:9px;padding:6px;margin-bottom:16px;max-height:76vh;
          position:relative}
 #graph{display:block}
-#graph .edge{fill:none;stroke:var(--line);stroke-width:1.3}
-#graph .edge.back{stroke-dasharray:4 3}
-#graph .edge.deadend{stroke:var(--hot);stroke-width:1.8}
+.chart .edge{fill:none;stroke:var(--line);stroke-width:1.3}
+.chart .edge.back{stroke-dasharray:4 3}
+.chart .edge.deadend{stroke:var(--hot);stroke-width:1.8}
 #graph marker path{fill:var(--mut);stroke:var(--mut)}
-#graph .node rect{stroke-width:1.5;transition:filter .1s}
-#graph .node:hover rect,#graph .node:focus rect{filter:brightness(.94);stroke-width:2.4}
-#graph .node:focus{outline:none}
+.chart .node rect{stroke-width:1.5;transition:filter .1s}
+.chart .node:hover rect,.chart .node:focus rect{filter:brightness(.94);stroke-width:2.4}
+.chart .node:focus{outline:none}
 #graph text{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;fill:var(--fg)}
-#graph .mod{font-size:9.5px;fill:var(--mut)}
-#graph .name{font-size:11.5px;font-weight:600}
-#graph .node.dim rect{opacity:.28}
-#graph .node.dim text{opacity:.3}
+.chart .mod{font-size:9.5px;fill:var(--mut)}
+.chart .name{font-size:11.5px;font-weight:600}
+.chart .node.dim rect{opacity:.28}
+.chart .node.dim text{opacity:.3}
 #dbody{padding:14px 16px;max-height:70vh;overflow:auto}
 #dbody h4{margin:14px 0 5px;font-size:12.5px;color:var(--accent)}
 #dbody .facts{font-size:12.5px;color:var(--mut);margin-bottom:8px}
@@ -516,26 +529,10 @@ function openModule(name){
 
 document.querySelectorAll('#graph .node').forEach(g => {
   const name = g.dataset.name;
-  // Hover traces it, click pins it. Exploring by pointer is the whole
-  // point -- you should not have to commit to a module to see its path --
-  // but you do have to be able to settle on one and go read the panel
-  // without the chart changing under you on the way there.
-  g.addEventListener('mouseenter', () => {
-    if(pinned) return;
-    clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => enterTrace(name, false), HOVER_MS);
-  });
-  g.addEventListener('mouseleave', () => clearTimeout(hoverTimer));
-  g.addEventListener('click', () => {
-    clearTimeout(hoverTimer);
-    openModule(name);
-    enterTrace(name, true);
-  });
-  g.addEventListener('keydown', e => {
-    if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openModule(name); }
-  });
-  // Hovering a module dims everything it has nothing to do with, which is the
-  // fastest way to see what one thing actually touches.
+  // Hover greys out the rest; click opens the flowchart. Hover used to
+  // REPLACE the chart, which on a grid you have to mouse across in order to
+  // scroll it meant the map was gone the moment you touched it. Pointing at
+  // something is not the same as asking for it.
   g.addEventListener('mouseenter', () => {
     const d = DATA[name]; if(!d) return;
     const near = new Set([name, ...d.uses, ...d.used_by]);
@@ -543,7 +540,12 @@ document.querySelectorAll('#graph .node').forEach(g => {
       o.classList.toggle('dim', !near.has(o.dataset.name)));
   });
   g.addEventListener('mouseleave', () =>
-    document.querySelectorAll('#graph .node').forEach(o => o.classList.remove('dim')));
+    document.querySelectorAll('#graph .node').forEach(
+      o => o.classList.remove('dim')));
+  g.addEventListener('click', () => { openModule(name); enterTrace(name, true); });
+  g.addEventListener('keydown', e => {
+    if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openModule(name); }
+  });
 });
 // Nothing selected: the panel shows the project. Pressing Escape returns to
 // it rather than leaving the reader on a module they have finished with.
@@ -606,7 +608,10 @@ sizeKey();
 // Laid out by DISTANCE FROM THE MODULE YOU CLICKED, which is a different
 // question from the overview's "distance from a start point", so this is a
 // second layout rather than a copy of the first one.
-const NODE_W = 138, NODE_H = 66, X_GAP = 24, Y_GAP = 30;
+// The same card as the overview, so nothing changes shape when the rest
+// of the map goes away.
+const NODE_W = 152, NODE_H = 72, X_GAP = 26, Y_GAP = 34;
+const CHART_W = 1350;
 const TRACE_MAX = 260;   // larger than the whole closure of anything measured
 // Left out of a trace: a path that ends inside a module, and a file that does
 // not parse. Neither is a route to anywhere, so neither belongs in a picture
@@ -614,10 +619,17 @@ const TRACE_MAX = 260;   // larger than the whole closure of anything measured
 // including `maybe`, which is by far the largest group on a real project and
 // means "no static path FOUND", not "no path".
 const TRACE_HIDE = ['deadend', 'broken'];
-// Hovering a card traces it; the dwell stops a chart of 975 cards from
-// redrawing the SVG every time the pointer crosses one on its way somewhere.
-const HOVER_MS = 170;
-let hoverTimer = null, pinned = null;
+let pinned = null;
+// `hidden` is a property of HTMLElement. An <svg> is an SVGElement and has
+// no such property, so `svg.hidden = true` sets a made-up field on the object
+// and the ATTRIBUTE never changes -- which means the CSS never fires. The
+// overview stayed on screen under a trace bar announcing a trace, and the
+// flowchart stayed hidden behind it, with no error anywhere.
+function show(el, visible){
+  if(!el) return;
+  if(visible) el.removeAttribute('hidden');
+  else el.setAttribute('hidden', '');
+}
 const graphSvg = document.getElementById('graph');
 const traceSvg = document.getElementById('trace');
 const tracebar = document.getElementById('tracebar');
@@ -664,14 +676,20 @@ function drawCard(name, x, y, seed){
     + '<title>' + attr(c.title) + '</title>'
     + '<rect class="card" x="' + x + '" y="' + y + '" width="' + NODE_W
     + '" height="' + NODE_H + '" rx="8" stroke="' + attr(c.stroke) + '"/>'
-    + '<text class="fname" x="' + (x + 9) + '" y="' + (y + 22) + '">'
+    + '<text class="fname" x="' + (x + 9) + '" y="' + (y + 21) + '">'
     + attr(c.name) + '</text>'
-    + '<text class="meta" x="' + (x + 9) + '" y="' + (y + 40) + '">'
+    + '<text class="meta" x="' + (x + 9) + '" y="' + (y + 38) + '">'
     + attr(c.location) + '</text>'
-    + '<text class="meta owner" x="' + (x + 9) + '" y="' + (y + 56) + '">'
+    + '<text class="meta owner" x="' + (x + 9) + '" y="' + (y + 53) + '">'
     + attr(c.meta) + '</text>'
+    + '<rect class="barbed" x="' + (x + 9) + '" y="' + (y + NODE_H - 12)
+    + '" width="' + (NODE_W - 18) + '" height="3" rx="1.5"/>'
+    + (c.share ? '<rect class="bar" x="' + (x + 9) + '" y="'
+        + (y + NODE_H - 12) + '" width="'
+        + Math.max(2, Math.round((NODE_W - 18) * c.share))
+        + '" height="3" rx="1.5" fill="' + attr(c.stroke) + '"/>' : '')
     + (c.marks ? '<text class="marks" x="' + (x + NODE_W - 9) + '" y="'
-        + (y + 20) + '" text-anchor="end">' + c.marks + '</text>' : '')
+        + (y + 19) + '" text-anchor="end">' + c.marks + '</text>' : '')
     + '</g>';
 }
 
@@ -687,25 +705,35 @@ function drawTrace(seed){
   put(seed, 0);
   below.forEach((lvl, name) => put(name, lvl));
 
+  // A level WRAPS. One module imported by a hundred others put a hundred
+  // cards on a single row that ran two and a half thousand pixels off the
+  // side of the page, while the levels above it sat empty in the middle of
+  // it. Every level is a block of rows the same width as the chart.
+  const GUTTER = 96;
+  const COLS = Math.max(1, Math.floor(
+    (CHART_W - GUTTER + X_GAP) / (NODE_W + X_GAP)));
   const levels = [...rows.keys()].sort((a, b) => a - b);
-  const widest = Math.max.apply(null, levels.map(l => rows.get(l).length));
-  const width = Math.max(NODE_W + 260, 120 + widest * (NODE_W + X_GAP) + X_GAP);
   let y = 16;
   const parts = [], edges = [], placed = new Map();
   for(const level of levels){
     const names = rows.get(level).slice().sort();
-    const rowWidth = names.length * (NODE_W + X_GAP) - X_GAP;
-    let x = 120 + Math.max(0, (width - 120 - rowWidth) / 2);
-    parts.push('<text class="lvl" x="14" y="' + (y + NODE_H / 2 + 4) + '">'
+    parts.push('<text class="lvl" x="14" y="' + (y + 18) + '">'
       + (level === 0 ? 'this one'
          : level < 0 ? (-level) + ' up' : level + ' down') + '</text>');
-    for(const name of names){
-      placed.set(name, {x: x, y: y});
-      parts.push(drawCard(name, x, y, seed));
-      x += NODE_W + X_GAP;
+    const lines = Math.ceil(names.length / COLS);
+    for(let i = 0; i < names.length; i++){
+      const row = Math.floor(i / COLS);
+      const inRow = Math.min(COLS, names.length - row * COLS);
+      const rowWidth = inRow * (NODE_W + X_GAP) - X_GAP;
+      const x = GUTTER + Math.max(0,
+        (CHART_W - GUTTER - rowWidth) / 2) + (i % COLS) * (NODE_W + X_GAP);
+      const cy = y + row * (NODE_H + Y_GAP);
+      placed.set(names[i], {x: x, y: cy});
+      parts.push(drawCard(names[i], x, cy, seed));
     }
-    y += NODE_H + Y_GAP;
+    y += lines * (NODE_H + Y_GAP);
   }
+  const width = CHART_W;
   for(const entry of placed){
     const name = entry[0], at = entry[1];
     for(const other of (DATA[name].uses || [])){
@@ -722,7 +750,7 @@ function drawTrace(seed){
   traceSvg.innerHTML = '<defs><marker id="tarrow" viewBox="0 0 8 8" refX="7" '
     + 'refY="4" markerWidth="7" markerHeight="7" orient="auto">'
     + '<path d="M0,0 L8,4 L0,8 z"/></marker></defs>'
-    + '<g class="edges">' + edges.join('').replace(/url\(#arrow\)/g, 'url(#tarrow)')
+    + '<g class="edges">' + edges.join('').replace(/url\\(#arrow\\)/g, 'url(#tarrow)')
     + '</g><g class="nodes">' + parts.join('') + '</g>';
   return {shown: placed.size, above: above.size, below: below.size,
           left_out: (above.left_out || []).concat(below.left_out || []).length};
@@ -733,12 +761,11 @@ function enterTrace(name, pin){
   if(pin) pinned = name;
   const counted = drawTrace(name);
   tracing = name;
-  graphSvg.hidden = true;
-  traceSvg.hidden = false;
-  tracebar.hidden = false;
+  show(graphSvg, false);
+  show(traceSvg, true);
+  show(tracebar, true);
   document.getElementById('traceof').textContent = name;
-  document.getElementById('tracehow').textContent =
-    pinned ? 'pinned' : 'hovering';
+  document.getElementById('tracehow').textContent = 'the path through';
   const left = counted.left_out
     ? ' \u00b7 ' + counted.left_out + ' left out: a dead end or a file that '
       + 'does not parse is not a route anywhere'
@@ -767,10 +794,9 @@ function enterTrace(name, pin){
 function leaveTrace(){
   tracing = null;
   pinned = null;
-  clearTimeout(hoverTimer);
-  if(traceSvg) traceSvg.hidden = true;
-  if(tracebar) tracebar.hidden = true;
-  if(graphSvg) graphSvg.hidden = false;
+  show(traceSvg, false);
+  show(tracebar, false);
+  show(graphSvg, true);
 }
 if(document.getElementById('traceout'))
   document.getElementById('traceout').addEventListener('click', leaveTrace);
@@ -1321,13 +1347,14 @@ has to be followed by eye. Click a card and the rest of the map goes away, leavi
 module with what imports it above and what it imports below.</p>
 <div class="mapzone">
 <div class="tracebar" id="tracebar" hidden>
-  <span class="ln" id="tracehow">hovering</span><b id="traceof"></b>
+  <span class="ln" id="tracehow">the path through</span><b id="traceof"></b>
   <span class="ln" id="tracecount"></span>
   <button type="button" id="traceout">show the whole map</button>
 </div>
 <div class="mapwrap"><div class="keybar">{svgmap.KEYBAR}<span class="hint"
 id="keyhint">click a colour to show only those &middot; Esc clears</span></div>
-{svg}<svg id="trace" hidden xmlns="http://www.w3.org/2000/svg" role="img"
+{svg}<svg id="trace" class="chart" hidden
+     xmlns="http://www.w3.org/2000/svg" role="img"
      aria-label="one module and everything it connects to"></svg></div>
 </div>
 
