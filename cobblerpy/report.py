@@ -823,13 +823,6 @@ document.addEventListener('click', e => {
     node.scrollIntoView({block: 'center', inline: 'center'});
 });
 
-const q = document.getElementById('q');
-if (q) q.addEventListener('input', () => {
-  const n = q.value.toLowerCase();
-  document.querySelectorAll('tbody tr[data-search]').forEach(tr => {
-    tr.hidden = n && !tr.dataset.search.includes(n);
-  });
-});
 """
 
 
@@ -988,48 +981,6 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
         entry_html = ('<div class="card empty">No entry point found. Either this '
                       'is a library meant to be imported, or the program that '
                       'drove it is not in this directory.</div>')
-
-    # -- layers
-    layers = project.layers()
-    unplaced = sorted(set(project.by_dotted) - set().union(*layers.values())
-                      if layers else set(project.by_dotted))
-    # Each group carries its size. Without it the groups read as one long run
-    # of names -- on a 109-module project the unreached group alone is 54 of
-    # them, and its size is the single most useful number in the section: it
-    # says how much of the codebase no import path reaches.
-    layer_rows = []
-    total_placed = sum(len(v) for v in layers.values()) + len(unplaced)
-    for depth in sorted(layers):
-        names = layers[depth]
-        label = "entry points" if depth == 0 else f"depth {depth}"
-        chips = "".join(f'<span class="tag">{_e(n)}</span>' for n in sorted(names))
-        layer_rows.append(
-            f'<div class="layer"><b>{label} <span class="n">{len(names)}</span></b>'
-            f"<div>{chips}</div></div>")
-    if unplaced:
-        chips = "".join(f'<span class="tag warn">{_e(n)}</span>' for n in unplaced)
-        share = f" &middot; {len(unplaced) * 100 // max(total_placed, 1)}% of the project"
-        layer_rows.append(
-            f'<div class="layer"><b>unreached <span class="n">{len(unplaced)}'
-            f"{share}</span></b><div>{chips}</div></div>")
-    layers_html = f'<div class="card">{"".join(layer_rows) or "<span class=empty>No import structure found.</span>"}</div>'
-
-    # -- dependency table
-    fan = project.fan()
-    dep_rows = []
-    for name, out_n, in_n in fan:
-        imports = sorted(project.imports.get(name, ()))
-        ext = sorted(project.external.get(name, ()))[:8]
-        dep_rows.append(
-            f'<tr data-search="{_e((name + " " + " ".join(imports) + " " + " ".join(ext)).lower())}">'
-            f'<td class="mono">{_e(name)}</td>'
-            f'<td class="num">{in_n}</td><td class="num">{out_n}</td>'
-            f'<td>{"".join(f"<span class=tag>{_e(i)}</span>" for i in imports) or "<span class=sub>-</span>"}</td>'
-            f'<td>{"".join(f"<span class=tag>{_e(i)}</span>" for i in ext) or "<span class=sub>-</span>"}</td></tr>')
-    dep_html = (f'<div class="tablewrap"><table><thead><tr><th>Module</th>'
-                f"<th>Used&nbsp;by</th><th>Uses</th><th>Internal imports</th>"
-                f"<th>External</th></tr></thead><tbody>{''.join(dep_rows)}"
-                f"</tbody></table></div>")
 
     # -- cycles
     if project.cycles:
@@ -1234,26 +1185,6 @@ abandoned code does not get started again.</p>
                         f'{_e(history.get("reason", "unknown"))}. The rest of this '
                         f"map is unaffected; only the chronology is missing.</div>")
 
-    # -- unreferenced
-    unref = project.unreferenced
-    u_rows = "".join(
-        f'<tr data-search="{_e((u["module"] + " " + u["name"]).lower())}">'
-        f'<td class="mono">{_e(u["module"])}</td><td class="mono">{_e(u["name"])}</td>'
-        f'<td>{_e(u["kind"])}</td><td class="num">{u["lineno"]}</td>'
-        f'<td class="sub">{_e(u["caveat"] or "")}</td></tr>' for u in unref[:400])
-
-    errors_html = ""
-    if parse_errors:
-        rows = "".join(f'<tr><td class="mono">{_e(m.relpath)}</td>'
-                       f"<td>{_e(m.error)}</td></tr>" for m in parse_errors)
-        errors_html = (f'<h2>Files that will not parse <span class="n">'
-                       f'({len(parse_errors)})</span></h2>'
-                       f'<p class="lede">A file that cannot be parsed was either written '
-                       f"for a different Python version, or left mid-edit. Either way it "
-                       f"is a finding, not a gap.</p>"
-                       f'<div class="tablewrap"><table><thead><tr><th>File</th>'
-                       f"<th>Problem</th></tr></thead><tbody>{rows}</tbody></table></div>")
-
     # ONE panel, docked to the right of the chart.
     #
     # These tables used to stack below the map -- past ten thousand lines on a
@@ -1403,8 +1334,6 @@ id="keyhint">click a colour to show only those &middot; Esc clears</span></div>
      xmlns="http://www.w3.org/2000/svg" role="img"
      aria-label="one module and everything it connects to"></svg></div>
 </div>
-
-<input type="search" id="q" placeholder="Filter the tables below...">
 
 </div><!-- /left column -->
 

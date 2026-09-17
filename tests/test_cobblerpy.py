@@ -25,6 +25,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cobblerpy import survey                                    # noqa: E402
+from cobblerpy import origin, history                           # noqa: E402
 from cobblerpy.abandonment import analyse_module, score         # noqa: E402
 from cobblerpy.clusters import analyse as analyse_clusters, split  # noqa: E402
 from cobblerpy.layout import compute, state_of                  # noqa: E402
@@ -166,6 +167,18 @@ class TestScan(unittest.TestCase):
         self.addCleanup(t.close)
         m = scan_file(os.path.join(t.dir, "broken.py"), t.dir)
         self.assertIn("syntax error", m.error)
+
+    def test_a_file_that_defeats_the_parser_is_a_finding_not_a_crash(self):
+        # A huge unary chain overflows the parser stack (MemoryError), which is
+        # not a SyntaxError. One such file must not abort a survey of the rest.
+        t = Tree({"bad.py": "x = " + "-" * 20000 + "1\n",
+                  "fine.py": "def ok():\n    return 1\n"})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "bad.py"), t.dir)
+        self.assertTrue(m.error, "a parser-defeating file should record an error")
+        # and the whole survey completes rather than raising
+        s = survey(t.dir)
+        self.assertIn("ok", {d.name for d in s.project.by_dotted["fine"].definitions})
 
     def test_body_kinds_are_distinguished(self):
         t = Tree({"m.py": '''
@@ -720,6 +733,27 @@ class TestOrigin(unittest.TestCase):
         self.addCleanup(t.close)
         s = survey(t.dir)
         self.assertEqual(s.origins["a"]["origin"], "unknown")
+
+    def test_a_hostile_repo_config_cannot_run_a_command(self):
+        # A repo carries its own .git/config, and core.fsmonitor names a program
+        # git runs to enumerate changes -- it fires on `ls-files`. Surveying a
+        # repo must never run code the repo chose. This is the whole promise.
+        t = Tree({"a.py": "x = 1\n"}, git=True)
+        self.addCleanup(t.close)
+        marker = os.path.join(t.dir, "PWNED")
+        config = os.path.join(t.dir, ".git", "config")
+        # An explicit [core] header -- Tree() has already written a [user]
+        # section, and a bare key appended after it would land under [user]
+        # (git ignores user.fsmonitor) and prove nothing.
+        with open(config, "a", encoding="utf-8") as fh:
+            fh.write('[core]\n\tfsmonitor = "touch %s"\n' % marker)
+        # both code paths that shell out to git against the surveyed repo
+        origin.tracked_paths(t.dir)
+        history.is_repo(t.dir)
+        history.rename_map(t.dir)
+        survey(t.dir, with_history=True)
+        self.assertFalse(os.path.exists(marker),
+                         "surveying the repo executed its fsmonitor command")
 
 
 class TestClusters(unittest.TestCase):
@@ -1486,11 +1520,11 @@ class TestTrace(unittest.TestCase):
         "island.py": "x = 1\n",
     }
 
-    def _run(self, probe, graph_nodes=()):
+    def _run(self, probe, graph_nodes=(), fixture=None):
         import json, re, shutil, subprocess
         if not shutil.which("node"):
             self.skipTest("node not installed")
-        t = Tree(self.FIXTURE)
+        t = Tree(fixture or self.FIXTURE)
         self.addCleanup(t.close)
         s = t.survey()
         out = os.path.join(t.dir, "map.html")
@@ -2475,23 +2509,31 @@ class TestDesktopSession(unittest.TestCase):
         self.assertIn("seconds", r.duration())
 
 
+try:
+    import PySide6  # noqa: F401
+    _HAVE_QT = True
+except ImportError:
+    _HAVE_QT = False
+_HAVE_DISPLAY = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+@unittest.skipUnless(_HAVE_QT, "PySide6 not installed")
+@unittest.skipUnless(_HAVE_DISPLAY, "no display")
 class TestDesktopWindow(unittest.TestCase):
     """The window itself, by building it and asking the widget tree.
 
-    Skipped where there is no Qt or no display. What it does NOT do is search
-    the source for widget names: it constructs the real thing, drives the real
-    handlers and reads the real objects back, because a test that matches
-    strings tells you how the file is spelled and nothing about what it builds.
+    Skipped where there is no Qt or no display -- but the six methods are always
+    COLLECTED, so `Ran N tests` does not move with the optional gui extra (a
+    setUpClass SkipTest drops them from the count; a class skipUnless keeps them
+    counted-and-skipped). What it does NOT do is search the source for widget
+    names: it constructs the real thing, drives the real handlers and reads the
+    real objects back, because a test that matches strings tells you how the
+    file is spelled and nothing about what it builds.
     """
 
     @classmethod
     def setUpClass(cls):
-        try:
-            from PySide6 import QtCore, QtGui, QtWidgets
-        except ImportError:
-            raise unittest.SkipTest("PySide6 not installed")
-        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-            raise unittest.SkipTest("no display")
+        from PySide6 import QtCore, QtGui, QtWidgets
         cls.qt = (QtCore, QtGui, QtWidgets)
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
