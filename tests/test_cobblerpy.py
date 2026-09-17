@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+from html.parser import HTMLParser
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,6 +39,64 @@ def write(root, relpath, text):
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(textwrap.dedent(text).lstrip("\n"))
     return path
+
+
+class Page(HTMLParser):
+    """The generated map as an element tree, so tests ask what it IS.
+
+    The map embeds the surveyed project's own source. A substring search over
+    the file therefore searches the CONTENT as much as the markup: a project
+    containing the text `data-name="run"` in a docstring would satisfy a check
+    about the graph's nodes. Parsing separates the two.
+    """
+
+    def __init__(self, markup):
+        super().__init__(convert_charrefs=True)
+        self.elements = []
+        self.text_parts = []
+        self.script = []
+        self._stack = []
+        self.feed(markup)
+
+    def handle_starttag(self, tag, attrs):
+        self.elements.append((tag, dict(attrs)))
+        self._stack.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        self.elements.append((tag, dict(attrs)))
+
+    def handle_endtag(self, tag):
+        if tag in self._stack:
+            while self._stack and self._stack.pop() != tag:
+                pass
+
+    def handle_data(self, data):
+        top = self._stack[-1] if self._stack else ""
+        if top == "script":
+            self.script.append(data)
+        elif top != "style":
+            self.text_parts.append(data)
+
+    def find(self, tag, **attrs):
+        return [a for t, a in self.elements
+                if t == tag and all(a.get(k) == v for k, v in attrs.items())]
+
+    def has(self, tag, **attrs):
+        return bool(self.find(tag, **attrs))
+
+    def tags(self):
+        return [t for t, _a in self.elements]
+
+    def attr_values(self, name):
+        return {a[name] for _t, a in self.elements if name in a}
+
+    @property
+    def text(self):
+        return " ".join(self.text_parts)
+
+    @property
+    def script_text(self):
+        return "".join(self.script)
 
 
 class Tree:
@@ -492,8 +551,14 @@ class TestEndToEnd(unittest.TestCase):
         self.assertTrue(os.path.isfile(out))
         with open(out, encoding="utf-8") as fh:
             doc = fh.read()
-        self.assertNotIn('src="http', doc)        # self-contained
-        self.assertIn("Proven", doc)              # the proof/inference legend
+        page = Page(doc)
+        remote = [a for _t, a in page.elements
+                  if str(a.get("src", "")).startswith("http")
+                  or str(a.get("href", "")).startswith("http")]
+        self.assertEqual(remote, [], "an element loads a remote URL")
+        # In the page's TEXT, not its source -- the map embeds the project's
+        # own code, which could itself contain the word.
+        self.assertIn("Proven", page.text)
 
     def test_an_empty_directory_fails_clearly(self):
         t = Tree({"notes.txt": "no python here\n"})
@@ -609,13 +674,18 @@ class TestMap(unittest.TestCase):
         # own code, so a naive string search matches CONTENT, not markup. That
         # exact false positive fired on the first run of this check.
         markup = re.sub(r"const DATA = .*?;\n", "", doc, flags=re.S)
-        external = [tag for tag in
-                    re.findall(r"<(?:script|link|img|iframe)[^>]*>", markup)
-                    if "http" in tag]
+        page = Page(doc)
+        external = [a for t, a in page.elements
+                    if t in ("script", "link", "img", "iframe")
+                    and str(a.get("src", "") or a.get("href", "")).startswith("http")]
         self.assertEqual(external, [])
-        self.assertIn('<svg id="graph"', doc)
-        self.assertIn('data-name="run"', doc)
-        self.assertIn("tabindex=", doc)           # keyboard reachable
+        self.assertTrue(page.has("svg", id="graph"),
+                        f"svg ids present: {[a.get('id') for t, a in page.elements if t == 'svg']}")
+        nodes = [a for _t, a in page.elements if "data-name" in a]
+        self.assertIn("run", {a["data-name"] for a in nodes})
+        for node in nodes:
+            self.assertIn("tabindex", node,
+                          f"node {node.get('data-name')!r} is not keyboard reachable")
 
     def test_every_module_appears_as_a_node(self):
         import re
@@ -634,8 +704,15 @@ class TestMap(unittest.TestCase):
 
     def test_the_payload_cannot_break_out_of_the_script_block(self):
         """Source containing </script> must not close the data block."""
-        t = Tree({"run.py": 'MARKER = "</script><img src=x onerror=alert(1)>"\n'
-                            'if __name__ == "__main__":\n    pass\n'})
+        # The module must carry a SIGNAL, or its source is never embedded and
+        # this test asserts nothing. The previous fixture was an entry point
+        # with no signals: its source did not reach the map at all, so the
+        # check stayed green with both escapes removed from svgmap.
+        t = Tree({
+            "main.py": "import mod\n\nif __name__ == '__main__':\n    mod.go()\n",
+            "mod.py": '# TODO: </script><img src=x onerror=alert(1)>\n'
+                      'def go():\n    pass\n',
+        })
         self.addCleanup(t.close)
         s = t.survey()
         out = os.path.join(t.dir, "map.html")
@@ -644,8 +721,17 @@ class TestMap(unittest.TestCase):
                   origins=s.origins, modules_by_key=s.modules_by_key)
         with open(out, encoding="utf-8") as fh:
             doc = fh.read()
-        self.assertNotIn("</script><img", doc)
-        self.assertNotIn("<img src=x", doc)
+        self.assertIn("alert(1)", doc,
+                      "the fixture's source never reached the map, so nothing "
+                      "about escaping is being tested")
+        page = Page(doc)
+        self.assertEqual(page.find("img"), [],
+                         "the surveyed source supplied an element that survived parsing")
+        self.assertLessEqual(page.tags().count("script"), 2,
+                             "the surveyed source opened a script block")
+        # Note for anyone mutating svgmap: the `<` and `>` escapes are each
+        # independently sufficient to stop `</script>` closing the block, so
+        # removing one changes nothing. Remove both and this goes red.
 
 
 class TestExport(unittest.TestCase):
