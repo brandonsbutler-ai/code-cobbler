@@ -1878,6 +1878,62 @@ console.log(JSON.stringify({markup: document.getElementById('trace').innerHTML,
         self.assertIn(seen["card"]["meta"], seen["markup"])
         self.assertEqual(seen["card"]["name"], "b.py")
 
+    def test_trace_veins_carry_the_condition_of_the_nodes_they_join(self):
+        """A vein is coloured by a gradient from its source node's condition to
+        its destination's -- live green flowing into unfinished amber -- so the
+        path is read through the conditions, matching the legend the nodes use.
+
+        The destination here is UNFINISHED, not a dead end, and that is
+        deliberate: a dead end is filtered out of the trace entirely
+        (TRACE_HIDE, and test_a_dead_end_is_left_out_of_the_trace_and_counted
+        above), so a fixture built on one would be asserting against a node the
+        trace is never going to draw.
+        """
+        import re
+        from cobblerpy.svgmap import _PALETTE
+        # lib (live) -> work (unfinished: reached, and carrying a TODO)
+        fixture = {
+            "run.py": 'import lib\nif __name__ == "__main__":\n    lib.go()\n',
+            "lib.py": "import work\ndef go():\n    return work.run()\n",
+            "work.py": "def run():\n    # TODO: finish the second half\n    return 1\n",
+        }
+        seen = self._run("""
+drawTrace('lib');
+console.log(JSON.stringify({markup: document.getElementById('trace').innerHTML}));
+""", fixture=fixture)
+        markup = seen["markup"]
+        states = dict(re.findall(r'data-name="([^"]+)" data-state="([^"]+)"', markup))
+        self.assertEqual(states.get("lib"), "live")
+        self.assertEqual(states.get("work"), "unfinished")
+        # every vein carries a condition gradient, none the old flat stroke
+        veins = re.findall(
+            r'<path class="edge"[^>]*stroke="url\(#(vein_[a-z]+_[a-z]+_\d+)\)"',
+            markup)
+        self.assertTrue(veins, "no vein carries a condition gradient")
+        flat = re.findall(r'<path class="edge"(?![^>]*stroke="url\(#vein_)', markup)
+        self.assertEqual(flat, [], "a vein is not coloured by condition")
+        # the lib->work vein flows live -> unfinished
+        crossing = [v for v in veins if v.startswith("vein_live_unfinished_")]
+        self.assertTrue(crossing, f"no live->unfinished vein among {veins}")
+        # and that gradient's stops are exactly the two palette colours, in order
+        grad = re.search(
+            r'<linearGradient id="' + crossing[0]
+            + r'"([^>]*)>(.*?)</linearGradient>', markup, re.S)
+        self.assertIsNotNone(grad, "the live->unfinished gradient was not defined")
+        stops = re.findall(r'stop-color="([^"]+)"', grad.group(2))
+        self.assertEqual(stops, [_PALETTE["live"][0], _PALETTE["unfinished"][0]])
+        # One gradient per vein, in user space, running DOWN the vein.
+        # objectBoundingBox is not usable here and this asserts so: two cards
+        # in the same column are joined by a perfectly vertical path whose
+        # bounding box has zero width, and SVG drops an objectBoundingBox paint
+        # on a degenerate box -- headless Chromium painted 0 of 181 pixels on
+        # exactly that line while the diagonal beside it graded correctly.
+        attrs = grad.group(1)
+        self.assertIn('gradientUnits="userSpaceOnUse"', attrs)
+        y1 = float(re.search(r' y1="([-\d.]+)"', attrs).group(1))
+        y2 = float(re.search(r' y2="([-\d.]+)"', attrs).group(1))
+        self.assertGreater(y2, y1, "the gradient does not run down the vein")
+
 
 class TestSalvage(unittest.TestCase):
     """What is in the code nothing reaches, and what the evidence says of it.
