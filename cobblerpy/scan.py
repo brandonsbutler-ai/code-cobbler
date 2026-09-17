@@ -121,6 +121,9 @@ class Module:
         # F401` is what every Python linter reads, so it is what a Python
         # author will already have written when they meant it.
         self.kept_imports = set()
+        # Set when the comment scan stopped early, so "no TODOs here" can be
+        # told apart from "the comments could not be read".
+        self.comments_incomplete = None
         self.strings = []
 
     @staticmethod
@@ -272,6 +275,41 @@ def _name_of(node):
 _TODO_TAGS = ("TODO", "FIXME", "XXX", "HACK", "BUG", "NOTE", "WIP", "TEMP",
               "REVISIT", "REFACTOR")
 
+# A tag is a MARKER, not a substring.
+#
+# Matching `tag in text.upper()` reported 19 of this project's 20 tagged
+# comments and 585 of the corpus's 641, because every one of these words hides
+# inside an ordinary one: the temporary tag inside "attempted" and
+# "attempts", the bug tag inside "debug", the note tag inside
+# "DESIGN_NOTES" and inside the word "note", the wip tag inside
+# "swipe". Those
+# findings fed the score that ranks where the work stopped, so the ranking was
+# being driven by the word "attempts" appearing in a comment.
+#
+# Two things make a tag a tag, and either is enough:
+#   - it is written in CAPITALS, which is what the convention is for, or
+#   - it is immediately followed by ":" or "(", as in a lower-case
+#     tag with a colon, or a tag with an owner in brackets.
+#
+# A word boundary is required either way, which is what rejects "debug".
+_TAG_WORD = re.compile(r"\b(" + "|".join(_TODO_TAGS) + r")\b", re.IGNORECASE)
+
+
+def _tag_of(text):
+    """The marker tag in this comment, uppercased, or None.
+
+    Near-misses this must reject, each checked in the tests by removing the
+    clause that rejects it: "attempted" and "attempts" (no boundary before
+    TEMP), "debug" (none before BUG), "DESIGN_NOTES" (none after NOTE),
+    "# bug wearing a different hat" (lower case, no colon).
+    """
+    for found in _TAG_WORD.finditer(text or ""):
+        word = found.group(1)
+        after = (text[found.end():] or "")[:1]
+        if word.isupper() or after in (":", "("):
+            return word.upper()
+    return None
+
 # Deciding whether a comment is disabled CODE or ordinary prose.
 #
 # "It parses as Python" is far too weak a test: an astonishing amount of prose
@@ -372,12 +410,10 @@ def _read_comments(module, source):
             text = tok.string
             if _keeps_import(text):
                 module.kept_imports.add(tok.start[0])
-            upper = text.upper()
-            for tag in _TODO_TAGS:
-                if tag in upper:
-                    note = text.lstrip("#").strip()
-                    module.todos.append((tag, note[:200], tok.start[0]))
-                    break
+            tag = _tag_of(text)
+            if tag:
+                note = text.lstrip("#").strip()
+                module.todos.append((tag, note[:200], tok.start[0]))
             else:
                 # Only a comment that OWNS its line can be disabled code.
                 # `candidates.append(dotted)  # import pkg.module` is a note
@@ -392,8 +428,11 @@ def _read_comments(module, source):
                     if tok.start[0] - 1 < len(source_lines) else ""
                 if not prefix.strip() and _looks_like_code(text):
                     module.commented_code.append(tok.start[0])
-    except (tokenize.TokenError, IndentationError, SyntaxError):
-        pass                              # a file we could not tokenize fully
+    except (tokenize.TokenError, IndentationError, SyntaxError) as exc:
+        # Recorded, not swallowed. Half a file's comments read and the rest
+        # dropped looks exactly like a file with no TODOs in it, and the map
+        # would have shown it as the cleanest module in the project.
+        module.comments_incomplete = f"{type(exc).__name__}: {exc}"[:120]
 
 
 def _classify_effects(module):
