@@ -34,6 +34,11 @@ wrong one in seconds if the reasons are visible.
 import re
 from collections import Counter, defaultdict
 
+# A destination named for more than this share of all stopped modules is a hub,
+# not a fork. Both numbers are measured, not chosen: see find().
+_HUB_SHARE = 0.10
+_HUB_FLOOR = 2
+
 # Verbs and nouns so common in Python that sharing them means nothing.
 _STOPWORDS = {
     "get", "set", "run", "init", "main", "new", "make", "create", "build",
@@ -112,6 +117,13 @@ def _similarity(a_key, a_mod, b_key, b_mod, co_change_pairs):
     return signals
 
 
+def _is_test_module(key):
+    """True for a module whose job is testing."""
+    parts = str(key).lower().replace("-", "_").split(".")
+    return any(p in ("tests", "test", "conftest") or p.startswith("test_")
+               or p.endswith("_test") for p in parts)
+
+
 def find(project, modules_by_key, history, frontier=None):
     """Forks: a module that went quiet, and the similar one that took over.
 
@@ -142,6 +154,11 @@ def find(project, modules_by_key, history, frontier=None):
         if quiet_for < QUIET_COMMITS or record["_last_epoch"] == newest:
             continue
         a_key, a_mod = by_relpath[relpath]
+        # A test module is already barred as a DESTINATION; it is no better as
+        # a source. On one real project the whole top of the list was tests
+        # that had gone quiet, which is what a passing test does.
+        if _is_test_module(a_key):
+            continue
 
         # Quiet AND unfinished. Without this the tool reports settled modules
         # as abandoned, which is a confident answer to a question nobody asked.
@@ -190,5 +207,27 @@ def find(project, modules_by_key, history, frontier=None):
             "caveat": ("a hypothesis from similarity and timing -- two modules "
                        "can resemble each other and be unrelated"),
         })
+    # A destination proposed for a large share of the abandoned modules is not
+    # a fork of any of them -- it is whatever file changes in every commit.
+    # This is the failure the first attempt at this made wholesale, and it came
+    # back in a subtler form: the similarity gates do not stop a big hub,
+    # because a big file shares vocabulary with everything and touches every
+    # outside system. Measured on a 975-module repository, one destination was
+    # proposed for 85% of the stopped modules and a second for 80%.
+    #
+    # The cap has a floor of two, so that on a small project -- where one
+    # destination for three stopped modules is 33% and means nothing -- the
+    # rule stays quiet rather than suppressing the only findings there are.
+    counts = Counter(c["module"] for d in out for c in d["continued_as"])
+    cap = max(_HUB_FLOOR, int(len(out) * _HUB_SHARE))
+    hubs = {m for m, n in counts.items() if n > cap}
+    if hubs:
+        trimmed = []
+        for d in out:
+            kept = [c for c in d["continued_as"] if c["module"] not in hubs]
+            if kept:
+                d["continued_as"] = kept
+                trimmed.append(d)
+        out = trimmed
     out.sort(key=lambda d: -len(d["continued_as"]))
     return out
