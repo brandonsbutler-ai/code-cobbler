@@ -734,6 +734,57 @@ class TestMap(unittest.TestCase):
         # removing one changes nothing. Remove both and this goes red.
 
 
+class TestDiversionNoise(unittest.TestCase):
+    """A fork is specific to one abandoned effort, or it is not a fork."""
+
+    def _forks(self, files, commits):
+        """Build a repo, commit it in stages, and run the fork detector."""
+        from cobblerpy.diversion import find as find_forks
+        t = Tree(files, git=True)
+        self.addCleanup(t.close)
+        for stage in commits:
+            for name, text in stage.items():
+                write(t.dir, name, text)
+            t._git("add", "-A")
+            t._git("commit", "-q", "-m", "stage")
+        s = t.survey(with_history=True)
+        return s, find_forks(s.project, s.modules_by_key, s.history, s.frontier)
+
+    def test_a_destination_proposed_for_everything_is_suppressed(self):
+        """85% of one repository's stopped modules pointed at one file.
+
+        The similarity gates do not stop a hub: a big file shares vocabulary
+        with everything and touches every outside system. Only its SHARE of
+        the findings exposes it.
+        """
+        from cobblerpy.diversion import _HUB_SHARE, _HUB_FLOOR
+        self.assertLess(_HUB_SHARE, 0.5, "a hub gate that loose suppresses nothing")
+        self.assertGreaterEqual(_HUB_FLOOR, 2,
+                                "without a floor, one destination on a small "
+                                "project is a hub by arithmetic alone")
+
+    # NOT TESTED HERE: that find() consults the test filter.
+    #
+    # No synthetic repository built in this file produces a fork at all -- the
+    # similarity gates need vocabulary overlap, co-change history and matching
+    # effects, which a fixture small enough to write inline does not generate.
+    # A test that drove find() over such a fixture asserted "the test module is
+    # not in the results" against an empty list, and passed with the filter
+    # deleted. A vacuous test is worse than none, so it is gone.
+    #
+    # The evidence for the filter is a measurement on real repositories, in the
+    # commit that added it: on a second private project the findings went from 20 to 7 and every
+    # one of the removed entries had a test module as its abandoned side.
+
+    def test_the_test_filter_recognises_the_shapes_it_must(self):
+        from cobblerpy.diversion import _is_test_module
+        for key in ("tests.test_api", "test_thing", "pkg.tests.helpers",
+                    "conftest", "pkg.api_test"):
+            self.assertTrue(_is_test_module(key), key)
+        for key in ("app.main", "pkg.contest", "pkg.latest", "attest"):
+            self.assertFalse(_is_test_module(key), key)
+
+
 class TestDeadEndNoise(unittest.TestCase):
     """What the detector must NOT report, each measured against real code."""
 

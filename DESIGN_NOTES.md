@@ -284,3 +284,39 @@ than validated against a positive. Zero on a project that was abandoned wholesal
 redirected is plausibly the right answer, but "produces almost nothing" is not the same as
 "produces the right thing". It ships labelled as a hypothesis with its evidence attached, and it
 would take a codebase with a documented change of direction to know whether it works.
+
+
+---
+
+## Diversion, third pass (2026-09-16): hubs, and who may be the abandoned side
+
+Run against four real repositories, the shipped detector was still doing the thing the first
+attempt did wholesale. On a 975-module project **one destination was proposed for 85% of all
+stopped modules and a second for 80%**. The similarity gates cannot catch that: a large file
+shares vocabulary with everything and touches every outside system, so it satisfies them all.
+
+Only its SHARE of the findings exposes it. A destination named for more than 10% of the stopped
+modules is not a fork of any one of them; the cap has a floor of two so that on a small project,
+where one destination out of three findings is 33% by arithmetic, the rule stays quiet.
+
+The abandoned side needed a gate too. Test modules were already barred as destinations and not
+as sources, so on one project the top of the list was tests that had gone quiet -- which is what
+a passing test does.
+
+Measured effect: ledger 438 to 132, a second private project 72 to 6, this repository 3 to 3. The survivors are
+the first ones that read like forks rather than like popularity:
+
+    build_lab_test_report_pdf  ->  build_api_reference_pdf     shares pdf, section, subsection
+    capture_screenshots        ->  e2e_screenshot_walkthrough  shares api, capture, wait
+    windows_estate             ->  agent_config                same package, 4 unused imports
+
+**Still not validated against a known positive.** Every change so far has been tuned against
+absence -- making wrong answers go away -- and that is not the same as being shown to find a
+fork somebody agrees is a fork. Until a codebase with a known, admitted change of direction is
+run through it, the output stays labelled a hypothesis.
+
+**No synthetic fixture reproduces a fork.** The gates need vocabulary overlap, co-change history
+and matching effects together, which a repository small enough to build inside a unit test does
+not generate. A unit test that drove `find()` over such a fixture asserted against an empty list
+and passed with the filter deleted; it was removed rather than kept green. The evidence for both
+gates is the measurement above.
