@@ -524,7 +524,7 @@ class TestLayout(unittest.TestCase):
         s = t.survey()
         g = compute(s.project, {r["module"]: r for r in s.frontier})
         state, why = state_of(g["nodes"]["stranded"])
-        self.assertIn(state, ("orphan", "unreached"))
+        self.assertEqual(state, "maybe")
         self.assertTrue(why)
 
 

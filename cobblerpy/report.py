@@ -116,17 +116,21 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 #graph .card{fill:var(--card);stroke-width:1.5;
              filter:drop-shadow(0 0 4px currentColor)}
 #graph .node{color:var(--accent)}
-#graph .node[data-state="clean"]     .card{stroke:#33d6c8}
-#graph .node[data-state="clean"]     {color:#33d6c8}
-#graph .node[data-state="warm"]      .card{stroke:var(--warn)}
-#graph .node[data-state="warm"]      {color:var(--warn)}
-#graph .node[data-state="hot"]       .card{stroke:var(--hot)}
-#graph .node[data-state="hot"]       {color:var(--hot)}
-#graph .node[data-state="broken"]    .card{stroke:var(--hot)}
-#graph .node[data-state="orphan"]    .card{stroke:var(--violet)}
-#graph .node[data-state="orphan"]    {color:var(--violet)}
-#graph .node[data-state="unreached"] .card{stroke:var(--mut)}
-#graph .node[data-state="unreached"] {color:var(--mut)}
+/* Six states, and the reader should be able to trace the working path by
+   colour alone: cyan is confirmed, blue is under test, green is live. */
+#graph .node[data-state="confirmed"]  .card{stroke:#33d6c8;stroke-width:2}
+#graph .node[data-state="confirmed"]  {color:#33d6c8}
+#graph .node[data-state="tested"]     .card{stroke:#58a6ff}
+#graph .node[data-state="tested"]     {color:#58a6ff}
+#graph .node[data-state="live"]       .card{stroke:#7ee787}
+#graph .node[data-state="live"]       {color:#7ee787}
+#graph .node[data-state="unfinished"] .card{stroke:var(--warn)}
+#graph .node[data-state="unfinished"] {color:var(--warn)}
+#graph .node[data-state="broken"]     .card{stroke:var(--hot)}
+#graph .node[data-state="broken"]     {color:var(--hot)}
+#graph .node[data-state="maybe"]      .card{stroke:var(--violet);opacity:.55}
+#graph .node[data-state="maybe"]      {color:var(--violet)}
+#graph .node[data-state="maybe"]:hover .card{opacity:1}
 /* A dead end is its own state: execution reaches this module and stops
    inside it, which is not the same fact as "carries signals of unfinished
    work" and should not share its colour. */
@@ -154,6 +158,9 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 #graph .meta{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
              fill:var(--mut)}
 #graph .node{cursor:pointer}
+#graph .cut{stroke:var(--line);stroke-width:1.5;stroke-dasharray:3 6}
+#graph .cutlabel{font:10.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+                 fill:var(--mut);letter-spacing:.6px}
 /* Centred in its container. A chart narrower than the page used to sit hard
    against the left margin with a field of empty to its right, which reads as
    something failing to load rather than as a small project. */

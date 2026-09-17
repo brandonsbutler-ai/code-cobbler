@@ -38,7 +38,22 @@ def _fit(text, chars, keep_end=0):
     return text[:chars - 1] + "\u2026"
 
 
+# Six bands. Colour carries meaning here, so the legend names what each one is
+# DERIVED from rather than what it looks like.
 _PALETTE = {
+    "confirmed":  ("#33d6c8", "#0d2624",
+                   "reached from a start point and exercised by a test"),
+    "tested":     ("#58a6ff", "#0e1b2b",
+                   "a test exercises it, but it still carries signals"),
+    "live":       ("#7ee787", "#102117",
+                   "reached from a start point, nothing unfinished in it"),
+    "unfinished": ("#d8a657", "#241c10",
+                   "reached, and carrying signals of unfinished work"),
+    "deadend":    ("#ff6ec7", "#2a1220",
+                   "execution reaches here and stops inside it"),
+    "maybe":      ("#bc8cff", "#1b1526",
+                   "no static path reaches it -- an inference, not a verdict"),
+
     "clean":     ("#2d6a4f", "#e7f2ec", "reachable, no unfinished-work signals"),
     "warm":      ("#8a5a00", "#fdf4e3", "carries signals of unfinished work"),
     "hot":       ("#a13d2d", "#fbecea", "several signals of unfinished work"),
@@ -73,6 +88,19 @@ def render(graph, project, frontier_by_module, snippets_by_module,
     modules_by_key = modules_by_key or {}
     hist_files = history.get("files", {}) if isinstance(history, dict) else {}
     attempts = attempts or []
+
+    # Which modules a TEST actually imports. This is the fact that turns
+    # "reachable" into "reached and exercised", and it is the difference
+    # between a path somebody can trust and one that merely parses.
+    def _is_test(key):
+        parts = str(key).lower().replace("-", "_").split(".")
+        return any(p in ("tests", "test", "conftest") or p.startswith("test_")
+                   or p.endswith("_test") for p in parts)
+
+    tested = set()
+    for key in project.by_dotted:
+        if _is_test(key):
+            tested |= set(project.imports.get(key, ()))
 
     edge_svg = []
     for edge in edges:
@@ -122,13 +150,8 @@ def render(graph, project, frontier_by_module, snippets_by_module,
 
     node_svg = []
     for name, node in sorted(nodes.items()):
-        state, why = state_of(node)
-        # A dead end is not the same as "carries signals". Execution reaches
-        # this module and stops inside it, which is a different fact and gets
-        # its own colour.
-        if deadends_by_module.get(name):
-            state = "deadend"
-            why = "execution reaches here and stops"
+        state, why = state_of(node, tested=name in tested,
+                              deadend=bool(deadends_by_module.get(name)))
         stroke, fill, _ = _PALETTE[state]
         label = name.rsplit(".", 1)[-1][:24]
         prefix = name.rsplit(".", 1)[0][:26] if "." in name else ""
@@ -175,6 +198,16 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             + "</g>")
 
     edge_svg.extend(continuation_svg)
+
+    # A rule across the chart where the connected part ends, labelled. Without
+    # it the pool below reads as deeper levels of the same tree.
+    if graph.get("detached_y") is not None:
+        y = graph["detached_y"]
+        edge_svg.append(
+            f'<line class="cut" x1="8" y1="{y:.0f}" '
+            f'x2="{graph["width"] - 8}" y2="{y:.0f}"/>'
+            f'<text class="cutlabel" x="14" y="{y - 7:.0f}">'
+            f'nothing above reaches the {graph["detached_count"]} below</text>')
 
     svg = f"""<svg id="graph" viewBox="0 0 {graph['width']} {graph['height']}"
      width="{graph['width']}" height="{graph['height']}"
@@ -231,7 +264,8 @@ def render(graph, project, frontier_by_module, snippets_by_module,
 
     payload = {}
     for name, node in nodes.items():
-        state, why = state_of(node)
+        state, why = state_of(node, tested=name in tested,
+                              deadend=bool(deadends_by_module.get(name)))
         row = frontier_by_module.get(name, {})
         payload[name] = {
             "state": state,

@@ -19,13 +19,20 @@ import xml.etree.ElementTree as ET
 from .layout import NODE_H, NODE_W, state_of
 
 # state -> (fill, stroke) in the flat form both tools want
+# Print-friendly equivalents of the six states the map draws. Exports land in
+# Visio and diagrams.net, where a dark editor palette is the wrong medium, so
+# these are light fills with the same MEANING rather than the same colour.
+#
+# Every state the layout can return must have an entry: a missing one is a
+# KeyError at export time, which is how `maybe` announced itself.
 _COLOURS = {
-    "clean":     ("#E7F2EC", "#2D6A4F"),
-    "warm":      ("#FDF4E3", "#8A5A00"),
-    "hot":       ("#FBECEA", "#A13D2D"),
-    "broken":    ("#F7DEDB", "#7B2D26"),
-    "orphan":    ("#EFECF8", "#5A4B8A"),
-    "unreached": ("#ECECEA", "#6B6B66"),
+    "confirmed":  ("#DDF4F1", "#1F6F68"),
+    "tested":     ("#E3EEFB", "#1F4D8F"),
+    "live":       ("#E7F2EC", "#2D6A4F"),
+    "unfinished": ("#FDF4E3", "#8A5A00"),
+    "deadend":    ("#FBE9F4", "#B0247F"),
+    "broken":     ("#F7DEDB", "#7B2D26"),
+    "maybe":      ("#EFECF8", "#5A4B8A"),
 }
 
 _MERMAID_CLASSES = "\n".join(
@@ -100,7 +107,7 @@ def to_drawio(graph, project, deadends_by_module=None, title="codebase map"):
     ids = {}
     for i, (name, node) in enumerate(sorted(nodes.items()), start=2):
         state, why = state_of(node)
-        fill, stroke = _COLOURS[state]
+        fill, stroke = _COLOURS.get(state, ("#ECECEA", "#6B6B66"))
         ids[name] = str(i)
         marks = sum(node["counts"].values())
         label = name if not marks else f"{name}&#10;({marks} signals)"
