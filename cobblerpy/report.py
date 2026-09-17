@@ -65,6 +65,9 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
      border:1px solid var(--line);margin:1px 3px 1px 0;white-space:nowrap}
 .tag.hot{background:var(--hotbg);color:var(--hot);border-color:transparent}
 .chain.more{color:var(--mut);font-style:italic}
+.cont{padding:5px 0;border-bottom:1px dotted var(--line)}
+.cont:last-child{border-bottom:none}
+.cont .mono{margin-right:7px}
 .tag.warn{background:var(--warnbg);color:var(--warn);border-color:transparent}
 .proven{color:var(--ok);font-weight:600}
 .inferred{color:var(--warn);font-weight:600}
@@ -229,11 +232,22 @@ def _stat(value, label):
 
 
 def write_map(project, frontier, history, path, title=None, summary_totals=None,
-              origins=None, modules_by_key=None):
-    """Write the HTML map. Returns `path`."""
+              origins=None, modules_by_key=None, forks=None):
+    """Write the HTML map. Returns `path`.
+
+    `forks` is diversion.find()'s output. The caller usually has it already --
+    the CLI prints it -- so it is passed in rather than recomputed; when it is
+    not given and there is history to work from, it is computed here, because a
+    map that silently omits a section depending on how it was called is worse
+    than one that takes a moment longer.
+    """
     origins = origins or {}
     modules_by_key = modules_by_key or {(m.dotted or m.relpath): m
                                         for m in project.modules}
+    if forks is None and history and history.get("available"):
+        from .diversion import find as _find_forks
+        forks = _find_forks(project, modules_by_key, history, frontier)
+    forks = forks or []
     frontier_by_module = {r["module"]: r for r in frontier}
 
     # The graph, the source behind each node, and the points where the flow
@@ -390,6 +404,40 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
                      f"<tbody>{''.join(f_rows) or '<tr><td class=empty colspan=4>No unfinished-work signals found.</td></tr>'}"
                      f"</tbody></table></div>")
 
+    # -- where the effort went instead
+    #
+    # Next to the frontier on purpose: the frontier says where work STOPPED,
+    # and this says where it may have carried on. Read together they are the
+    # question somebody inheriting the code actually has -- not "what is
+    # unfinished" but "what was being attempted, and where do I pick it up".
+    #
+    # Presented as a hypothesis throughout, because it is one. The reasons are
+    # on every row so a wrong pairing can be dismissed in seconds.
+    if forks:
+        fork_rows = []
+        for f in forks[:12]:
+            conts = "".join(
+                f'<div class="cont"><span class="mono">{_e(c["module"])}</span>'
+                f'{"".join(f"<span class=\"tag\">{_e(sig)}</span>" for sig in c["signals"])}'
+                f'<div class="ln">{_e(c["why"])}</div></div>'
+                for c in f["continued_as"])
+            fork_rows.append(
+                f'<tr><td class="mono">{_e(f["stopped"])}'
+                f'<div class="ln">last touched {_e(f["last_touched"])} &middot; '
+                f'{f["commits"]} commit{"s" if f["commits"] != 1 else ""}</div>'
+                f'<div class="ln">&ldquo;{_e(str(f["last_subject"])[:70])}&rdquo;</div></td>'
+                f"<td>{conts}</td></tr>")
+        more = (f'<p class="lede">{len(forks) - 12} more not shown.</p>'
+                if len(forks) > 12 else "")
+        forks_html = (
+            '<div class="tablewrap"><table><thead><tr>'
+            '<th>Effort stopped here</th><th>and may have continued here</th>'
+            f"</tr></thead><tbody>{''.join(fork_rows)}</tbody></table></div>{more}")
+    else:
+        forks_html = ('<p class="empty">No fork candidates. Either the history is '
+                      'too short to tell, or nothing that went quiet has a '
+                      'similar effort that carried on.</p>')
+
     # -- history
     if history.get("available"):
         tl = history["timeline"]
@@ -500,6 +548,17 @@ in which someone inheriting this code should look at it. Each signal is a fact
 about the source; whether it means the work is unfinished is your call, and the
 evidence is attached so you can make it quickly.</p>
 {frontier_html}
+
+<h2>Where the effort went instead <span class="n">({len(forks)})</span></h2>
+<p class="lede"><strong>A hypothesis, not a finding.</strong> Work rarely stops;
+it forks. A module goes quiet while a similar one carries on, and the pairing is
+the most useful thing the history can say about a dead patch. A candidate has to
+be doing the same KIND of work by another route &mdash; at least two of shared
+vocabulary, same package, historical co-change and matching outside effects must
+agree &mdash; because timing alone returns whichever file changes in every
+commit. Two modules can resemble each other and have nothing to do with each
+other; the reasons are on every row so you can dismiss a wrong one in seconds.</p>
+{forks_html}
 
 {errors_html}
 
