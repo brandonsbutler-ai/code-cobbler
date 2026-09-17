@@ -284,6 +284,166 @@ class TestCommentClassifier(unittest.TestCase):
                          "an indented whole-line comment is still whole-line")
 
 
+class TestPromisedReturn(unittest.TestCase):
+    """A docstring that says THIS function returns something.
+
+    The old rule was the word "returns" anywhere in the text. It fired on 165
+    functions in the corpus and every one was a paragraph about what something
+    else returns -- and it fed the score that ranks where the work stopped.
+    """
+
+    PROMISES = [
+        "Return the parsed record.",
+        "Returns the parsed record.",
+        "Do the thing.\n\nReturns:\n    The parsed record.\n",
+        "Do the thing.\n\n:return: the parsed record\n",
+        "Do the thing.\n\n:rtype: dict\n",
+        "Returns\n-------\nrecord : dict\n",
+    ]
+
+    # Prose that mentions a return without promising one.
+    NEAR_MISSES = [
+        "Run the map's script.\n\nThe stub returns [] from querySelectorAll, "
+        "which proves the script parses and nothing more.",
+        "Capture the state before the command runs, so rollback returns it.",
+        "The previous version returned a bare list; this one writes a file.",
+        "Whatever this returns to the caller is ignored by the worker.",
+        "Turn the handle.",
+    ]
+
+    def test_the_documented_shapes_are_recognised(self):
+        from cobblerpy.abandonment import _promises_a_return
+        for text in self.PROMISES:
+            self.assertTrue(_promises_a_return(text), repr(text[:40]))
+
+    def test_prose_about_returning_is_not_a_promise(self):
+        from cobblerpy.abandonment import _promises_a_return
+        wrong = [t[:46] for t in self.NEAR_MISSES if _promises_a_return(t)]
+        self.assertEqual(wrong, [], f"prose taken as a promise: {wrong}")
+
+    def test_which_clause_rejects_the_prose(self):
+        """Loosen it back and the fixtures must start matching.
+
+        Otherwise the near-misses could be failing for some unrelated reason
+        and the rule could be loosened without anything going red.
+        """
+        loose = lambda d: any(w in d.lower()
+                              for w in ("returns ", "return:", ":return", "-> "))
+        testify = [t for t in self.NEAR_MISSES if loose(t)]
+        self.assertGreaterEqual(
+            len(testify), 3,
+            "too few near-misses reach the new clause; the rest are rejected "
+            "by their shape and say nothing about it")
+        for text in testify:
+            self.assertFalse(
+                __import__("cobblerpy.abandonment", fromlist=["x"])
+                ._promises_a_return(text),
+                f"{text[:40]!r} matched the old rule AND the new one")
+
+    def test_end_to_end_on_real_source(self):
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n',
+                  "m.py": 'def promises():\n'
+                          '    """Return the count."""\n'
+                          '    print(1)\n\n'
+                          'def mentions():\n'
+                          '    """Do it.\n\n    The helper returns a list, '
+                          'which this ignores.\n    """\n'
+                          '    print(2)\n\n'
+                          'def keeps_its_word():\n'
+                          '    """Return the count."""\n'
+                          '    return 3\n'})
+        self.addCleanup(t.close)
+        s = t.survey()
+        row = next(r for r in s.frontier if r["relpath"] == "m.py")
+        flagged = [name for name, _line
+                   in (row.get("signals") or {}).get("promised_return", [])]
+        self.assertEqual(flagged, ["promises"])
+
+
+class TestTagMarkers(unittest.TestCase):
+    """A tag is a marker, not a substring.
+
+    `tag in text.upper()` reported 19 of this project's 20 tagged comments and
+    585 of the corpus's 641. Every one of these words hides inside an ordinary
+    one, and the findings fed the score that ranks where the work stopped --
+    so the ranking was being driven by the word "attempts".
+    """
+
+    REAL = [
+        ("# TODO: wire up the retry path", "TODO"),
+        ("# FIXME(alice): off by one", "FIXME"),
+        ("# XXX this cannot be right", "XXX"),
+        ("# NOTE the disclosure's open handler", "NOTE"),
+        ("# todo: lower case, but labelled", "TODO"),
+        ("# hack(bob): temporary shim", "HACK"),
+        ("#TEMP: no space after the hash", "TEMP"),
+    ]
+
+    # Each of these contains a tag as a SUBSTRING and is not a marker.
+    NEAR_MISSES = [
+        "# attempts at one job. Two is too loose",     # at-temp-ts
+        "# the first attempted fix",                   # at-temp-ted
+        "# only WARNING+ unless --debug",              # de-bug
+        "# see DESIGN_NOTES.md for the table",         # note-s, no boundary
+        "# a note about the line it sits on",          # lower case, no colon
+        "# bug wearing a different hat",               # lower case, no colon
+        "# swipe left to dismiss",                     # s-wip-e
+        "# contemporary style",                        # con-temp-orary
+        "# forty TODOs in one file is one situation",  # todo-s, no boundary
+    ]
+
+    def test_the_real_markers_are_found(self):
+        from cobblerpy.scan import _tag_of
+        for text, tag in self.REAL:
+            self.assertEqual(_tag_of(text), tag, text)
+
+    def test_the_near_misses_are_rejected(self):
+        from cobblerpy.scan import _tag_of
+        found = {t: _tag_of(t) for t in self.NEAR_MISSES}
+        wrong = {t: v for t, v in found.items() if v}
+        self.assertEqual(wrong, {}, f"substrings taken as markers: {wrong}")
+
+    def test_which_clause_rejects_each_near_miss(self):
+        """Remove the guard and the fixture must start matching.
+
+        Two clauses do the work and they reject different fixtures. Without
+        this, a fixture rejected by the OTHER one proves nothing about the
+        clause it was written for, and loosening that clause goes unnoticed.
+        """
+        import re
+        from cobblerpy.scan import _TODO_TAGS
+        loose = re.compile("|".join(_TODO_TAGS), re.IGNORECASE)   # no \b
+        bounded = re.compile(r"\b(" + "|".join(_TODO_TAGS) + r")\b", re.IGNORECASE)
+
+        # Rejected by the WORD BOUNDARY: they match without it and not with it.
+        for text in ("# attempts at one job. Two is too loose",
+                     "# only WARNING+ unless --debug",
+                     "# see DESIGN_NOTES.md for the table",
+                     "# swipe left to dismiss"):
+            self.assertTrue(loose.search(text), text)
+            self.assertIsNone(bounded.search(text),
+                              f"{text!r} is rejected by something other than "
+                              "the word boundary, so it does not test it")
+
+        # Rejected by the CAPITALS-or-colon clause: they survive the boundary.
+        for text in ("# a note about the line it sits on",
+                     "# bug wearing a different hat"):
+            self.assertTrue(bounded.search(text),
+                            f"{text!r} never gets as far as the second clause")
+
+    def test_a_marker_in_source_is_reported_and_a_substring_is_not(self):
+        """End to end, because the rule is only worth what the scan does."""
+        t = Tree({"m.py": "# attempts at one job, and a debug helper\n"
+                          "x = 1\n"
+                          "# TODO: wire up the retry path\n",
+                  "run.py": 'if __name__ == "__main__":\n    pass\n'})
+        self.addCleanup(t.close)
+        s = t.survey()
+        module = next(m for m in s.project.modules if m.relpath == "m.py")
+        self.assertEqual([(tag, line) for tag, _note, line in module.todos],
+                         [("TODO", 3)])
+
+
 class TestDeliberateImports(unittest.TestCase):
     """`# noqa: F401` means the author meant it.
 

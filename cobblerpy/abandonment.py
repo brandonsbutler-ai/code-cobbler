@@ -11,6 +11,8 @@ context to decide quickly. Signals carry a weight so they can be ranked, and a
 note saying what would make the signal innocent.
 """
 
+import re
+
 from collections import defaultdict
 
 # weight, label, and the innocent explanation that must be offered alongside
@@ -40,6 +42,36 @@ SIGNALS = {
     "unreached": (2, "no import path reaches it from any entry point",
                   "reachability is static; frameworks and plugins are invisible to it"),
 }
+
+
+# A docstring PROMISES a return in one of three shapes, and prose that
+# happens to contain the word is not one of them.
+#
+# The old rule was `"returns " in docstring.lower()`, which fired on 165
+# functions in the corpus and 1 here -- and every one of them was a paragraph
+# mentioning what something ELSE returns. The test it caught in this project
+# says "the stub returns [] from querySelectorAll"; two it caught over there
+# are four-paragraph design notes. A signal wrong 96% of the time still feeds
+# the score that ranks where the work stopped.
+_RETURN_SECTION = re.compile(r"^\s*(returns?|:returns?|:rtype)\b[:\s]",
+                             re.IGNORECASE | re.MULTILINE)
+
+
+def _promises_a_return(docstring):
+    """True when the docstring says THIS function returns something.
+
+    Three shapes, all of them conventions rather than guesses:
+      - the summary line begins "Return ..." / "Returns ..."
+      - a `Returns:` section, Google or NumPy style
+      - a Sphinx `:return:` or `:rtype:` field
+    """
+    text = (docstring or "").strip()
+    if not text:
+        return False
+    first = text.split("\n", 1)[0].strip()
+    if re.match(r"^returns?\b", first, re.IGNORECASE):
+        return True
+    return bool(_RETURN_SECTION.search(text))
 
 
 def _unused_imports(module):
@@ -116,8 +148,7 @@ def analyse_module(module):
         if not d.docstring and not d.name.startswith("_") and d.kind != "method":
             found["no_docstring"].append((d.qualname, d.lineno))
         if (d.docstring and not d.returns and d.body_kind == "code"
-                and any(w in d.docstring.lower()
-                        for w in ("returns ", "return:", ":return", "-> "))):
+                and _promises_a_return(d.docstring)):
             found["promised_return"].append((d.qualname, d.lineno))
 
     for alias, target, lineno in _unused_imports(module):

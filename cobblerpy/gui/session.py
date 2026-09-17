@@ -60,6 +60,7 @@ class Index:
         self.folder = folder
         self.files = []
         self.lines = 0
+        self.unreadable = 0
         self.packages = set()
         self.has_git = os.path.isdir(os.path.join(folder, ".git"))
         self._walk()
@@ -79,7 +80,10 @@ class Index:
                     with open(path, "rb") as fh:
                         self.lines += sum(1 for _ in fh)
                 except OSError:
-                    pass
+                    # Counted, not swallowed. A permission error used to
+                    # vanish here and the window reported a line total that
+                    # was quietly short, with nothing saying by how much.
+                    self.unreadable += 1
 
     @property
     def count(self):
@@ -89,6 +93,9 @@ class Index:
         if not self.files:
             return "no Python in this folder"
         parts = [f"{self.count} modules", f"{self.lines:,} lines"]
+        if self.unreadable:
+            # Said out loud. The total is short by whatever these hold.
+            parts.append(f"{self.unreadable} could not be read")
         if self.packages:
             parts.append(f"{len(self.packages)} packages")
         parts.append("git history" if self.has_git else "no git history")
