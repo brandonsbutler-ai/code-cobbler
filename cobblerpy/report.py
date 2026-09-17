@@ -275,20 +275,22 @@ summary{cursor:pointer;font-size:13px}
 .empty{color:var(--mut);padding:8px 2px}
 /* The key, always on screen, and only one of it. The chart is twelve
    thousand pixels tall on a real project, so a legend above it answers "what
-   was orange again?" for the first screen only. This one rides under the
-   title bar -- and only for as long as the map is on screen, because it is
-   sticky inside .mapzone rather than inside the column.
-   It carries its definitions until the moment it pins, then drops them and
+   was orange again?" for the first screen only.
+   It lives INSIDE the chart's scroll box, because that is the thing being
+   scrolled: the page itself moves about six hundred pixels and then stops,
+   and a key sticky to the page is a key that never travels. Sticky on both
+   axes -- the chart scrolls sideways too.
+   It carries its definitions until the moment it sticks, then drops them and
    keeps the swatch and the word, which is all the question needs. The earlier
    version printed the words twice, once as chips and once as a block of
    definitions below, which says the same thing in the same place and leaves
    the reader checking whether the two agree. */
 .mapzone{position:relative}
-.keysentinel{height:1px}
-.keybar{position:sticky;top:var(--barh);z-index:30;display:flex;flex-wrap:wrap;
-        gap:6px;align-items:center;padding:8px 0 9px;background:var(--bg);
-        border-bottom:1px solid var(--line2);margin-bottom:9px}
-.keybar.pinned{padding:6px 0 7px}
+.keybar{position:sticky;top:0;left:0;z-index:30;display:flex;flex-wrap:wrap;
+        gap:6px;align-items:center;padding:7px 5px 9px;background:var(--card);
+        border-bottom:1px solid var(--line2);margin-bottom:5px;
+        width:max-content;max-width:100%}
+.keybar.pinned{padding:5px 5px 6px}
 .keybar .chip{display:flex;align-items:center;gap:6px;cursor:pointer;
         font:12px/1.35 inherit;color:var(--mut);background:var(--card);
         border:1px solid var(--line);border-radius:999px;padding:5px 11px 5px 8px;
@@ -309,7 +311,8 @@ summary{cursor:pointer;font-size:13px}
 #graph .node.off rect{opacity:.07}
 #graph .node.off text{opacity:.09}
 .mapwrap{overflow:auto;background:var(--card);border:1px solid var(--line);
-         border-radius:9px;padding:6px;margin-bottom:16px;max-height:76vh}
+         border-radius:9px;padding:6px;margin-bottom:16px;max-height:76vh;
+         position:relative}
 #graph{display:block}
 #graph .edge{fill:none;stroke:var(--line);stroke-width:1.3}
 #graph .edge.back{stroke-dasharray:4 3}
@@ -519,17 +522,21 @@ document.querySelectorAll('.keybar .chip').forEach(c => {
   });
 });
 
-// Full size until it pins, then swatch and word only. Measured against the
-// title bar rather than a number, so the two cannot drift: the key is pinned
-// exactly when it has caught up with the bottom of the bar.
+// Full size until it sticks, then swatch and word only.
+//
+// The key is the FIRST thing in the chart's scroll box, so it is stuck for
+// exactly as long as that box is scrolled -- which is one number, and the
+// right one. Comparing the two rects instead looks more careful and is not:
+// a sticky element's offset is measured from the scroll container's PADDING
+// box, so a stuck key sits .mapwrap's border plus padding below its top, and
+// a tolerance of a pixel or two silently never fires.
 const keybar = document.querySelector('.keybar');
-const topbar = document.querySelector('.topbar');
+const mapwrap = document.querySelector('.mapwrap');
 function sizeKey(){
-  if(!keybar || !topbar) return;
-  keybar.classList.toggle(
-    'pinned',
-    keybar.getBoundingClientRect().top <= topbar.getBoundingClientRect().bottom);
+  if(!keybar || !mapwrap) return;
+  keybar.classList.toggle('pinned', mapwrap.scrollTop > 0);
 }
+if(mapwrap) mapwrap.addEventListener('scroll', sizeKey, {passive:true});
 window.addEventListener('scroll', sizeKey, {passive:true});
 window.addEventListener('resize', sizeKey, {passive:true});
 sizeKey();
@@ -1046,10 +1053,9 @@ to. A doubled bar instead of an arrowhead marks a call that reaches a body with 
 it, and a dashed pink line means this module stopped and another one is doing the same
 work.</p>
 <div class="mapzone">
-<div class="keysentinel" id="keytop"></div>
-<div class="keybar">{svgmap.KEYBAR}<span class="hint" id="keyhint">click a colour to
-show only those &middot; Esc clears</span></div>
-<div class="mapwrap">{svg}</div>
+<div class="mapwrap"><div class="keybar">{svgmap.KEYBAR}<span class="hint"
+id="keyhint">click a colour to show only those &middot; Esc clears</span></div>
+{svg}</div>
 </div>
 
 <input type="search" id="q" placeholder="Filter the tables below...">
