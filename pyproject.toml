@@ -27,11 +27,18 @@ classifiers = [
 # should not also drag a supply chain onto the machine.
 dependencies = []
 
+[project.optional-dependencies]
+# The LIBRARY has no dependencies. The desktop window has one, and it is
+# here so that `pip install cobblerpy` stays dependency-free and
+# `pip install cobblerpy[gui]` adds the toolkit for the window.
+gui = ["PySide6-Essentials>=6.5"]
+
 [project.scripts]
 cobblerpy = "cobblerpy.__main__:main"
+cobblerpy-gui = "cobblerpy.gui.qt_app:main"
 
 [project.urls]
 Homepage = "https://github.com/brandonsbutler-ai/cobblerpy"
 
 [tool.setuptools]
-packages = ["cobblerpy"]
+packages = ["cobblerpy", "cobblerpy.gui"]

@@ -128,6 +128,27 @@ mechanism was load-bearing.
 It also caught a false-positive class nobody would invent: **worked examples inside explanatory
 comment blocks**, which CPython's own `typing.py` is full of. The flag rate on real code is 0.30%.
 
+## The desktop application
+
+```bash
+pip install cobblerpy[gui]
+cobblerpy-gui
+```
+
+Drop a project folder on the window. It counts what is there, surveys it, and
+puts the findings beside the controls in the order somebody inheriting a
+codebase needs them: **whether the work has already been attempted more than
+once, and which attempt got furthest**, then where the work stopped. The full
+interactive map is a button away.
+
+Built to sit beside an editor, because that is where you already are.
+
+**The window is the only part of this project with a dependency.**
+`pip install cobblerpy` installs a library and a command line that import
+nothing outside the standard library, and the verifier asserts both halves of
+that separately on every run — so a stray import in the library cannot hide
+behind the window's exemption.
+
 ## Options
 
 Every option the command accepts. `--help` prints the same list.
@@ -146,8 +167,8 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 69 tests, no pytest required
-python3 verify_e2e.py                        # 62 end-to-end claim checks
+python3 -m unittest discover -s tests -v     # 78 tests, no pytest required
+python3 verify_e2e.py                        # 64 end-to-end claim checks
 ```
 
 `verify_e2e.py` checks the PRODUCT rather than its units. It builds a codebase whose every
