@@ -121,6 +121,51 @@ def completeness(module, reachable, tested):
     return round(min(score, 1.0), 3), facts
 
 
+def _lineage(ranked):
+    """The attempts in the order the work actually grew, with what each added.
+
+    Ordered by what each attempt DEFINES rather than by when it was committed.
+    Dates say when a file was last touched, which on a squashed or rebased
+    history is one timestamp for everything; the definition sets survive that,
+    and on the shape this exists for they nest -- each developer kept the core
+    and reached for one more thing. Read in this order the group stops being
+    four rows and becomes a sequence somebody can follow.
+
+    Ties break on completeness, so a pair that defines exactly the same names
+    still comes out in a stable, defensible order.
+    """
+    order = sorted(ranked, key=lambda a: (len(a["defines"]), a["score"]))
+    out, seen = [], set()
+    for attempt in order:
+        defines = set(attempt["defines"])
+        out.append({
+            "module": attempt["module"],
+            "relpath": attempt["relpath"],
+            "percent": attempt["percent"],
+            "added": sorted(defines - seen),
+            "dropped": sorted(seen - defines),
+            "carried": sorted(defines & seen),
+        })
+        seen |= defines
+    return out
+
+
+def _common_gaps(ranked, stub_names):
+    """Definitions that EVERY attempt left unfinished.
+
+    The most useful sentence a survey of four restarts can produce, and a list
+    cannot say it: the reader has to intersect four separate "still stubbed"
+    lines themselves to notice that four developers all stopped in the same
+    place. Where they all stopped is where the actual problem is -- it is
+    rarely the code, and a fifth attempt will stop there too.
+    """
+    sets = [stub_names.get(a["module"], set()) for a in ranked]
+    if not sets or any(s is None for s in sets):
+        return []
+    common = set.intersection(*sets) if sets else set()
+    return sorted(common)
+
+
 def find(project, modules_by_key, origins=None):
     """Groups of modules that are competing attempts at one job.
 
@@ -202,6 +247,12 @@ def find(project, modules_by_key, origins=None):
             })
         ranked.sort(key=lambda r: (-r["score"], r["module"]))
         best = ranked[0]
+        stub_names = {}
+        for attempt in ranked:
+            module = modules_by_key[attempt["module"]]
+            stub_names[attempt["module"]] = {
+                d.name for d in module.definitions
+                if not d.parent and d.kind != "class" and d.body_kind in _EMPTY}
         others = ranked[1:]
 
         elsewhere = {}
@@ -215,6 +266,8 @@ def find(project, modules_by_key, origins=None):
         out.append({
             "shared": shared_names,
             "attempts": ranked,
+            "lineage": _lineage(ranked),
+            "common_gaps": _common_gaps(ranked, stub_names),
             "resume_at": best["module"],
             "resume_relpath": best["relpath"],
             "resume_percent": best["percent"],

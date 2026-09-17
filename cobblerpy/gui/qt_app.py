@@ -95,6 +95,22 @@ QLabel#elsewhere{{ font-family: {MONO}; font-size: 11px; color: {VIOLET}; }}
 QLabel#resume   {{ font-family: {MONO}; font-size: 11px; color: {GREEN};
                    font-weight: 700; }}
 
+/* The lineage rail: one step per attempt, read top to bottom as the work
+   grew. A list of four rows says which is furthest along; this says how it
+   got there, which is the thing somebody inheriting it cannot reconstruct. */
+QLabel#node      {{ font-family: {MONO}; font-size: 13px; color: {FAINT}; }}
+QLabel#nodeLead  {{ font-family: {MONO}; font-size: 13px; color: {GREEN}; }}
+QLabel#rail      {{ font-family: {MONO}; font-size: 13px; color: {LINE}; }}
+QLabel#added     {{ font-family: {MONO}; font-size: 11px; color: {BLUE}; }}
+QLabel#dropped   {{ font-family: {MONO}; font-size: 11px; color: {VIOLET}; }}
+QFrame#wall {{
+    background: #2a1a12; border: 1px solid #5a3420;
+    border-left: 3px solid {CORAL}; border-radius: 5px;
+}}
+QLabel#wallHead  {{ font-family: {MONO}; font-size: 12.5px; color: {CORAL};
+                    font-weight: 700; }}
+QLabel#wallNote  {{ font-size: 11.5px; color: {MUTED}; }}
+
 QPushButton {{
     background: {SUNK}; border: 1px solid {LINE}; border-radius: 5px;
     padding: 8px 15px; font-size: 12.5px; font-family: {MONO};
@@ -428,6 +444,56 @@ def build(qt, session=None):
             lay.addWidget(self._label(
                 f"{len(group['attempts'])} attempts   ·   sharing "
                 + ", ".join(group["shared"][:5]), "quiet", True))
+
+            # The wall first. When every attempt stopped at the same place,
+            # that is the finding -- not which one got furthest. A reader who
+            # only takes one thing from this panel should take this.
+            if group.get("common_gaps"):
+                wall = QtWidgets.QFrame(); wall.setObjectName("wall")
+                wl = QtWidgets.QVBoxLayout(wall)
+                wl.setContentsMargins(13, 10, 13, 11); wl.setSpacing(3)
+                names = ", ".join(group["common_gaps"])
+                wl.addWidget(self._label(
+                    f"every attempt stopped at {names}", "wallHead", True))
+                wl.addWidget(self._label(
+                    "Four people reached the same place and none got past it. "
+                    "Whatever is in the way is probably not the code.",
+                    "wallNote", True))
+                lay.addWidget(wall)
+
+            # The lineage: how the work grew, one step per attempt.
+            if group.get("lineage"):
+                lay.addWidget(self._label("HOW IT GREW", "cap"))
+                rail = QtWidgets.QWidget(); rail.setObjectName("root")
+                rl = QtWidgets.QVBoxLayout(rail)
+                rl.setContentsMargins(4, 2, 0, 4); rl.setSpacing(0)
+                steps = group["lineage"]
+                for i, step in enumerate(steps):
+                    lead = step["module"] == group["resume_at"]
+                    line = QtWidgets.QHBoxLayout(); line.setSpacing(9)
+                    glyph = "└─" if i == len(steps) - 1 else "├─"
+                    line.addWidget(self._label(glyph, "rail"))
+                    line.addWidget(self._label(
+                        f"{step['relpath']}  {step['percent']}%",
+                        "nodeLead" if lead else "node"))
+                    line.addStretch(1)
+                    holder = QtWidgets.QWidget(); holder.setObjectName("root")
+                    holder.setLayout(line)
+                    rl.addWidget(holder)
+                    detail = QtWidgets.QVBoxLayout(); detail.setSpacing(1)
+                    detail.setContentsMargins(26, 0, 0, 6)
+                    if step["added"]:
+                        detail.addWidget(self._label(
+                            "+ " + ", ".join(step["added"]), "added", True))
+                    if step["dropped"]:
+                        detail.addWidget(self._label(
+                            "- " + ", ".join(step["dropped"])
+                            + "   (an earlier attempt had this)",
+                            "dropped", True))
+                    box = QtWidgets.QWidget(); box.setObjectName("root")
+                    box.setLayout(detail)
+                    rl.addWidget(box)
+                lay.addWidget(rail)
             for attempt in group["attempts"]:
                 lead = attempt["module"] == group["resume_at"]
                 row = QtWidgets.QFrame()

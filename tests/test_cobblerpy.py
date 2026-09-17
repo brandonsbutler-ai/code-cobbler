@@ -1058,6 +1058,105 @@ class TestCompetingAttempts(unittest.TestCase):
                         f"the attempts are {spread} points apart, so this "
                         f"fixture cannot detect a documentation bonus")
 
+    def test_the_wall_every_attempt_hit_is_named(self):
+        """Four developers stopped at the same function.
+
+        A list cannot say this: it shows four separate "still stubbed" lines
+        and leaves the reader to intersect them. Where they all stopped is
+        where the problem actually is, and a fifth attempt will stop there too.
+        """
+        groups = self._groups(self.FOUR_ATTEMPTS)
+        self.assertEqual(groups[0]["common_gaps"], ["submit_claim"])
+
+    def test_a_gap_in_only_some_attempts_is_not_common(self):
+        """Otherwise the finding degrades into 'somebody did not finish this'."""
+        files = dict(self.FOUR_ATTEMPTS)
+        # give the leading attempt a body for the one everybody stubbed
+        files["app/claims_v3.py"] = files["app/claims_v3.py"].replace(
+            "def submit_claim(claim):\n    pass\n",
+            "def submit_claim(claim):\n    return True\n")
+        groups = self._groups(files)
+        self.assertEqual(groups[0]["common_gaps"], [],
+                         "a gap one attempt closed is still being called common")
+
+    def test_the_lineage_reads_as_a_sequence(self):
+        """Each attempt kept the core and reached for one more thing."""
+        groups = self._groups(self.FOUR_ATTEMPTS)
+        lineage = groups[0]["lineage"]
+        self.assertEqual([step["module"] for step in lineage],
+                         ["app.intake", "app.intake_new", "app.claims_v3"])
+        self.assertIn("parse_claim", lineage[0]["added"])
+        self.assertEqual(lineage[1]["added"], ["normalise_codes"])
+        self.assertIn("price_claim", lineage[2]["added"])
+
+    def test_the_lineage_reports_what_a_later_attempt_dropped(self):
+        """A newer attempt abandoning something an older one had is a fact
+        worth seeing, not a gap to smooth over."""
+        files = dict(self.FOUR_ATTEMPTS)
+        files["app/intake_new.py"] += "\ndef audit_claim(claim):\n    return 1\n"
+        groups = self._groups(files)
+        dropped = [step["dropped"] for step in groups[0]["lineage"]]
+        self.assertTrue(any("audit_claim" in d for d in dropped),
+                        f"nothing recorded as dropped: {dropped}")
+
+    def test_the_lineage_follows_what_each_attempt_DEFINES_not_its_score(self):
+        """The two orderings usually agree, which is why this fixture is odd.
+
+        `narrow` reaches for three things and finishes none of them; `wide`
+        does six and finishes them all. Ordered by completeness `wide` comes
+        first and the sequence reads backwards -- the work did not shrink from
+        six ideas to three. Ordered by what each one defines, it reads the way
+        it grew.
+
+        Without a fixture where the two disagree, the ordering clause is
+        untested: an earlier version of this passed with it replaced by a
+        sort on score.
+        """
+        files = {
+            "app/__init__.py": "",
+            "app/main.py": "from app import wide\n\n"
+                           "if __name__ == '__main__':\n    wide.settle_batch(1)\n",
+            # narrow: THREE definitions, all finished  -> score 0.70
+            # wide:   SIX definitions, mostly stubs     -> score 0.20
+            #
+            # Measured, because the obvious fixture does not work: with narrow
+            # stubbed and wide finished, sorting by score ascending and sorting
+            # by definition count ascending produce the SAME order, and the
+            # mutation survives. These numbers are the ones that separate them.
+            "app/narrow.py": ("def reconcile_ledger(x):\n    return x\n\n"
+                              "def post_journal(x):\n    return x\n\n"
+                              "def settle_batch(x):\n    return x\n"),
+            "app/wide.py": ("def reconcile_ledger(x):\n    pass\n\n"
+                            "def post_journal(x):\n    pass\n\n"
+                            "def settle_batch(x):\n    pass\n\n"
+                            "def audit_trail(x):\n    pass\n\n"
+                            "def price_lines(x):\n    pass\n\n"
+                            "def dispatch_remit(x):\n    return x\n"),
+        }
+        groups = self._groups(files)
+        self.assertEqual(len(groups), 1)
+        attempts = groups[0]["attempts"]
+        by_lineage = [step["module"] for step in groups[0]["lineage"]]
+        # The guard has to compare the lineage against the ordering the WRONG
+        # implementation would produce -- ascending score -- not against the
+        # attempts list, which is sorted descending and coincides by accident.
+        by_score_ascending = [a["module"]
+                              for a in sorted(attempts, key=lambda a: a["score"])]
+        self.assertNotEqual(by_score_ascending, by_lineage,
+                            f"this fixture cannot separate the two orderings: "
+                            f"{[(a['module'], a['score'], len(a['defines'])) for a in attempts]}")
+        self.assertEqual(by_lineage, ["app.narrow", "app.wide"])
+
+    def test_the_lineage_does_not_depend_on_commit_dates(self):
+        """A squashed or rebased history is one timestamp for every file.
+
+        Ordering on dates would collapse the sequence to an arbitrary one;
+        ordering on what each attempt DEFINES survives it.
+        """
+        groups = self._groups(self.FOUR_ATTEMPTS)     # built with no git at all
+        self.assertTrue(groups[0]["lineage"],
+                        "no lineage without history, so it is date-dependent")
+
     def test_a_clean_project_reports_nothing(self):
         """The failure that would make this noise rather than a finding."""
         groups = self._groups({
