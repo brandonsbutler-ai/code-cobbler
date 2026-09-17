@@ -1042,6 +1042,146 @@ console.log(JSON.stringify(seen));
                       "stylesheet, so this no longer proves it is allowed")
 
 
+class TestFolderOverview(unittest.TestCase):
+    """The overview groups by folder and sizes by lines."""
+
+    def _map(self, files):
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            return s, fh.read()
+
+    def test_a_longer_module_gets_a_wider_card(self):
+        from cobblerpy.layout import card_width, CARD_W_MIN, CARD_W_MAX
+        self.assertEqual(card_width(0), CARD_W_MIN)
+        self.assertEqual(card_width(5), CARD_W_MIN)
+        self.assertEqual(card_width(999999), CARD_W_MAX)
+        widths = [card_width(n) for n in (60, 200, 700, 2000)]
+        self.assertEqual(widths, sorted(widths), widths)
+        self.assertEqual(len(set(widths)), len(widths),
+                         f"different sizes drew the same width: {widths}")
+        # Log, not linear: ten times the lines is nowhere near ten times the
+        # card, or the 25,556-line module in the corpus draws the median one
+        # as a sliver.
+        self.assertLess(card_width(2000) - card_width(200),
+                        (card_width(200) - card_width(20)) * 4)
+
+    def test_every_module_is_inside_its_own_folder_box(self):
+        from cobblerpy.layout import compute_folders
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n',
+                  "lab/one.py": "x = 1\n" * 80,
+                  "lab/two.py": "y = 2\n" * 300,
+                  "docs/three.py": "z = 3\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        g = compute_folders(s.project, s.modules_by_key)
+        self.assertEqual({b["folder"] for b in g["boxes"]},
+                         {"the project root", "lab", "docs"})
+        by_folder = {b["folder"]: b for b in g["boxes"]}
+        for key, node in g["nodes"].items():
+            box = by_folder[node["folder"]]
+            self.assertGreaterEqual(node["x"], box["x"], key)
+            self.assertGreaterEqual(node["y"], box["y"], key)
+            self.assertLessEqual(node["x"] + node["w"], box["x"] + box["w"], key)
+            self.assertLessEqual(node["y"] + node["h"], box["y"] + box["h"], key)
+        self.assertEqual(g["boxes"][0]["folder"], "lab",
+                         "boxes are not ordered by how much code is in them")
+        self.assertEqual(by_folder["lab"]["loc"],
+                         sum(s.modules_by_key[k].loc for k in ("lab.one", "lab.two")))
+
+    @staticmethod
+    def _overlap(a, b):
+        return not (a["x"] + a["w"] <= b["x"] or b["x"] + b["w"] <= a["x"]
+                    or a["y"] + a["h"] <= b["y"] or b["y"] + b["h"] <= a["y"])
+
+    def test_no_two_cards_overlap(self):
+        """Packing is the whole layout, so an overlap is the whole bug."""
+        from cobblerpy.layout import compute_folders
+        files = {f"pkg/m{i}.py": "x = 1\n" * (i * 37 % 900 + 3) for i in range(40)}
+        files["run.py"] = 'if __name__ == "__main__":\n    pass\n'
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        placed = list(compute_folders(s.project, s.modules_by_key)["nodes"].values())
+        self.assertGreater(len(placed), 30)
+        for i, a in enumerate(placed):
+            for b in placed[i + 1:]:
+                self.assertFalse(self._overlap(a, b), f"two cards overlap: {a} {b}")
+
+    def test_small_folders_share_a_shelf_without_running_into_each_other(self):
+        """Enough folders that the row has to wrap.
+
+        Sixteen of the corpus's thirty folders hold three modules or fewer, so
+        a layout that gave each one a full-width band would spend most of the
+        chart on empty space. They sit side by side and wrap -- and the first
+        version of the overlap test used three folders, which fit on one shelf,
+        so removing the wrap entirely left it green.
+        """
+        from cobblerpy.layout import compute_folders, CHART_W
+        files = {f"d{i}/only.py": "x = 1\n" * 20 for i in range(14)}
+        files["run.py"] = 'if __name__ == "__main__":\n    pass\n'
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        g = compute_folders(s.project, s.modules_by_key)
+        boxes = g["boxes"]
+        self.assertGreaterEqual(len(boxes), 15)
+        self.assertGreater(len({b["y"] for b in boxes}), 1,
+                           "every box landed on one shelf, so nothing wrapped")
+        first_shelf = [b for b in boxes if b["y"] == boxes[0]["y"]]
+        self.assertGreater(len(first_shelf), 1,
+                           "no two boxes share a shelf, so each small folder "
+                           "still takes a full-width band")
+        for box in boxes:
+            self.assertLessEqual(box["x"] + box["w"], CHART_W,
+                                 f"{box['folder']} runs off the chart")
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                self.assertFalse(self._overlap(a, b),
+                                 f"two folder boxes overlap: "
+                                 f"{a['folder']} and {b['folder']}")
+
+    def test_the_overview_draws_folders_and_no_connections(self):
+        s, doc = self._map({
+            "run.py": "import lab.one\nif __name__ == '__main__':\n    lab.one.go()\n",
+            "lab/__init__.py": "",
+            "lab/one.py": "def go():\n    pass\n",
+        })
+        page = Page(doc)
+        self.assertTrue(page.find("rect", **{"class": "fbox"}),
+                        "no folder boxes were drawn")
+        edges = [a for tag, a in page.elements
+                 if tag == "path" and str(a.get("class", "")).startswith("edge")]
+        self.assertEqual(edges, [],
+                         "the overview still draws connections, which is the "
+                         "thing that had to be followed by eye")
+        # And the import it is not drawing is still in the data, for the trace.
+        import json, re
+        payload = json.loads(
+            re.search(r"const DATA = (\{.*?\});\n", doc, re.S).group(1)
+            .replace("\\u003c", "<").replace("\\u003e", ">"))
+        self.assertIn("lab.one", payload["run"]["uses"])
+
+    def test_hidden_really_hides(self):
+        """`hidden` has to beat a class, or the trace bar draws over the map.
+
+        [hidden]{display:none} in the UA stylesheet is one attribute selector
+        and loses to .tracebar{display:flex}. The bar was on screen, saying
+        "tracing", on a map nobody had clicked.
+        """
+        s, doc = self._map({"run.py": 'if __name__ == "__main__":\n    pass\n'})
+        css = doc[doc.index("<style>"):doc.index("</style>")]
+        self.assertIn("[hidden]{display:none!important}", css.replace("\n", ""))
+        page = Page(doc)
+        self.assertIn("hidden", page.find("div", **{"class": "tracebar"})[0],
+                      "the trace bar is not hidden to begin with")
+
+
 class TestTrace(unittest.TestCase):
     """Clicking a module removes the rest of the map and lays out what is left.
 

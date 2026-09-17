@@ -391,17 +391,24 @@ def verify_map_and_exports(root, workdir):
         # AND explained; a dashed line nothing accounts for is worse than none.
         with open(out, encoding="utf-8") as _fh:
             _svg = _fh.read()
+        # The continuation used to be a dashed path across the chart. The
+        # overview draws no connections now -- every one of them had to be
+        # followed by eye on a chart thirteen thousand pixels tall -- so the
+        # claim lives on the card that stopped, and is checked there.
         _links = re.findall(
-            r'<path class="continues"[^>]*data-from="([^"]+)" data-to="([^"]+)"',
+            r'data-name="([^"]+)" data-state="[^"]+" data-continues="([^"]+)"',
             _svg)
         _expected = sum(len(g["attempts"]) - 1 for g in _groups)
-        check(f"the graph links each attempt to the probable continuation "
+        check(f"every attempt that stopped is marked with where it carries on "
               f"({_expected})", len(_links) == _expected, _links)
-        check("every continuation link points at the attempt to resume from",
-              all(to in {g["resume_at"] for g in _groups} for _f, to in _links),
-              _links)
-        check("the legend explains the continuation link",
-              "probable continuation" in legend_text)
+        check("the marked cards point at the attempt to resume from",
+              # `all()` over an empty list is True: this check passed for one
+              # build with no marks on the map at all.
+              bool(_links) and all(to in {g["resume_at"] for g in _groups}
+                                   for _f, to in _links),
+              _links or "no card carries a continuation, so this proved nothing")
+        check("the key explains the continuation mark",
+              "another file is doing the same work" in legend_text)
         check("a module the flow stops inside gets its own state",
               'data-state="deadend"' in _svg)
         _first = _groups[0]["lineage"]
@@ -597,9 +604,19 @@ def verify_map_and_exports(root, workdir):
           _svg.count('<h4>where the work stopped</h4>') == 1,
           _svg.count('<h4>where the work stopped</h4>'))
 
+    # The prose is a claim about the picture. It described rows of
+    # increasing depth for a while after the chart had become folder boxes.
+    _says = {phrase: phrase in legend_text for phrase in
+             ("One box per folder", "biggest first",
+              "as wide as its module is long",
+              # gone with the depth layout:
+              "Each row is one step further", "Left to right")}
     check("the description matches the layout the code produces",
-          "top to bottom" in legend_text and "Left to right" not in legend_text,
-          [l for l in ("top to bottom", "Left to right") if l in legend_text])
+          all(_says[p] for p in ("One box per folder", "biggest first",
+                                 "as wide as its module is long"))
+          and not any(_says[p] for p in ("Each row is one step further",
+                                         "Left to right")),
+          _says)
     drawn = page.attr_values("data-name")
     missing = sorted(set(s.project.by_dotted) - drawn)
     check(f"every module appears as a node ({len(drawn)} drawn)",
