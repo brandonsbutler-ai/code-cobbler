@@ -946,35 +946,35 @@ console.log(JSON.stringify({
                 f"{state} has more than one chip")
         js = re.findall(r"<script>(.*?)</script>", doc, re.S)[-1]
         stub = """
-const kb = {cls:new Set(), top: 400,
+const kb = {cls:new Set(),
   classList:{toggle(c,on){on?kb.cls.add(c):kb.cls.delete(c)},
-             remove(c){kb.cls.delete(c)}, contains(c){return kb.cls.has(c)}},
-  getBoundingClientRect(){return {top: kb.top};}};
-const tb = {getBoundingClientRect(){return {bottom: 52};}};
-const scrollHandlers = [];
+             remove(c){kb.cls.delete(c)}, contains(c){return kb.cls.has(c)}}};
+const chartHandlers = [], windowHandlers = [];
+const box = {scrollTop: 0,
+             addEventListener(t,f){ if(t === 'scroll') chartHandlers.push(f); }};
 const made = {};
 function el(i){ if(!made[i]) made[i] = {id:i, textContent:'', innerHTML:'x',
   dataset:{}, classList:{toggle(){},remove(){},contains(){return false}},
   addEventListener(){}, scrollTop:0, scrollIntoView(){}, closest(){return null}};
   return made[i]; }
 global.CSS = {escape: s => s};
-global.window = {addEventListener(t,f){ if(t === 'scroll') scrollHandlers.push(f); },
+global.window = {addEventListener(t,f){ if(t === 'scroll') windowHandlers.push(f); },
                  removeEventListener(){}};
 global.document = {
   getElementById: i => el(i),
   querySelectorAll: () => [],
   querySelector: sel => sel === '.keybar' ? kb
-                      : sel === '.topbar' ? tb : null,
+                      : sel === '.mapwrap' ? box : null,
   addEventListener(){}};
 """
         probe = """
 const state = () => kb.classList.contains('pinned');
-const seen = {atRest: state()};
-kb.top = 52;                     // caught up with the bottom of the bar
-scrollHandlers.forEach(f => f());
+const seen = {atRest: state(), chartListeners: chartHandlers.length};
+box.scrollTop = 1500;            // the chart scrolled, so the key is stuck
+chartHandlers.forEach(f => f());
 seen.pinned = state();
-kb.top = 400;                    // scrolled back up
-scrollHandlers.forEach(f => f());
+box.scrollTop = 0;               // back to the top of the chart
+chartHandlers.forEach(f => f());
 seen.releasedAgain = state();
 console.log(JSON.stringify(seen));
 """
@@ -986,7 +986,8 @@ console.log(JSON.stringify(seen));
         self.assertEqual(r.returncode, 0, r.stderr[-800:])
         seen = json.loads(r.stdout.strip().splitlines()[-1])
         self.assertEqual(
-            seen, {"atRest": False, "pinned": True, "releasedAgain": False},
+            seen, {"atRest": False, "pinned": True, "releasedAgain": False,
+                   "chartListeners": 1},
             f"the key does not change size when it pins: {seen}")
         # And the collapse is a real rule, not a class nothing styles.
         self.assertIn(".keybar.pinned .chip .def{display:none}",
