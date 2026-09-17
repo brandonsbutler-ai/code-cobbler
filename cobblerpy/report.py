@@ -64,6 +64,7 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 .tag{display:inline-block;border-radius:20px;padding:1px 9px;font-size:11.5px;
      border:1px solid var(--line);margin:1px 3px 1px 0;white-space:nowrap}
 .tag.hot{background:var(--hotbg);color:var(--hot);border-color:transparent}
+.chain.more{color:var(--mut);font-style:italic}
 .tag.warn{background:var(--warnbg);color:var(--warn);border-color:transparent}
 .proven{color:var(--ok);font-weight:600}
 .inferred{color:var(--warn);font-weight:600}
@@ -303,15 +304,25 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
     layers = project.layers()
     unplaced = sorted(set(project.by_dotted) - set().union(*layers.values())
                       if layers else set(project.by_dotted))
+    # Each group carries its size. Without it the groups read as one long run
+    # of names -- on a 109-module project the unreached group alone is 54 of
+    # them, and its size is the single most useful number in the section: it
+    # says how much of the codebase no import path reaches.
     layer_rows = []
+    total_placed = sum(len(v) for v in layers.values()) + len(unplaced)
     for depth in sorted(layers):
         names = layers[depth]
         label = "entry points" if depth == 0 else f"depth {depth}"
         chips = "".join(f'<span class="tag">{_e(n)}</span>' for n in sorted(names))
-        layer_rows.append(f'<div class="layer"><b>{label}</b><div>{chips}</div></div>')
+        layer_rows.append(
+            f'<div class="layer"><b>{label} <span class="n">{len(names)}</span></b>'
+            f"<div>{chips}</div></div>")
     if unplaced:
         chips = "".join(f'<span class="tag warn">{_e(n)}</span>' for n in unplaced)
-        layer_rows.append(f'<div class="layer"><b>unreached</b><div>{chips}</div></div>')
+        share = f" &middot; {len(unplaced) * 100 // max(total_placed, 1)}% of the project"
+        layer_rows.append(
+            f'<div class="layer"><b>unreached <span class="n">{len(unplaced)}'
+            f"{share}</span></b><div>{chips}</div></div>")
     layers_html = f'<div class="card">{"".join(layer_rows) or "<span class=empty>No import structure found.</span>"}</div>'
 
     # -- dependency table
@@ -349,11 +360,23 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
             f'<span class="tag {"hot" if k in ("syntax_error","not_implemented","stub_pass","stub_ellipsis","orphan") else "warn"}">'
             f"{_e(k.replace('_', ' '))} {v}</span>"
             for k, v in sorted(r["counts"].items(), key=lambda kv: -kv[1]))
+        # The chip shows the true count; the evidence list is capped at six per
+        # kind so one noisy module cannot fill the page. Capping silently is
+        # the problem: a reader who opens the evidence to check a chip saying
+        # "commented code 7" counts six lines and has no way to know whether
+        # the count is wrong or the list is short. Say which.
+        _EVIDENCE_SHOWN = 6
         detail = []
         for kind, hits in sorted(r["signals"].items()):
-            for text, lineno in hits[:6]:
+            for text, lineno in hits[:_EVIDENCE_SHOWN]:
                 where = f":{lineno}" if lineno else ""
                 detail.append(f'<div class="chain mono">{_e(kind)}{_e(where)} &mdash; {_e(text)}</div>')
+            hidden = len(hits) - _EVIDENCE_SHOWN
+            if hidden > 0:
+                detail.append(
+                    f'<div class="chain more">&mdash; and {hidden} more '
+                    f'{_e(kind.replace("_", " "))}, not listed here. The count '
+                    f"on the chip is the whole file.</div>")
         body = ("<details><summary>evidence</summary>" + "".join(detail) + "</details>"
                 if detail else "")
         f_rows.append(
