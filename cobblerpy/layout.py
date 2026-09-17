@@ -92,18 +92,34 @@ def compute(project, frontier_by_module=None):
     # the conventional dependency-graph reading but not the one people already
     # know -- everybody can read an org chart without being told how, and the
     # thing being shown here is the same shape: what sits under what.
-    widest = max((len(v) for v in order.values()), default=1)
+    # A row WRAPS past this many cards.
+    #
+    # Turning the chart top-down turned the long dimension from height into
+    # width, and on a 109-module project the unreached row alone is 64 cards:
+    # the first version produced a chart 20,300 pixels wide. Height scrolls
+    # naturally and width does not, so a wide row becomes several stacked
+    # lines at the same depth.
+    ROW_MAX = 8
+
+    widest = min(max((len(v) for v in order.values()), default=1), ROW_MAX)
+    row_index, placed_rows = {}, 0
+    for depth in sorted(order):
+        row_index[depth] = placed_rows
+        placed_rows += max(1, -(-len(order[depth]) // ROW_MAX))   # ceil
+
     for depth in sorted(order):
         names = order[depth]
-        # Centre each ROW horizontally, so a row of one sits under the middle
-        # of the row above it rather than hard against the left margin.
-        offset = (widest - len(names)) * (NODE_W + X_GAP) / 2
         for i, name in enumerate(names):
+            line, column = divmod(i, ROW_MAX)
+            # Centre each LINE horizontally, so a short line sits under the
+            # middle of the one above rather than hard against the margin.
+            in_line = min(len(names) - line * ROW_MAX, ROW_MAX)
+            offset = (widest - in_line) * (NODE_W + X_GAP) / 2
             row = frontier_by_module.get(name, {})
             nodes[name] = {
                 "name": name,
-                "x": MARGIN + offset + i * (NODE_W + X_GAP),
-                "y": MARGIN + depth * (NODE_H + Y_GAP),
+                "x": MARGIN + offset + column * (NODE_W + X_GAP),
+                "y": MARGIN + (row_index[depth] + line) * (NODE_H + Y_GAP),
                 "depth": depth,
                 "score": row.get("score", 0),
                 "counts": row.get("counts", {}),
@@ -139,7 +155,7 @@ def compute(project, frontier_by_module=None):
         })
 
     width = MARGIN * 2 + widest * (NODE_W + X_GAP) - X_GAP
-    height = MARGIN * 2 + (max(order, default=0) + 1) * (NODE_H + Y_GAP) - Y_GAP
+    height = MARGIN * 2 + placed_rows * (NODE_H + Y_GAP) - Y_GAP
     return {"nodes": nodes, "edges": routed,
             "width": max(width, 320), "height": max(height, 200)}
 
