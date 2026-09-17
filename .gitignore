@@ -7,3 +7,7 @@ build/
 dist/
 build/
 *.spec
+
+# Pre-edit backups made during a session. Never part of the tree --
+# git history is the real backup.
+_backup_*/
