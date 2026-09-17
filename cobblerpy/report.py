@@ -53,23 +53,47 @@ body{margin:0;background:var(--bg);color:var(--fg);padding:24px 16px;
 /* Chart left, detail right. The tables used to stack under the chart and the
    page ran to ten thousand lines; now the selection has somewhere to appear
    that the reader is already looking at. */
-.wrap{max-width:1900px;margin:0 auto;display:flex;gap:26px;align-items:flex-start}
-.left{flex:1 1 auto;min-width:0}
-#panel{flex:0 0 420px;position:sticky;top:18px;max-height:calc(100vh - 36px);
+/* Two thirds chart, one third detail. The chart was shifted left and left at
+   its own width, so the page got wider without the chart getting wider with
+   it. */
+.wrap{max-width:2100px;margin:0 auto;display:flex;gap:24px;align-items:flex-start}
+.left{flex:2 1 0;min-width:0}
+#panel{flex:1 1 0;min-width:340px;max-width:660px;position:sticky;top:18px;max-height:calc(100vh - 36px);
        overflow:auto;background:var(--card);border:1px solid var(--line);
        border-radius:10px}
 #panel .phead{position:sticky;top:0;background:var(--card);padding:13px 16px;
        border-bottom:1px solid var(--line);border-radius:10px 10px 0 0}
 #panel .phead b{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
        font-size:13.5px;display:block}
-#panel #pbody{padding:14px 16px 20px}
+#panel #pbody{padding:12px 14px 16px}
 #panel h4{font-size:10.5px;letter-spacing:.9px;text-transform:uppercase;
-       color:var(--mut);margin:16px 0 6px}
+       color:var(--mut);margin:14px 0 5px}
+/* Tighter rows. A panel is read in a column, so the vertical rhythm that
+   suits a full-width page wastes half of it. */
+#panel td, #panel th{padding:4px 8px;line-height:1.35}
+#panel .ln{line-height:1.4}
+#panel p{margin:4px 0}
+#panel .attempt{margin-bottom:11px}
+#panel .lede{font-size:11.5px;margin:2px 0 7px}
 #panel h4:first-child{margin-top:0}
 #panel pre{background:var(--sunk);border:1px solid var(--line2);border-radius:6px;
        padding:9px 11px;overflow:auto;font-size:11.5px;line-height:1.5;margin:0 0 8px}
 #panel table{font-size:11.5px}
 #panel .tablewrap{margin-bottom:6px}
+.tallies{display:flex;flex-wrap:wrap;gap:8px 14px;margin-bottom:4px}
+.tally{display:flex;align-items:center;gap:6px;font-size:12px}
+.tally b{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+.tally .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.dot.s-confirmed{background:#33d6c8}
+.dot.s-tested{background:#58a6ff}
+.dot.s-live{background:#7ee787}
+.dot.s-unfinished{background:var(--warn)}
+.dot.s-deadend{background:#ff6ec7}
+.dot.s-broken{background:var(--hot)}
+.dot.s-maybe{background:var(--violet)}
+#panel .ev{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+       font-size:11px;padding-left:12px}
+#panel .ev.more{font-style:italic;color:var(--faint)}
 #panel a.goto{color:var(--accent);cursor:pointer;text-decoration:underline;
        text-underline-offset:2px}
 #panel a.goto:hover{color:var(--fg)}
@@ -334,8 +358,22 @@ function openModule(name){
   if(kinds.length){
     h += '<h4>Signals</h4>';
     for(const k of kinds.sort()){
+      const hits = d.signals[k] || [];
       h += '<div class="sig"><strong>' + esc(k.replace(/_/g,' ')) + '</strong> &times; '
-         + d.signals[k].length + '</div>';
+         + hits.length + '</div>';
+      // The EVIDENCE, not just the count. It used to sit in a table below the
+      // chart; now that the chart is the page, this is the only place it can
+      // be, and a count nobody can check is a count nobody will act on.
+      const shown = hits.slice(0, 6);
+      for(const hit of shown){
+        const where = hit[1] ? ':' + hit[1] : '';
+        h += '<div class="ln ev">' + esc(k) + esc(where) + ' &mdash; '
+           + esc(hit[0]) + '</div>';
+      }
+      if(hits.length > shown.length)
+        h += '<div class="ln ev more">and ' + (hits.length - shown.length)
+           + ' more ' + esc(k.replace(/_/g,' ')) + ', not listed here. '
+           + 'The count above is the whole file.</div>';
     }
   }
 
@@ -818,16 +856,50 @@ abandoned code does not get started again.</p>
     # sits beside it: click a module and the panel holds that module, or leave
     # nothing selected and it holds the project. Nothing is lost and nothing
     # is stacked underneath.
+    # The panel's default view, and it has to stay SMALL.
+    #
+    # Its first version was every table the page used to stack: on a
+    # 975-module project that is 1.2 MB of markup, including a dependency
+    # table with a row per module, rendered into a 420px column. It looked
+    # like a fault and it was the overhead this panel existed to remove.
+    #
+    # What stays is what a reader wants before they have clicked anything:
+    # how the project divides by state, where the work stopped, and whether
+    # the same job has been started more than once. What a single module
+    # depends on is a property OF THAT MODULE, and it is one click away on the
+    # card itself -- there is no reason to carry 975 of them at rest.
+    _tally = {}
+    for _name in project.by_dotted:
+        _node = graph["nodes"].get(_name)
+        if _node is None:
+            continue
+        _st, _ = svgmap.state_for(_node, _name, project, dead)
+        _tally[_st] = _tally.get(_st, 0) + 1
+    # The frontier at rest is a SHORTLIST. The full ranking is 900 rows on a
+    # large project, and a reader who has not clicked anything yet wants to
+    # know where to start, not to scroll an ordered list of everything.
+    _top = hot[:12]
+    _short_rows = "".join(
+        f'<tr><td class="num">{r["score"]}</td>'
+        f'<td class="mono">{_e(r["relpath"])}</td>'
+        f'<td class="ln">{_e(", ".join(f"{k.replace(chr(95), chr(32))} {v}" for k, v in sorted(r["counts"].items(), key=lambda kv: -kv[1])[:3]))}</td></tr>'
+        for r in _top)
+    _frontier_short = (
+        f'<div class="tablewrap"><table><tbody>{_short_rows}</tbody></table></div>'
+        + (f'<p class="lede">{len(hot) - len(_top)} more, each on its own card.'
+           f"</p>" if len(hot) > len(_top) else ""))
+
+    _order = ["confirmed", "tested", "live", "unfinished", "deadend",
+              "broken", "maybe"]
+    _bars = "".join(
+        f'<div class="tally"><span class="dot s-{_e(k)}"></span>'
+        f'<b>{_tally.get(k, 0)}</b> <span class="ln">{_e(k)}</span></div>'
+        for k in _order if _tally.get(k))
     summary_html = (
-        f'<h4>where the work stopped</h4>{frontier_html}'
+        f'<h4>what this project is made of</h4><div class="tallies">{_bars}</div>'
         f'<h4>the same job, started over</h4>{attempts_html}'
-        f'<h4>where the effort went instead</h4>{forks_html}'
-        f'<h4>what the history says</h4>{history_html}'
-        f'<h4>where it starts</h4>{entry_html}'
-        f'<h4>how far from a start point</h4>{layers_html}'
-        f'<h4>what depends on what</h4>{dep_html}'
-        f'<h4>import cycles</h4>{cycles_html}'
-        f'{errors_html}')
+        f'<h4>where the work stopped</h4>{_frontier_short}'
+        f'<h4>what the history says</h4>{history_html}')
 
     doc = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
