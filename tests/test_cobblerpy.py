@@ -734,6 +734,213 @@ class TestMap(unittest.TestCase):
         # removing one changes nothing. Remove both and this goes red.
 
 
+class TestDesktopSession(unittest.TestCase):
+    """The window's decisions, driven with no window attached.
+
+    This is the half that imports nothing outside the standard library, which
+    is why it can be tested in the ordinary suite.
+    """
+
+    def _session(self, files, git=False):
+        from cobblerpy.gui.session import Session
+        t = Tree(files, git=git)
+        self.addCleanup(t.close)
+        out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out, True)
+        s = Session(out_dir=out)
+        return s, t
+
+    SMALL = {
+        "app/__init__.py": "",
+        "app/main.py": "from app import store\n\n"
+                       "if __name__ == '__main__':\n    store.persist({})\n",
+        "app/store.py": "def persist(row):\n    return row\n",
+    }
+
+    def test_the_index_reads_a_folder_without_parsing_it(self):
+        s, t = self._session(self.SMALL)
+        index = s.load(t.dir)
+        self.assertEqual(index.count, 3)
+        self.assertGreater(index.lines, 0)
+        self.assertIn("3 modules", index.summary())
+        self.assertIn("no git history", index.summary())
+
+    def test_a_git_project_says_so(self):
+        s, t = self._session(self.SMALL, git=True)
+        self.assertIn("git history", s.load(t.dir).summary())
+
+    def test_the_map_never_lands_inside_the_project(self):
+        """Otherwise the next survey reads its own output.
+
+        On a repository it would also turn up as an untracked file in
+        somebody's `git status`, which is a rude thing for a read-only tool to
+        do to a tree it was pointed at.
+        """
+        from cobblerpy.gui.session import Session
+        t = Tree(self.SMALL)
+        self.addCleanup(t.close)
+        s = Session()                      # no out_dir: the default path
+        s.load(t.dir)
+        destination = os.path.abspath(s.map_destination())
+        self.assertFalse(
+            destination.startswith(os.path.abspath(t.dir) + os.sep),
+            f"the map would be written inside the project at {destination}")
+
+    def test_a_survey_produces_the_findings_in_reading_order(self):
+        s, t = self._session(TestCompetingAttempts.FOUR_ATTEMPTS)
+        s.load(t.dir)
+        stages = []
+        result = s.run(on_stage=stages.append)
+        self.assertEqual(stages[0], "reading the source")
+        self.assertIn("looking for restarts", stages)
+        self.assertTrue(result.attempts, "the restarts were not found")
+        self.assertTrue(os.path.isfile(result.map_path))
+
+    def test_the_headline_leads_with_the_restarts(self):
+        """Somebody inheriting a codebase is deciding read-or-rewrite.
+
+        Whether the work has already been attempted more than once is what
+        decides that, so it goes first -- ahead of module counts.
+        """
+        s, t = self._session(TestCompetingAttempts.FOUR_ATTEMPTS)
+        s.load(t.dir)
+        headline = s.run().headline()
+        self.assertIn("started over", headline)
+
+    def test_the_headline_falls_back_when_there_are_no_restarts(self):
+        s, t = self._session(self.SMALL)
+        s.load(t.dir)
+        headline = s.run().headline()
+        self.assertNotIn("started over", headline)
+
+    def test_turning_the_map_off_writes_no_map(self):
+        s, t = self._session(self.SMALL)
+        s.load(t.dir)
+        s.options.write_map = False
+        self.assertIsNone(s.run().map_path)
+
+    def test_a_dropped_file_resolves_to_its_project(self):
+        from cobblerpy.gui.session import folders_from_drop
+        t = Tree(self.SMALL)
+        self.addCleanup(t.close)
+        one = os.path.join(t.dir, "app", "store.py")
+        self.assertEqual(folders_from_drop([one]),
+                         [os.path.abspath(os.path.join(t.dir, "app"))])
+
+    def test_a_fast_survey_does_not_report_zero_seconds(self):
+        from cobblerpy.gui.session import Result
+        r = Result("/x")
+        r.seconds = 0.019
+        self.assertIn("ms", r.duration())
+        r.seconds = 5.0
+        self.assertIn("seconds", r.duration())
+
+
+class TestDesktopWindow(unittest.TestCase):
+    """The window itself, by building it and asking the widget tree.
+
+    Skipped where there is no Qt or no display. What it does NOT do is search
+    the source for widget names: it constructs the real thing, drives the real
+    handlers and reads the real objects back, because a test that matches
+    strings tells you how the file is spelled and nothing about what it builds.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from PySide6 import QtCore, QtGui, QtWidgets
+        except ImportError:
+            raise unittest.SkipTest("PySide6 not installed")
+        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            raise unittest.SkipTest("no display")
+        cls.qt = (QtCore, QtGui, QtWidgets)
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def _window(self, files):
+        from cobblerpy.gui.qt_app import build
+        from cobblerpy.gui.session import Session
+        t = Tree(files)
+        self.addCleanup(t.close)
+        out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out, True)
+        window = build(self.qt, Session(out_dir=out))
+        # SHOWN, because isVisible() is False for every widget in a window
+        # that was never shown -- so an assertion about what a person can see
+        # passes on an empty window and proves nothing.
+        window.show()
+        self.app.processEvents()
+        self.addCleanup(window.close)
+        self.addCleanup(window.deleteLater)
+        return window, t
+
+    def test_survey_is_refused_until_a_project_is_loaded(self):
+        window, _t = self._window(TestDesktopSession.SMALL)
+        self.assertFalse(window.run_btn.isEnabled())
+
+    def test_loading_a_project_enables_the_survey_and_shows_the_count(self):
+        window, t = self._window(TestDesktopSession.SMALL)
+        window._load([t.dir])
+        self.assertTrue(window.run_btn.isEnabled())
+        self.assertIn("3 modules", window.stat.text())
+        self.assertEqual(window.path.text(), os.path.abspath(t.dir))
+
+    def test_a_bad_drop_is_reported_and_changes_nothing(self):
+        window, _t = self._window(TestDesktopSession.SMALL)
+        window._load(["/definitely/not/here"])
+        self.assertFalse(window.run_btn.isEnabled())
+        self.assertIn("does not exist", window.status.text())
+
+    def test_the_findings_panel_stays_hidden_until_there_is_something(self):
+        window, t = self._window(TestDesktopSession.SMALL)
+        window._load([t.dir])
+        self.assertFalse(window.rightScroll.isVisible())
+
+    def test_a_finished_survey_puts_the_restarts_in_the_widget_tree(self):
+        """Read the labels Qt actually built, not the source that built them."""
+        from PySide6 import QtWidgets
+        window, t = self._window(TestCompetingAttempts.FOUR_ATTEMPTS)
+        window._load([t.dir])
+        result = window.session.run()
+        window._finish(result)
+        texts = [w.text() for w in window.findChildren(QtWidgets.QLabel)]
+        joined = "\n".join(texts)
+        self.assertIn("THE SAME JOB, STARTED OVER", joined)
+        self.assertIn("RESUME HERE", joined)
+        self.assertTrue(any("claims_v3" in t for t in texts),
+                        "the winning attempt is not on screen")
+        self.assertTrue(window.map_btn.isEnabled())
+
+    def test_starting_over_clears_the_previous_findings(self):
+        from PySide6 import QtWidgets
+        window, t = self._window(TestCompetingAttempts.FOUR_ATTEMPTS)
+        window._load([t.dir])
+        window._finish(window.session.run())
+        self.assertIn("RESUME HERE",
+                      "\n".join(w.text() for w in
+                                window.findChildren(QtWidgets.QLabel)))
+        window._clear()
+        # deleteLater() is deferred: without draining that queue the widgets
+        # are still in the tree and this asserts nothing. isHidden() is also
+        # the wrong question -- it is False for a child whose PARENT is
+        # hidden, so the panel can be off-screen while every label in it
+        # reports itself as shown. isVisible() is the one that means "a person
+        # can see this".
+        from PySide6.QtCore import QEvent
+        self.app.sendPostedEvents(None, QEvent.DeferredDelete)
+        self.app.processEvents()
+        remaining = "\n".join(w.text() for w in
+                              window.findChildren(QtWidgets.QLabel)
+                              if w.isVisible())
+        self.assertNotIn("RESUME HERE", remaining)
+        self.assertFalse(window.rightScroll.isVisible())
+        # NOT covered: that the old widgets are actually destroyed. Hiding the
+        # panel makes every child invisible, so this passes with the
+        # deleteLater() removed. That is the right answer for what a PERSON
+        # sees, and leaking them would be a memory problem rather than a
+        # visible one -- but the distinction is worth stating rather than
+        # leaving somebody to assume this test covers both.
+
+
 class TestCompetingAttempts(unittest.TestCase):
     """Four restarts of one job, which is the case this was built for."""
 

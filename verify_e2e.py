@@ -417,8 +417,16 @@ def verify_no_dependencies():
                 for m in mods:
                     if m and m not in stdlib and m != "cobblerpy":
                         offenders.append(f"{name}: {m}")
-    check("no module imports anything outside the standard library",
-          not offenders, offenders)
+    # The claim is two-part, so the check is two-part. The LIBRARY imports
+    # nothing outside the standard library; the desktop WINDOW imports a
+    # toolkit and is the only thing that may. Asserting both halves means a
+    # stray import in the library cannot hide behind the window's exemption.
+    library = [o for o in offenders if not o.startswith("qt_app")]
+    check("the library imports nothing outside the standard library",
+          not library, library)
+    window = [o for o in offenders if o not in library]
+    check("only the window imports a toolkit, and only PySide6",
+          all("PySide6" in o for o in window), window)
 
     import tomllib
     with open(os.path.join(ROOT, "pyproject.toml"), "rb") as fh:
@@ -428,11 +436,22 @@ def verify_no_dependencies():
 
     import importlib
     scripts = cfg["project"].get("scripts", {})
-    check("exactly one console entry point", len(scripts) == 1, scripts)
-    target = next(iter(scripts.values()), "")
-    module_name, _, func = target.partition(":")
-    resolved = getattr(importlib.import_module(module_name), func, None)
-    check("the entry point resolves to a real callable", callable(resolved), target)
+    # Every declared entry point is IMPORTED AND RESOLVED, not matched against
+    # a spelling: the question is whether the thing a `pip install` puts on
+    # somebody's PATH actually exists and is callable.
+    check("the console entry points are cobblerpy and cobblerpy-gui",
+          sorted(scripts) == ["cobblerpy", "cobblerpy-gui"], scripts)
+    for name, target in sorted(scripts.items()):
+        module_name, _, func = target.partition(":")
+        try:
+            resolved = getattr(importlib.import_module(module_name), func, None)
+        except ImportError as exc:
+            # The window's module imports its toolkit lazily, so this should
+            # import cleanly even where PySide6 is absent. If it does not,
+            # that is the finding.
+            resolved = None
+            target = f"{target} -- {exc}"
+        check(f"`{name}` resolves to a real callable", callable(resolved), target)
 
 
 def verify_documentation():
