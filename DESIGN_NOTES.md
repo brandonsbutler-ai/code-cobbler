@@ -60,18 +60,29 @@ wikis. Costs almost nothing to emit and means the map can live in a repository's
 ### Colour has to mean something specific
 
 Green and red imply a judgement, so the legend must say exactly what each colour is derived from,
-or it is decoration that invites a wrong conclusion. Proposed:
+or it is decoration that invites a wrong conclusion. What ships:
 
-| Colour | Meaning | Derived from |
-|---|---|---|
-| **green** | reachable from an entry point, no unfinished-work signals | proven structure |
-| **amber** | reachable, but carries signals (TODO, stub, unused import) | proven signals, inferred significance |
-| **red** | high signal score, will not parse, or nothing imports it | proven facts, ranked |
-| **grey** | no static path reaches it | **inference, not proof** |
+| State | What the colour is derived from |
+|---|---|
+| **confirmed** | reached from a start point and exercised by a test |
+| **tested** | a test exercises it, but it still carries signals |
+| **live** | reached from a start point, nothing unfinished in it |
+| **unfinished** | reached, and carrying signals of unfinished work |
+| **deadend** | execution reaches here and stops inside it |
+| **maybe** | no static path reaches it -- an inference, not a verdict |
+| **broken** | this file does not parse |
 
-Grey must stay visually distinct from red. "Unreachable" is a lower bound -- Python dispatches
-through registries, decorators and getattr -- and colouring it the same as "broken" would state
-as fact the one thing this tool explicitly cannot know.
+This table is checked against `svgmap._PALETTE` -- it described a four-colour vocabulary
+(green/amber/red/grey) for some time after the map had moved to these seven, which is exactly the
+drift the check now prevents.
+
+`maybe` must stay visually distinct from `broken`. "Nothing reaches it" is a lower bound -- Python
+dispatches through registries, decorators and getattr -- and colouring it like a file that will not
+parse would state as fact the one thing this tool explicitly cannot know.
+
+The key sits above the chart and stays there: it is pinned under the title bar for as long as the
+map is on screen, because a chart twelve thousand pixels tall makes a legend at the top a legend
+for the first screen only. Clicking a colour in it steps every other module back.
 
 **Red does not mean bad code.** It means signals of unfinished work, which may be entirely
 innocent: an abstract base class is full of `NotImplementedError`, a plugin module is imported by

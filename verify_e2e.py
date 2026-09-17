@@ -761,6 +761,22 @@ def verify_documentation():
     for name in ("README.md", "DESIGN_NOTES.md", "LICENSE", "pyproject.toml"):
         check(f"{name} is present", os.path.isfile(os.path.join(ROOT, name)))
 
+    # The colour table in DESIGN_NOTES is a claim about what the map draws. It
+    # described a four-colour vocabulary (green/amber/red/grey) for a long
+    # while after the map had moved to seven named states, which is the exact
+    # shape of documentation that reads as authoritative and is not.
+    from cobblerpy import svgmap as _sv
+    with open(os.path.join(ROOT, "DESIGN_NOTES.md"), encoding="utf-8") as _fh:
+        _notes = _fh.read()
+    _documented = set(re.findall(r"^\| \*\*([a-z]+)\*\* \|", _notes, re.M))
+    check("the design notes list the states the map actually draws",
+          _documented == set(_sv._PALETTE),
+          f"notes {sorted(_documented)} vs palette {sorted(_sv._PALETTE)}")
+    _wrong = [w for w, (_s, _f, desc) in _sv._PALETTE.items()
+              if f"| **{w}** | {desc} |" not in _notes]
+    check("each state's documented derivation is the palette's own wording",
+          not _wrong, _wrong)
+
 
 def main():
     print("cobblerpy end-to-end verification")

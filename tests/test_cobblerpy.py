@@ -788,6 +788,121 @@ class TestMap(unittest.TestCase):
         # And the old mashed-together heading is gone.
         self.assertNotIn("Codebase map --", doc)
 
+    def test_the_persistent_key_matches_the_colours_actually_drawn(self):
+        """The key and the picture come from one table, or they drift.
+
+        A key written next to a palette is a key that goes stale the first
+        time a colour moves -- this project already shipped a legend that
+        explained nine colours while the chart drew six.
+        """
+        from cobblerpy import svgmap
+        t = Tree({"run.py": 'import lib\nif __name__ == "__main__":\n    lib.go()\n',
+                  "lib.py": "def go():\n    pass  # TODO: finish\n",
+                  "stranded.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            doc = fh.read()
+        page = Page(doc)
+        chips = {a["data-state"] for a in page.find("button", **{"class": "chip"})}
+        self.assertEqual(chips, set(svgmap._PALETTE),
+                         "the key and the palette disagree")
+        drawn = {a["data-state"] for _t, a in page.elements
+                 if a.get("class") == "node" and "data-state" in a}
+        self.assertTrue(drawn, "no nodes were drawn, so nothing is being compared")
+        self.assertEqual(drawn - chips, set(),
+                         f"drawn with no chip to explain them: {drawn - chips}")
+        # And it is pinned, not merely present -- the whole point is that it
+        # survives a twelve-thousand-pixel scroll.
+        self.assertIn(".keybar{position:sticky", doc.replace("\n", ""))
+
+    def test_picking_a_colour_steps_the_other_modules_back(self):
+        """Run the map's own script and check which nodes it turns off.
+
+        The stub DOM in the claim verifier returns [] from querySelectorAll,
+        which is enough to prove the script parses and nothing more: every
+        handler in it is a no-op under that stub. This one hands the script
+        real nodes and reads back what it did to them.
+        """
+        import json
+        import re
+        import shutil
+        import subprocess
+        if not shutil.which("node"):
+            self.skipTest("node not installed")
+        t = Tree({"run.py": 'import lib\nif __name__ == "__main__":\n    lib.go()\n',
+                  "lib.py": "def go():\n    pass  # TODO: finish\n",
+                  "stranded.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            doc = fh.read()
+        js = re.findall(r"<script>(.*?)</script>", doc, re.S)[-1]
+        page = Page(doc)
+        states = [a["data-state"] for _tag, a in page.elements
+                  if a.get("class") == "node" and "data-state" in a]
+        self.assertGreater(len(set(states)), 1,
+                           "the fixture draws one colour, so a filter that did "
+                           "nothing would look identical to one that worked")
+        target = sorted(set(states))[0]
+        stub = """
+const mk = (state) => ({dataset:{state, name:state}, cls:new Set(),
+  classList:{toggle(c,on){on?this.o.cls.add(c):this.o.cls.delete(c)},
+             remove(c){this.o.cls.delete(c)}, contains(c){return this.o.cls.has(c)}},
+  setAttribute(k,v){this.attrs[k]=v}, attrs:{}, addEventListener(t,f){this.on[t]=f},
+  on:{}, scrollIntoView(){}, closest(){return null}});
+const NODES = %s.map(s => { const n = mk(s); n.classList.o = n; return n; });
+const CHIPS = %s.map(s => { const c = mk(s); c.classList.o = c; return c; });
+const made = {};
+function el(i){ if(!made[i]) made[i] = {id:i, textContent:'', innerHTML:'x',
+  dataset:{}, classList:{toggle(){},remove(){},contains(){return false}},
+  addEventListener(){}, scrollTop:0, scrollIntoView(){}, closest(){return null}};
+  return made[i]; }
+global.CSS = {escape: s => s};
+global.document = {
+  getElementById: i => el(i),
+  querySelectorAll: sel => sel.indexOf('chip') >= 0 ? CHIPS : NODES,
+  querySelector: () => null,
+  addEventListener(){}};
+""" % (json.dumps(sorted(set(states))), json.dumps(sorted(set(states))))
+        probe = """
+const chip = CHIPS.find(c => c.dataset.state === %s);
+chip.on.click();
+console.log(JSON.stringify({
+  off: NODES.filter(n => n.cls.has('off')).map(n => n.dataset.state),
+  pressed: CHIPS.filter(c => c.attrs['aria-pressed'] === 'true')
+                .map(c => c.dataset.state),
+  hint: made['keyhint'] ? made['keyhint'].textContent : null,
+}));
+chip.on.click();
+console.log(JSON.stringify({
+  off: NODES.filter(n => n.cls.has('off')).map(n => n.dataset.state)}));
+""" % json.dumps(target)
+        script = os.path.join(t.dir, "run.js")
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(stub + "\n" + js + probe)
+        r = subprocess.run(["node", script], capture_output=True, text=True,
+                           timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
+        picked, cleared = [json.loads(l) for l in r.stdout.strip().splitlines()]
+        others = sorted(set(states) - {target})
+        self.assertEqual(sorted(picked["off"]), others,
+                         "the wrong modules stepped back")
+        self.assertEqual(picked["pressed"], [target],
+                         "the chip does not show which colour is picked")
+        self.assertIn(target, picked["hint"] or "",
+                      "the key does not say what it is showing")
+        self.assertEqual(cleared["off"], [],
+                         "clicking the same colour again did not clear it")
+
     def test_no_two_css_rules_claim_the_same_bare_class(self):
         """A second `.name{}` silently overrides the first.
 

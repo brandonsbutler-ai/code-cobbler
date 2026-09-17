@@ -273,10 +273,34 @@ summary{cursor:pointer;font-size:13px}
 .layer b{min-width:74px;font-size:12px;color:var(--mut);padding-top:2px}
 .chain{font-size:12.5px;color:var(--mut)}
 .empty{color:var(--mut);padding:8px 2px}
-.legend{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 10px;font-size:12px;
+.legend{display:flex;flex-wrap:wrap;gap:12px;margin:0 0 10px;font-size:12px;
         color:var(--mut)}
 .key{display:flex;align-items:center;gap:5px}
 .key i{width:11px;height:11px;border-radius:3px;border:1px solid;display:inline-block}
+/* The key, always on screen. The chart is twelve thousand pixels tall on a
+   real project, so a legend that sits above it answers "what was orange
+   again?" for the first screen only. This one rides under the title bar --
+   and only for as long as the map is on screen, because it is sticky inside
+   .mapzone rather than inside the column. The sentences stay below it: they
+   are read once, the colours are referred to continuously. */
+.mapzone{position:relative}
+.keybar{position:sticky;top:var(--barh);z-index:30;display:flex;flex-wrap:wrap;
+        gap:6px;align-items:center;padding:8px 0 9px;background:var(--bg);
+        border-bottom:1px solid var(--line2);margin-bottom:9px}
+.keybar .chip{display:flex;align-items:center;gap:6px;cursor:pointer;
+        font:12px/1 inherit;color:var(--mut);background:var(--card);
+        border:1px solid var(--line);border-radius:999px;padding:5px 11px 5px 8px}
+.keybar .chip i{width:11px;height:11px;border-radius:3px;border:1px solid;
+        display:inline-block}
+.keybar .chip:hover{color:var(--fg);border-color:var(--mut)}
+.keybar .chip[aria-pressed="true"]{color:var(--fg);border-color:var(--fg);
+        background:var(--sunk)}
+.keybar .hint{color:var(--faint);font-size:11.5px;margin-left:4px}
+/* Picked one colour out of the key: everything else steps back. Separate
+   from .dim, which is the hover relation highlight -- the two are answering
+   different questions and clearing one must not clear the other. */
+#graph .node.off rect{opacity:.07}
+#graph .node.off text{opacity:.09}
 .mapwrap{overflow:auto;background:var(--card);border:1px solid var(--line);
          border-radius:9px;padding:6px;margin-bottom:16px;max-height:76vh}
 #graph{display:block}
@@ -460,8 +484,35 @@ function showProject(){
   document.querySelectorAll('#graph .node').forEach(
     o => o.classList.remove('selected'));
 }
+
+// The key is not only a caption. "What was orange again?" is followed almost
+// immediately by "so where are they", and on a chart this tall that is a
+// scroll, not a glance. Clicking a colour steps everything else back.
+//
+// .off is deliberately not .dim: .dim is the hover relation highlight and is
+// cleared on every mouseleave, so sharing the class would wipe the filter the
+// first time the reader moved the pointer across the chart.
+let only = null;
+const KEYHINT = 'click a colour to show only those \u00b7 Esc clears';
+function applyFilter(){
+  document.querySelectorAll('#graph .node').forEach(
+    o => o.classList.toggle('off', only !== null && o.dataset.state !== only));
+  document.querySelectorAll('.keybar .chip').forEach(
+    c => c.setAttribute('aria-pressed', String(c.dataset.state === only)));
+  const hint = document.getElementById('keyhint');
+  if(hint) hint.textContent = only === null
+    ? KEYHINT
+    : ('showing ' + only + ' only \u00b7 Esc clears');
+}
+document.querySelectorAll('.keybar .chip').forEach(c => {
+  c.addEventListener('click', () => {
+    only = (only === c.dataset.state) ? null : c.dataset.state;
+    applyFilter();
+  });
+});
+
 document.addEventListener('keydown', e => {
-  if(e.key === 'Escape') showProject();
+  if(e.key === 'Escape'){ only = null; applyFilter(); showProject(); }
 });
 showProject();          // the panel starts on the project
 
@@ -971,8 +1022,12 @@ it is and who last touched it. Click one for its source, its signals and what it
 to. A doubled bar instead of an arrowhead marks a call that reaches a body with nothing in
 it, and a dashed pink line means this module stopped and another one is doing the same
 work.</p>
+<div class="mapzone">
+<div class="keybar">{svgmap.KEYBAR}<span class="hint" id="keyhint">click a colour to
+show only those &middot; Esc clears</span></div>
 <div class="legend">{svgmap.LEGEND}</div>
 <div class="mapwrap">{svg}</div>
+</div>
 
 <input type="search" id="q" placeholder="Filter the tables below...">
 

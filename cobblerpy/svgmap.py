@@ -314,3 +314,17 @@ LEGEND = _LINK_KEY + "".join(
     f'<span class="key"><i style="background:{fill};border-color:{stroke}"></i>'
     f'{html.escape(state)} &mdash; {html.escape(desc)}</span>'
     for state, (stroke, fill, desc) in _PALETTE.items())
+
+# The same seven colours with the sentences taken off, so the key can ride
+# under the title bar the whole way down a twelve-thousand-pixel chart. The
+# question it answers is "what was orange again?", which needs the word, not
+# the definition -- the definitions stay directly below it, read once.
+#
+# Built from _PALETTE like LEGEND is. A key hand-written next to a palette is
+# a key that goes stale the first time a colour moves.
+KEYBAR = "".join(
+    f'<button type="button" class="chip" data-state="{state}" '
+    f'title="{html.escape(desc)}" aria-pressed="false">'
+    f'<i style="background:{fill};border-color:{stroke}"></i>'
+    f'{html.escape(state)}</button>'
+    for state, (stroke, fill, desc) in _PALETTE.items())
