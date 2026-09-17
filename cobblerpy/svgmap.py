@@ -16,15 +16,26 @@ import json
 
 from .layout import NODE_H, NODE_W, state_of
 
-def _fit(text, chars):
-    """Truncate to fit a card. The full value is in the panel, one click away.
+def _fit(text, chars, keep_end=0):
+    """Truncate to fit a card. The full value is on hover and in the panel.
 
     Sizing every card to the longest name in the project makes the whole chart
-    as wide as its worst case -- one 31-character filename would widen 109
+    as wide as its worst case -- one 31-character filename would widen 975
     boxes.
+
+    `keep_end` cuts from the MIDDLE and keeps that many trailing characters,
+    which matters for filenames: chopping the end turned `_e2e_phase_a_fix.py`
+    and `_e2e_phase_b_rollback.py` into the same label. Measured on a
+    975-module project, end-truncation at this width made 150 names
+    indistinguishable from another; middle-truncation made 79, for no extra
+    width.
     """
     text = str(text)
-    return text if len(text) <= chars else text[:chars - 1] + "\u2026"
+    if len(text) <= chars:
+        return text
+    if keep_end and chars > keep_end + 2:
+        return text[:chars - keep_end - 1] + "\u2026" + text[-keep_end:]
+    return text[:chars - 1] + "\u2026"
 
 
 _PALETTE = {
@@ -141,12 +152,16 @@ def render(graph, project, frontier_by_module, snippets_by_module,
         node_svg.append(
             f'<g class="node" data-name="{_e(name)}" data-state="{state}" '
             f'tabindex="0" role="button" aria-label="{_e(name)}: {_e(why)}">'
+            # The exact path on hover. A truncated label should never be the
+            # last word on which file a card is -- on a 975-module project 79
+            # of them are still not unique after middle-truncation.
+            f'<title>{_e(relpath)} &#183; {_e(size)} &#183; {_e(owner)}</title>'
             # The fill is the panel's own background, so the card reads as a
             # cut-out and the glowing edge is what carries the state.
             f'<rect class="card" x="{x}" y="{y}" width="{NODE_W}" '
             f'height="{NODE_H}" rx="8" stroke="{stroke}"/>'
             f'<text class="fname" x="{x + 9}" y="{y + 22}">'
-            f'{_e(_fit(filename, 16))}</text>'
+            f'{_e(_fit(filename, 16, keep_end=7))}</text>'
             f'<text class="meta" x="{x + 9}" y="{y + 40}">'
             f'{_e(_fit(location, 19))}</text>'
             # Size and owner share a line: two facts, one row, and the card
@@ -199,6 +214,7 @@ def render(graph, project, frontier_by_module, snippets_by_module,
                     "shared": group.get("shared", [])[:6],
                     "facts": attempt.get("facts", []),
                     "other": group.get("resume_relpath", ""),
+                    "otherModule": winner,
                 }
             else:
                 verdicts[key] = {
@@ -210,6 +226,7 @@ def render(graph, project, frontier_by_module, snippets_by_module,
                     "shared": group.get("shared", [])[:6],
                     "facts": attempt.get("facts", []),
                     "other": group.get("resume_relpath", ""),
+                    "otherModule": winner,
                 }
 
     payload = {}

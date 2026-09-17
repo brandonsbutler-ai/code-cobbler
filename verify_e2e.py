@@ -461,6 +461,32 @@ def verify_map_and_exports(root, workdir):
         check("with nothing excluded the map says nothing about exclusions",
               "were not read" not in legend_text)
 
+    # The panel a click fills, and every id the handler reaches for.
+    #
+    # The click handler called showModal() on a dialog the page never
+    # contained, so clicking a module did nothing -- silently, because
+    # getElementById returns null and the exception dies inside the handler.
+    # Nothing caught it: the checks verified the PAYLOAD, which was perfect,
+    # and never that anything could render it.
+    for _id in ("panel", "ptitle", "phint", "pbody", "summarySource"):
+        check(f"the panel element #{_id} exists in the page",
+              f'id="{_id}"' in _svg, _id)
+    # Scoped to the map's OWN script. The page embeds the surveyed project's
+    # source, so a project containing JavaScript has its getElementById calls
+    # in here too -- a large private codebase contributed eleven ids from its own front end,
+    # every one of them reported as dangling by a whole-page scan.
+    _own = "".join(re.findall(r"<script>(.*?)</script>", _svg, re.S)[-1:])
+    _reached = set(re.findall(r"getElementById\('([^']+)'\)", _own))
+    _declared = set(re.findall(r'id="([^"]+)"', _svg))
+    _dangling = sorted(_reached - _declared)
+    check("every element the script reaches for exists",
+          not _dangling, _dangling)
+    check("relations in the panel are followable",
+          "data-goto" in _svg and "scrollIntoView" in _svg)
+    check("the summary is embedded once, not twice",
+          _svg.count('<h4>where the work stopped</h4>') == 1,
+          _svg.count('<h4>where the work stopped</h4>'))
+
     check("the description matches the layout the code produces",
           "top to bottom" in legend_text and "Left to right" not in legend_text,
           [l for l in ("top to bottom", "Left to right") if l in legend_text])
