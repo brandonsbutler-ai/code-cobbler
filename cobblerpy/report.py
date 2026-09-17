@@ -57,6 +57,10 @@ h2 .n{color:var(--mut);font-weight:400;font-size:13px}
 .sub{color:var(--mut);font-size:13px}
 .lede{color:var(--mut);font-size:13px;margin:2px 0 12px;max-width:74ch}
 .stats{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0 4px}
+.excluded{background:var(--sunk);border:1px solid var(--line);
+      border-left:3px solid var(--mut);border-radius:8px;padding:10px 13px;
+      margin:10px 0 4px;font-size:12.5px;color:var(--mut);max-width:96ch}
+.excluded b{color:var(--fg)}
 .truncated{background:var(--hotbg);border:1px solid var(--hot);
   border-radius:8px;padding:11px 13px;margin:14px 0 4px;font-size:13px}
 .truncated b{color:var(--hot)}
@@ -122,6 +126,10 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 #graph .meta{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
              fill:var(--mut)}
 #graph .node{cursor:pointer}
+/* Centred in its container. A chart narrower than the page used to sit hard
+   against the left margin with a field of empty to its right, which reads as
+   something failing to load rather than as a small project. */
+.graphbox{display:flex;justify-content:center}
 #graph .meta.owner{fill:var(--faint)}
 #graph .marks{font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;
               fill:currentColor}
@@ -408,6 +416,29 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
     # the importer may be one of the files that was never read. The terminal
     # said so in one line at the top; this file did not say so at all, and this
     # file is the one that gets sent to somebody else.
+    # What the survey walked past, and why.
+    #
+    # Excluding a virtualenv or a tool's cache directory is right. Saying
+    # nothing about it is not: pointed at one real project this surveyed 975
+    # modules and passed over 9,219 files, and the page said "975 modules"
+    # with no hint that ten times that number had been declined. A reader
+    # cannot tell a small project from a mostly-skipped one.
+    excluded = getattr(project, "excluded", {}) or {}
+    excluded_html = ""
+    if excluded:
+        total = sum(excluded.values())
+        listed = ", ".join(f"{_e(name)} ({count:,})" for name, count in
+                           sorted(excluded.items(), key=lambda kv: -kv[1])[:5])
+        more = (f" and {len(excluded) - 5} other directories"
+                if len(excluded) > 5 else "")
+        excluded_html = (
+            f'<div class="excluded"><b>{total:,} Python file'
+            f'{"s were" if total != 1 else " was"} not read.</b> '
+            f'They sit in directories a survey should not walk into: {listed}'
+            f'{more}. That is deliberate &mdash; a virtualenv or a tool cache '
+            f'is not the codebase you inherited &mdash; but the number is here '
+            f'so you can tell a small project from a mostly-excluded one.</div>')
+
     truncation = ""
     if project.skipped:
         truncation = (
@@ -708,6 +739,7 @@ abandoned code does not get started again.</p>
 <div class="sub">{_e(project.root)} &middot; mapped {stamp} by cobblerpy</div>
 <div class="stats">{stats}</div>
 {truncation}
+{excluded_html}
 
 <div class="note"><span class="proven">Proven</span> &mdash; module structure,
 imports, definitions, entry points and unfinished-work signals are read

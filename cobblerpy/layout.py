@@ -33,9 +33,16 @@ from collections import defaultdict
 # At 152x54 with a 30px gutter, eight fit in 1,482px and the scrollbar goes.
 # Long names truncate rather than widen every card in the chart to suit the
 # worst one: the full path is in the panel a click away.
-NODE_W = 172
-NODE_H = 58
-X_GAP = 30          # horizontal space between layers
+# Card-shaped: narrower than it is tall-ish, rather than a wide strip.
+#
+# Width is what decides whether a chart fits, because it is the dimension that
+# does not scroll. Taking another 20% off the width and giving a little of it
+# back as height buys two more columns per row at the same page width -- which
+# is the difference between a 25-module project fitting in three rows and a
+# 1,000-module one being readable at all.
+NODE_W = 138
+NODE_H = 66
+X_GAP = 24          # horizontal space between layers
 Y_GAP = 30           # vertical space between nodes in a layer
 MARGIN = 28
 
@@ -104,7 +111,9 @@ def compute(project, frontier_by_module=None):
     # the first version produced a chart 20,300 pixels wide. Height scrolls
     # naturally and width does not, so a wide row becomes several stacked
     # lines at the same depth.
-    ROW_MAX = 8
+    # Ten per row rather than eight: the narrower card pays for two more
+    # columns inside the same page width, so a long row becomes fewer lines.
+    ROW_MAX = 10
 
     widest = min(max((len(v) for v in order.values()), default=1), ROW_MAX)
     row_index, placed_rows = {}, 0

@@ -194,13 +194,20 @@ class TestScan(unittest.TestCase):
                   ".venv/lib/c.py": "x = 1\n",
                   "node_modules/d.py": "x = 1\n"})
         self.addCleanup(t.close)
-        mods, _ = scan_tree(t.dir)
+        mods, _skipped, excluded = scan_tree(t.dir)
         self.assertEqual([m.relpath for m in mods], ["a.py"])
+        # Excluding them is right; being silent about it is not. Pointed at a
+        # real project this walked past 9,219 files -- a .claude directory and
+        # a virtualenv's site-packages -- surveyed 975, and reported
+        # "0 skipped", which is true of the file LIMIT and says nothing at all
+        # about the rest.
+        self.assertEqual(sorted(excluded), [".venv", "__pycache__",
+                                            "node_modules"])
+        self.assertEqual(sum(excluded.values()), 3)
 
 
 class TestCommentClassifier(unittest.TestCase):
     """The rule measured against 48,482 real comments. See scan.py."""
-
     def test_rejects_prose_dividers_pragmas_and_examples(self):
         for text in ("# --- DOCX", "# =============", "# noqa: BLE001",
                      "# type: ignore", "# pylint: disable=no-member",
