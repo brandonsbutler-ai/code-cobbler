@@ -400,6 +400,19 @@ function openModule(name){
        + '<div class="ln">execution reaches this module and stops inside it. '
        + 'The lines are below, with the callers that get here.</div></div>';
   }
+  if(d.loaded_by){
+    // Nothing imports this and it is still not abandoned. Say which tool
+    // reaches it and by what rule, and whether that was read or inferred --
+    // an unexplained exclusion is a claim the reader cannot check.
+    h += '<div class="verdict ' + (d.loaded_by.proven ? 'live' : 'maybe') + '">'
+       + '<b>' + esc(d.loaded_by.loader) + ' loads this</b>'
+       + '<div class="ln">' + esc(d.loaded_by.why) + '</div>'
+       + '<div class="ln">' + (d.loaded_by.proven
+           ? 'read from the project\\'s own packaging metadata'
+           : 'a documented convention of that tool, not an import -- '
+             + 'dismiss it if that tool is not in use here')
+       + '</div></div>';
+  }
   h += '<p class="facts">' + esc(d.state) + ' &mdash; ' + esc(d.why)
         + ' &middot; ' + d.loc + ' lines &middot; depth ' + d.depth
         + ' &middot; origin: ' + esc(d.origin) + '</p>';
@@ -670,6 +683,33 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
             f'{more}. That is deliberate &mdash; a virtualenv or a tool cache '
             f'is not the codebase you inherited &mdash; but the number is here '
             f'so you can tell a small project from a mostly-excluded one.</div>')
+
+    # What something else loads. The orphan count is a claim about the whole
+    # tree, so the files kept OUT of it have to be visible: "111 orphans" and
+    # "111 orphans, and 436 more held back because a test runner collects
+    # them" are different statements about the same codebase, and only the
+    # second one can be checked.
+    held = getattr(project, "convention_reached", {}) or {}
+    held_html = ""
+    if held:
+        by_loader = {}
+        for conv in held.values():
+            entry = by_loader.setdefault(conv.loader, {"n": 0, "proven": conv.proven})
+            entry["n"] += 1
+        listed = ", ".join(
+            f"{_e(loader)} ({entry['n']:,})" for loader, entry in
+            sorted(by_loader.items(), key=lambda kv: -kv[1]["n"])[:5])
+        more = (f" and {len(by_loader) - 5} other loaders"
+                if len(by_loader) > 5 else "")
+        proven = sum(1 for c in held.values() if c.proven)
+        declared = (f" {proven} of them are named in the packaging metadata, "
+                    f"which is read, not guessed." if proven else "")
+        held_html = (
+            f'<div class="excluded"><b>{len(held):,} module'
+            f'{"s are" if len(held) != 1 else " is"} loaded by something other '
+            f'than an import,</b> so nothing below counts '
+            f'{"them" if len(held) != 1 else "it"} as unused: {listed}{more}.'
+            f'{declared} Click any of them for the rule and the tool.</div>')
 
     truncation = ""
     if project.skipped:
@@ -1034,6 +1074,7 @@ abandoned code does not get started again.</p>
 <div class="stats">{stats}</div>
 {truncation}
 {excluded_html}
+{held_html}
 
 <div class="note"><span class="proven">Proven</span> &mdash; module structure,
 imports, definitions, entry points and unfinished-work signals are read

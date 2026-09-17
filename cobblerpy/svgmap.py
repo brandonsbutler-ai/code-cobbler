@@ -291,6 +291,12 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             "uses": sorted(project.imports.get(name, ())),
             "used_by": sorted(project.imported_by.get(name, ())),
             "external": sorted(project.external.get(name, ()))[:12],
+            # Why this is not in the orphan list even though no import names
+            # it. Without this the map states an exclusion it cannot justify.
+            "loaded_by": (getattr(project, "convention_reached", {})
+                          .get(name).as_dict()
+                          if (getattr(project, "convention_reached", {})
+                              .get(name)) else None),
             "signals": {k: [[t, ln] for t, ln in v]
                         for k, v in row.get("signals", {}).items()},
             "snippets": snippets_by_module.get(name, []),
