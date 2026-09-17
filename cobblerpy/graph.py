@@ -19,6 +19,8 @@ of these results gets told which of the two it is holding.
 import os
 from collections import defaultdict, deque
 
+from . import conventions
+
 # Names that mean the definition is reached by something other than a call.
 _LIVE_DECORATORS = ("route", "app.", "task", "fixture", "command", "click.",
                     "celery", "receiver", "register", "hook", "event",
@@ -43,6 +45,11 @@ class Project:
         self.entry_points = []
         self.reachable = set()
         self.orphans = []
+        # Module key -> the Convention that loads it. Held OUT of orphans and
+        # kept, because "held back, and here is the rule and the tool" is a
+        # finding; silently dropping the file is how the reader ends up
+        # believing the tree is smaller than it is.
+        self.convention_reached = {}
         self.cycles = []
         self.unreferenced = []
         self._build()
@@ -146,12 +153,22 @@ class Project:
         self.reachable = seen
 
     def _find_orphans(self):
-        """Modules nothing imports and nothing starts from.
+        """Modules nothing imports, nothing starts from, and no tool loads.
 
         In a half-finished codebase these are the most informative files in the
-        tree: they are usually where the author was working when they stopped,
-        or an experiment they never wired in.
+        tree: usually where the author was working when they stopped, or an
+        experiment they never wired in.
+
+        The exclusions used to be two conditions written into this loop -- a
+        `test_` prefix and `__init__.py` -- which was right about those two
+        cases, wrong about every other thing a tool loads without importing
+        (conftest.py, __main__.py, wsgi.py, a declared console script), and
+        silent either way: a file matching them simply vanished, and the count
+        of orphans meant "orphans, minus a couple we do not print". Every
+        exclusion now comes from conventions.py, names the tool that does the
+        loading, and is KEPT so the map can say what it held back and why.
         """
+        self.convention_reached = conventions.reached(self.root, self.modules)
         entry_names = {name for name, _ in self.entry_points}
         for module in self.modules:
             key = module.dotted or module.relpath
@@ -159,9 +176,7 @@ class Project:
                 continue
             if self.imported_by.get(key):
                 continue
-            if os.path.basename(module.relpath).startswith("test_"):
-                continue                  # tests are run by a runner, not imported
-            if module.relpath.endswith("__init__.py"):
+            if key in self.convention_reached:
                 continue
             self.orphans.append(key)
 

@@ -1030,6 +1030,233 @@ console.log(JSON.stringify(seen));
                       "looking at the stylesheet")
 
 
+class TestConventions(unittest.TestCase):
+    """Files a named tool loads without importing them.
+
+    Every near-miss here has been checked the hard way: the clause that is
+    supposed to reject it is removed, and the fixture must then start
+    matching. A negative corpus that was never seen to go red proves nothing
+    about the pattern it claims to guard.
+    """
+
+    POSITIVE = [
+        ("tests/conftest.py", "conftest", "pytest"),
+        ("tests/test_map.py", "test module", "a test runner"),
+        ("tests/map_test.py", "test module", "a test runner"),
+        ("pkg/__init__.py", "package marker", "the import system"),
+        ("pkg/__main__.py", "module entry", "python -m"),
+        ("setup.py", "build script", "pip / setuptools"),
+        ("site/wsgi.py", "server entry", "a WSGI server"),
+        ("site/asgi.py", "server entry", "an ASGI server"),
+        ("manage.py", "management CLI", "Django"),
+        ("noxfile.py", "task file", "nox"),
+        ("app/migrations/0004_add_column.py", "migration", "a migration runner"),
+        ("sitecustomize.py", "interpreter hook", "CPython"),
+    ]
+
+    # Each of these looks like one of the rules above and is not one.
+    NEAR_MISSES = [
+        "conftest_helpers.py",      # conftest is an exact name, not a prefix
+        "tests/testing_utils.py",   # `test_` prefix, not `testing`
+        "src/latest_run.py",        # contains "test" but does not end `_test`
+        "src/protest.py",           # ends in "test" without the underscore
+        "docs/manage_users.py",     # manage.py is an exact name
+        "src/migrations_helper.py", # a file NAMED migrations..., not one IN it
+        "src/setup_logging.py",
+        "wsgi_config.py",
+    ]
+
+    def test_every_rule_matches_the_file_it_describes(self):
+        from cobblerpy import conventions
+        for relpath, name, loader in self.POSITIVE:
+            found = conventions.conventional(relpath)
+            self.assertIsNotNone(found, f"{relpath} matched nothing")
+            self.assertEqual((found.name, found.loader), (name, loader), relpath)
+
+    def test_the_near_misses_are_rejected(self):
+        from cobblerpy import conventions
+        matched = {p: conventions.conventional(p) for p in self.NEAR_MISSES}
+        wrong = {p: c.name for p, c in matched.items() if c}
+        self.assertEqual(wrong, {}, f"near-misses that matched: {wrong}")
+
+    def test_each_near_miss_is_rejected_by_the_clause_it_is_testing(self):
+        """Remove the guard and the fixture must start matching.
+
+        Without this the negative corpus can be green for the wrong reason:
+        a fixture excluded by some OTHER rule proves nothing about the clause
+        it was written for, and the day that clause is loosened nothing here
+        goes red.
+        """
+        import re
+        from cobblerpy import conventions
+        # (fixture, the anchored pattern that rejects it, the same pattern
+        #  with its anchor removed -- under which it must match)
+        cases = [
+            ("tests/testing_utils.py", r"test_[^/\\]*\.py\Z", r"test"),
+            ("src/latest_run.py",      r"[^/\\]*_test\.py\Z",  r"test"),
+            ("src/protest.py",         r"[^/\\]*_test\.py\Z",  r"test"),
+            ("conftest_helpers.py",    r"conftest\.py\Z",        r"conftest"),
+        ]
+        for relpath, guard, loosened in cases:
+            base = os.path.basename(relpath)
+            self.assertIsNone(re.match(guard, base),
+                              f"{relpath}: the guard {guard} does not reject it, "
+                              "so this fixture is testing something else")
+            self.assertTrue(re.search(loosened, base),
+                            f"{relpath}: it does not match even loosened, so "
+                            "the guard is not what rejects it")
+
+    def test_a_directory_rule_needs_the_file_to_be_inside_it(self):
+        from cobblerpy import conventions
+        self.assertIsNotNone(conventions.conventional("app/migrations/0001.py"))
+        self.assertIsNone(conventions.conventional("app/migrations.py"))
+        self.assertIsNone(conventions.conventional("migrations.py"),
+                          "a file NAMED migrations is not a file IN migrations")
+
+    def test_a_declared_entry_point_beats_a_guess(self):
+        """Packaging metadata is read, not inferred."""
+        from cobblerpy import conventions
+        t = Tree({
+            "pyproject.toml": '[project]\nname = "demo"\nversion = "1"\n'
+                              '[project.scripts]\n'
+                              'demo = "demo.cli:main"\n'
+                              '[project.entry-points."demo.plugins"]\n'
+                              'alpha = "demo.plug_alpha"\n',
+            "demo/__init__.py": "",
+            "demo/cli.py": "def main():\n    pass\n",
+            "demo/plug_alpha.py": "def go():\n    pass\n",
+            "demo/nobody.py": "def go():\n    pass\n",
+        })
+        self.addCleanup(t.close)
+        s = t.survey()
+        held = s.project.convention_reached
+        self.assertIn("demo.cli", held)
+        self.assertTrue(held["demo.cli"].proven,
+                        "a console script is read from the file, not guessed")
+        self.assertIn("pyproject.toml", held["demo.cli"].why)
+        self.assertIn("demo.plug_alpha", held)
+        self.assertIn("demo.plugins", held["demo.plug_alpha"].loader,
+                      "the plugin group that will import it is not named")
+        # And the module nothing declares is still reported.
+        self.assertIn("demo.nobody", s.project.orphans)
+
+    def test_setup_cfg_entry_points_are_read_too(self):
+        t = Tree({
+            "setup.cfg": "[options.entry_points]\nconsole_scripts =\n"
+                         "    demo = demo.run:main\n",
+            "demo/__init__.py": "",
+            "demo/run.py": "def main():\n    pass\n",
+            "demo/spare.py": "x = 1\n",
+        })
+        self.addCleanup(t.close)
+        s = t.survey()
+        self.assertIn("demo.run", s.project.convention_reached)
+        self.assertNotIn("demo.run", s.project.orphans)
+        self.assertIn("demo.spare", s.project.orphans)
+
+    def test_a_malformed_pyproject_says_nothing_rather_than_failing(self):
+        """A survey of somebody else's tree must survive their broken files."""
+        t = Tree({"pyproject.toml": "[project\nthis is not toml at all",
+                  "demo/__init__.py": "", "demo/spare.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        s = t.survey()                     # must not raise
+        self.assertIn("demo.spare", s.project.orphans)
+
+    def test_conftest_is_not_an_orphan_and_says_who_loads_it(self):
+        """The case that started this: pytest loads it, nothing imports it."""
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n',
+                  "tests/conftest.py": "import pytest\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        key = next(k for k in s.modules_by_key if k.endswith("conftest"))
+        self.assertNotIn(key, s.project.orphans)
+        self.assertEqual(s.project.convention_reached[key].loader, "pytest")
+
+    def test_nothing_is_both_held_back_and_reported_as_an_orphan(self):
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n',
+                  "tests/conftest.py": "x = 1\n",
+                  "tests/test_it.py": "x = 1\n",
+                  "pkg/__init__.py": "",
+                  "pkg/stranded.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        held = set(s.project.convention_reached)
+        self.assertEqual(held & set(s.project.orphans), set())
+        self.assertTrue(held, "nothing was held back, so this compares nothing")
+        self.assertIn("pkg.stranded", s.project.orphans,
+                      "a genuine orphan was swallowed by the exclusions")
+
+
+class TestConventionsOnTheMap(unittest.TestCase):
+    """The map has to justify every exclusion it makes."""
+
+    def _write(self, tree):
+        s = tree.survey()
+        out = os.path.join(tree.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            return s, fh.read()
+
+    def test_the_map_says_how_many_it_held_back_and_who_loads_them(self):
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n',
+                  "tests/conftest.py": "x = 1\n",
+                  "tests/test_a.py": "x = 1\n",
+                  "tests/test_b.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        s, doc = self._write(t)
+        page = Page(doc)
+        text = " ".join(page.text_parts)
+        held = s.project.convention_reached
+        self.assertEqual(len(held), 3, f"fixture held back {sorted(held)}")
+        self.assertIn("3 modules are loaded by something other than an import",
+                      text)
+        self.assertIn("pytest", text, "the tool doing the loading is not named")
+        self.assertIn("a test runner", text)
+
+    def test_the_note_is_absent_when_nothing_was_held_back(self):
+        """The negative branch, which is where a check like this goes stale."""
+        t = Tree({"run.py": 'import lib\nif __name__ == "__main__":\n    lib.go()\n',
+                  "lib.py": "def go():\n    pass\n"})
+        self.addCleanup(t.close)
+        s, doc = self._write(t)
+        self.assertEqual(s.project.convention_reached, {})
+        self.assertNotIn("loaded by something other than an import",
+                         " ".join(Page(doc).text_parts))
+
+    def test_a_held_back_module_carries_its_rule_into_the_panel(self):
+        """Run the map's script and read what clicking conftest renders."""
+        import json, re, shutil, subprocess
+        if not shutil.which("node"):
+            self.skipTest("node not installed")
+        t = Tree({
+            "pyproject.toml": '[project]\nname = "demo"\nversion = "1"\n'
+                              '[project.scripts]\ndemo = "demo.cli:main"\n',
+            "demo/__init__.py": "",
+            "demo/cli.py": "def main():\n    pass\n",
+            "demo/spare.py": "x = 1\n",
+            "tests/conftest.py": "x = 1\n",
+        })
+        self.addCleanup(t.close)
+        s, doc = self._write(t)
+        payload = json.loads(
+            re.search(r"const DATA = (\{.*?\});\n", doc, re.S).group(1)
+            .replace("\\u003c", "<").replace("\\u003e", ">"))
+        declared = payload["demo.cli"]["loaded_by"]
+        self.assertIsNotNone(declared, "the declared entry point lost its rule")
+        self.assertTrue(declared["proven"])
+        self.assertIn("pyproject.toml", declared["why"])
+        conf = next(v for k, v in payload.items() if k.endswith("conftest"))
+        self.assertEqual(conf["loaded_by"]["loader"], "pytest")
+        self.assertFalse(conf["loaded_by"]["proven"],
+                         "a convention is an inference and must not read as proof")
+        # A module nothing loads carries no claim at all -- otherwise the
+        # check above passes on a map that stamps a loader onto everything.
+        self.assertIsNone(payload["demo.spare"]["loaded_by"],
+                          "a genuine orphan was given a loader")
+
+
 class TestDesktopSession(unittest.TestCase):
     """The window's decisions, driven with no window attached.
 

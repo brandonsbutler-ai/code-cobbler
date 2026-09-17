@@ -81,6 +81,9 @@ class Survey:
                        else self.history,
             "skipped_files": self.skipped,
             "excluded_directories": getattr(self.project, "excluded", {}),
+            "loaded_by_convention": {
+                k: c.as_dict()
+                for k, c in getattr(self.project, "convention_reached", {}).items()},
             "origins": self.origins,
             "origin_totals": self.origin_totals,
             "history_coverage": self.history_coverage,
