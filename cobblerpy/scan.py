@@ -14,6 +14,7 @@ stopped.
 import ast
 import io
 import os
+import re
 import tokenize
 
 # Calls that tell you what a module reaches out and touches. Grouped by the
@@ -116,6 +117,10 @@ class Module:
         self.effects = {}                 # category -> [(name, lineno)]
         self.todos = []                   # (tag, text, lineno)
         self.commented_code = []          # linenos that look like disabled code
+        # Lines the author marked as a deliberately unused import. `# noqa:
+        # F401` is what every Python linter reads, so it is what a Python
+        # author will already have written when they meant it.
+        self.kept_imports = set()
         self.strings = []
 
     @staticmethod
@@ -309,6 +314,22 @@ _PRAGMA_PREFIXES = ("noqa", "type", "pragma", "pylint", "mypy", "ruff",
 _EXAMPLE_INDENT = 3
 
 
+# `# noqa: F401`, `# noqa:F401,E501`, or a bare `# noqa`. F401 is flake8's
+# code for an imported-but-unused name; a bare noqa silences everything and
+# so covers it too. Anchored on the word so `# not a noqa thing` is prose.
+_KEEPS_IMPORT = re.compile(r"#\s*noqa(?::\s*(?P<codes>[A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*))?",
+                           re.IGNORECASE)
+
+
+def _keeps_import(text):
+    """True when this comment marks an unused import as deliberate."""
+    found = _KEEPS_IMPORT.search(text or "")
+    if not found:
+        return False
+    codes = found.group("codes")
+    return not codes or "F401" in codes.upper()
+
+
 def _looks_like_code(text):
     """True when a comment is a disabled STATEMENT, not prose that happens to parse."""
     after_hash = text[1:] if text.startswith("#") else text
@@ -341,6 +362,7 @@ def _read_comments(module, source):
     what they meant to come back to -- which makes them the single richest
     source of intent in an undocumented codebase.
     """
+    source_lines = source.split("\n")
     try:
         tokens = tokenize.generate_tokens(io.StringIO(source).readline)
         for tok in tokens:
@@ -348,6 +370,8 @@ def _read_comments(module, source):
                 continue
             module.comment_lines += 1
             text = tok.string
+            if _keeps_import(text):
+                module.kept_imports.add(tok.start[0])
             upper = text.upper()
             for tag in _TODO_TAGS:
                 if tag in upper:
@@ -355,7 +379,18 @@ def _read_comments(module, source):
                     module.todos.append((tag, note[:200], tok.start[0]))
                     break
             else:
-                if _looks_like_code(text):
+                # Only a comment that OWNS its line can be disabled code.
+                # `candidates.append(dotted)  # import pkg.module` is a note
+                # about the line it sits on, and nobody disables a statement
+                # by appending it to a live one. Every one of this project's
+                # own five "commented-out code" findings was a trailing
+                # annotation, and 7 of the larger corpus's 22 were; a finding a reader
+                # can dismiss in five seconds teaches them to dismiss the rest.
+                # tok.start[1] is the column the comment starts at, so a zero
+                # prefix once whitespace is removed means it stands alone.
+                prefix = source_lines[tok.start[0] - 1][:tok.start[1]] \
+                    if tok.start[0] - 1 < len(source_lines) else ""
+                if not prefix.strip() and _looks_like_code(text):
                     module.commented_code.append(tok.start[0])
     except (tokenize.TokenError, IndentationError, SyntaxError):
         pass                              # a file we could not tokenize fully

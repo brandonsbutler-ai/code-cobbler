@@ -15,7 +15,6 @@ the rest of the tool is still useful without it.
 """
 
 import datetime
-import os
 import subprocess
 from collections import defaultdict
 

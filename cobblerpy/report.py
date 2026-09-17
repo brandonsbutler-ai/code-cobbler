@@ -16,7 +16,6 @@ blurs those two makes its confident half untrustworthy.
 
 import datetime
 import html
-import json
 import os
 
 from . import BRAND, __version__

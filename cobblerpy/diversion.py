@@ -32,7 +32,7 @@ wrong one in seconds if the reasons are visible.
 """
 
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 
 # A destination named for more than this share of all stopped modules is a hub,
 # not a fork. Both numbers are measured, not chosen: see find().
