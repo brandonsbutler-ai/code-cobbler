@@ -502,8 +502,15 @@ def verify_map_and_exports(root, workdir):
         string, or a double quote inside a single-quoted one, makes the count
         odd on a line that is perfectly fine. This walks the line instead,
         tracking which quote opened the string and honouring backslashes.
+
+        Regex literals are skipped, because a quote inside one is not a quote:
+        `.replace(/"/g, '&quot;')` read as an opening double quote and the
+        check reported a perfectly good line. `/` is division as often as it
+        starts a regex, so the usual test is used -- a regex can only begin
+        where a value cannot have just ended.
         """
-        quote, i = None, 0
+        before_regex = set("(,=:[!&|?{};") | {None}
+        quote, prev, i = None, None, 0
         while i < len(line):
             ch = line[i]
             if quote:
@@ -516,8 +523,39 @@ def verify_map_and_exports(root, workdir):
                 quote = ch
             elif ch == "/" and line[i:i + 2] == "//":
                 break
+            elif ch == "/" and prev in before_regex:
+                j = i + 1                       # skip to the closing slash
+                while j < len(line):
+                    if line[j] == "\\":
+                        j += 2
+                        continue
+                    if line[j] == "[":          # a class may contain an /
+                        while j < len(line) and line[j] != "]":
+                            j += 2 if line[j] == "\\" else 1
+                    elif line[j] == "/":
+                        break
+                    j += 1
+                if j >= len(line):
+                    return True                 # unterminated regex: a finding
+                i = j
+            if not ch.isspace():
+                prev = ch
             i += 1
         return quote is not None
+
+    # The scanner is itself a claim, and it has been wrong in both directions.
+    _scanner_cases = [
+        (".replace(/\"/g, '&quot;');", False),
+        ("const re = /['\"]/g;", False),
+        ("out += '<span class=\"ln\">' + esc(line) + '", True),
+        ("const half = a / b; const s = 'ok';", False),
+        ("x = 'unterminated", True),
+        ("const re = /abc", True),
+    ]
+    _scanner_wrong = [text for text, expected in _scanner_cases
+                      if _spans_a_line(text) is not expected]
+    check("the unterminated-string scanner can tell a regex from a quote",
+          not _scanner_wrong, _scanner_wrong)
 
     _unterminated = [f"line {_n}: {_line.strip()[:60]}"
                      for _n, _line in enumerate(_own_js.splitlines(), 1)

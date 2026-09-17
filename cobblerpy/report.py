@@ -169,7 +169,29 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
    keeps four lines of text legible inside every one of them. */
 #graph .card{fill:var(--card);stroke-width:1.5;
              filter:drop-shadow(0 0 4px currentColor)}
-#graph .node{color:var(--accent)}
+#graph .node{color:var(--accent);cursor:pointer}
+/* Trace. Clicking a module removes every module it has nothing to do with
+   and lays the survivors out by distance from it, rather than dimming them
+   where they sit -- a dimmed chart is still twelve thousand pixels tall and
+   still has to be followed with a finger. The median module on a 975-module
+   project has ONE other module in its entire trace and nine in ten have
+   fewer than sixty, so the wall of squares is an artefact of drawing every
+   module at once, not a property of the code. */
+.tracebar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+      background:var(--sunk);border:1px solid var(--line);border-radius:8px;
+      padding:8px 11px;margin-bottom:8px;font-size:12.5px}
+.tracebar b{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+      font-size:12.5px;color:var(--fg)}
+.tracebar .ln{color:var(--mut)}
+.tracebar button{font:12px/1 inherit;cursor:pointer;color:var(--fg);
+      background:var(--card);border:1px solid var(--mut);border-radius:6px;
+      padding:6px 11px}
+.tracebar button:hover{border-color:var(--fg)}
+#trace{display:block;cursor:default}
+#trace .node{cursor:pointer}
+#trace .lvl{font:10.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+      fill:var(--faint);letter-spacing:.7px}
+#trace .seed .card{stroke-width:3;filter:drop-shadow(0 0 12px currentColor)}
 /* Six states, and the reader should be able to trace the working path by
    colour alone: cyan is confirmed, blue is under test, green is live. */
 #graph .node[data-state="confirmed"]  .card{stroke:#33d6c8;stroke-width:2}
@@ -211,7 +233,6 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
               fill:var(--fg)}
 #graph .meta{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
              fill:var(--mut)}
-#graph .node{cursor:pointer}
 #graph .cut{stroke:var(--line);stroke-width:1.5;stroke-dasharray:3 6}
 #graph .cutlabel{font:10.5px ui-monospace,SFMono-Regular,Menlo,monospace;
                  fill:var(--mut);letter-spacing:.6px}
@@ -220,10 +241,10 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
    something failing to load rather than as a small project. */
 .graphbox{display:flex;justify-content:center}
 #graph .meta.owner{fill:var(--faint)}
-#graph .marks{font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;
-              fill:currentColor}
-#graph .badge{font:9.5px ui-monospace,SFMono-Regular,Menlo,monospace;
-              fill:var(--faint);letter-spacing:.5px}
+#graph .marks{font:600 10px ui-monospace,SFMono-Regular,Menlo,monospace;
+              fill:var(--mut)}
+#graph .badge{font:8.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+              fill:var(--mut);letter-spacing:.03em}
 /* The verdict at the top of the panel. Green when this is the file to carry
    on from, pink when the flow stops here, muted when another attempt got
    further -- the same three colours the chart uses, so the panel and the
@@ -318,15 +339,12 @@ summary{cursor:pointer;font-size:13px}
 #graph .edge.back{stroke-dasharray:4 3}
 #graph .edge.deadend{stroke:var(--hot);stroke-width:1.8}
 #graph marker path{fill:var(--mut);stroke:var(--mut)}
-#graph .node{cursor:pointer}
 #graph .node rect{stroke-width:1.5;transition:filter .1s}
 #graph .node:hover rect,#graph .node:focus rect{filter:brightness(.94);stroke-width:2.4}
 #graph .node:focus{outline:none}
 #graph text{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;fill:var(--fg)}
 #graph .mod{font-size:9.5px;fill:var(--mut)}
 #graph .name{font-size:11.5px;font-weight:600}
-#graph .marks{font-size:10px;fill:var(--mut)}
-#graph .badge{font-size:8.5px;fill:var(--mut);letter-spacing:.03em}
 #graph .node.dim rect{opacity:.28}
 #graph .node.dim text{opacity:.3}
 #dbody{padding:14px 16px;max-height:70vh;overflow:auto}
@@ -482,7 +500,11 @@ function openModule(name){
 
 document.querySelectorAll('#graph .node').forEach(g => {
   const name = g.dataset.name;
-  g.addEventListener('click', () => openModule(name));
+  // Click opens the detail AND drops the overview for this module's own
+  // trace. Showing the neighbours in place, dimmed, still leaves them
+  // scattered down twelve thousand pixels -- the reader wanted the other
+  // nine hundred gone, not faded.
+  g.addEventListener('click', () => { openModule(name); enterTrace(name); });
   g.addEventListener('keydown', e => {
     if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openModule(name); }
   });
@@ -554,8 +576,156 @@ window.addEventListener('scroll', sizeKey, {passive:true});
 window.addEventListener('resize', sizeKey, {passive:true});
 sizeKey();
 
+// ---- trace: one module, and only what it connects to -----------------
+// Laid out by DISTANCE FROM THE MODULE YOU CLICKED, which is a different
+// question from the overview's "distance from a start point", so this is a
+// second layout rather than a copy of the first one.
+const NODE_W = 138, NODE_H = 66, X_GAP = 24, Y_GAP = 30;
+const TRACE_MAX = 260;   // larger than the whole closure of anything measured
+const graphSvg = document.getElementById('graph');
+const traceSvg = document.getElementById('trace');
+const tracebar = document.getElementById('tracebar');
+let tracing = null;
+
+function reach(seed, edge){
+  const seen = new Map();
+  let level = 0, frontier = [seed];
+  while(frontier.length && seen.size < TRACE_MAX){
+    const next = [];
+    level += 1;
+    for(const name of frontier){
+      const from = DATA[name];
+      for(const other of ((from && from[edge]) || [])){
+        if(other === seed || seen.has(other) || !DATA[other]) continue;
+        seen.set(other, level);
+        next.push(other);
+      }
+    }
+    frontier = next;
+  }
+  return seen;
+}
+
+function attr(value){
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function drawCard(name, x, y, seed){
+  const d = DATA[name], c = (d && d.card) || {};
+  return '<g class="node' + (name === seed ? ' seed' : '')
+    + '" data-name="' + attr(name) + '" data-state="' + attr(d.state)
+    + '" tabindex="0" role="button" aria-label="' + attr(name) + '">'
+    + '<title>' + attr(c.title) + '</title>'
+    + '<rect class="card" x="' + x + '" y="' + y + '" width="' + NODE_W
+    + '" height="' + NODE_H + '" rx="8" stroke="' + attr(c.stroke) + '"/>'
+    + '<text class="fname" x="' + (x + 9) + '" y="' + (y + 22) + '">'
+    + attr(c.name) + '</text>'
+    + '<text class="meta" x="' + (x + 9) + '" y="' + (y + 40) + '">'
+    + attr(c.location) + '</text>'
+    + '<text class="meta owner" x="' + (x + 9) + '" y="' + (y + 56) + '">'
+    + attr(c.meta) + '</text>'
+    + (c.marks ? '<text class="marks" x="' + (x + NODE_W - 9) + '" y="'
+        + (y + 20) + '" text-anchor="end">' + c.marks + '</text>' : '')
+    + '</g>';
+}
+
+function drawTrace(seed){
+  const above = reach(seed, 'used_by');      // what reaches this one
+  const below = reach(seed, 'uses');         // what this one reaches
+  const rows = new Map();
+  const put = (name, level) => {
+    if(!rows.has(level)) rows.set(level, []);
+    rows.get(level).push(name);
+  };
+  above.forEach((lvl, name) => put(name, -lvl));
+  put(seed, 0);
+  below.forEach((lvl, name) => put(name, lvl));
+
+  const levels = [...rows.keys()].sort((a, b) => a - b);
+  const widest = Math.max.apply(null, levels.map(l => rows.get(l).length));
+  const width = Math.max(NODE_W + 260, 120 + widest * (NODE_W + X_GAP) + X_GAP);
+  let y = 16;
+  const parts = [], edges = [], placed = new Map();
+  for(const level of levels){
+    const names = rows.get(level).slice().sort();
+    const rowWidth = names.length * (NODE_W + X_GAP) - X_GAP;
+    let x = 120 + Math.max(0, (width - 120 - rowWidth) / 2);
+    parts.push('<text class="lvl" x="14" y="' + (y + NODE_H / 2 + 4) + '">'
+      + (level === 0 ? 'this one'
+         : level < 0 ? (-level) + ' up' : level + ' down') + '</text>');
+    for(const name of names){
+      placed.set(name, {x: x, y: y});
+      parts.push(drawCard(name, x, y, seed));
+      x += NODE_W + X_GAP;
+    }
+    y += NODE_H + Y_GAP;
+  }
+  for(const entry of placed){
+    const name = entry[0], at = entry[1];
+    for(const other of (DATA[name].uses || [])){
+      const to = placed.get(other);
+      if(!to || to.y <= at.y) continue;
+      edges.push('<path class="edge" d="M' + (at.x + NODE_W / 2) + ','
+        + (at.y + NODE_H) + ' L' + (to.x + NODE_W / 2) + ',' + to.y
+        + '" marker-end="url(#arrow)"/>');
+    }
+  }
+  traceSvg.setAttribute('viewBox', '0 0 ' + width + ' ' + y);
+  traceSvg.setAttribute('width', width);
+  traceSvg.setAttribute('height', y);
+  traceSvg.innerHTML = '<defs><marker id="tarrow" viewBox="0 0 8 8" refX="7" '
+    + 'refY="4" markerWidth="7" markerHeight="7" orient="auto">'
+    + '<path d="M0,0 L8,4 L0,8 z"/></marker></defs>'
+    + '<g class="edges">' + edges.join('').replace(/url\(#arrow\)/g, 'url(#tarrow)')
+    + '</g><g class="nodes">' + parts.join('') + '</g>';
+  return {shown: placed.size, above: above.size, below: below.size};
+}
+
+function enterTrace(name){
+  if(!DATA[name] || !traceSvg) return;
+  const counted = drawTrace(name);
+  tracing = name;
+  graphSvg.hidden = true;
+  traceSvg.hidden = false;
+  tracebar.hidden = false;
+  document.getElementById('traceof').textContent = name;
+  document.getElementById('tracecount').textContent =
+    counted.shown === 1
+      ? 'on its own -- nothing imports it, and it imports nothing internal'
+      : counted.above + ' above it, ' + counted.below + ' below it, out of '
+        + Object.keys(DATA).length + ' modules';
+  if(mapwrap) mapwrap.scrollTop = 0;
+  sizeKey();
+  traceSvg.querySelectorAll('.node').forEach(g => {
+    const other = g.dataset.name;
+    g.addEventListener('click', () => {
+      openModule(other);
+      if(other !== tracing) enterTrace(other);      // follow the thread
+    });
+    g.addEventListener('keydown', e => {
+      if(e.key === 'Enter' || e.key === ' '){
+        e.preventDefault(); openModule(other);
+      }
+    });
+  });
+}
+
+function leaveTrace(){
+  tracing = null;
+  if(traceSvg) traceSvg.hidden = true;
+  if(tracebar) tracebar.hidden = true;
+  if(graphSvg) graphSvg.hidden = false;
+}
+if(document.getElementById('traceout'))
+  document.getElementById('traceout').addEventListener('click', leaveTrace);
+
 document.addEventListener('keydown', e => {
-  if(e.key === 'Escape'){ only = null; applyFilter(); showProject(); }
+  if(e.key === 'Escape'){
+    if(tracing){ leaveTrace(); return; }   // out of the trace before the panel
+    only = null; applyFilter(); showProject();
+  }
 });
 showProject();          // the panel starts on the project
 
@@ -1094,9 +1264,15 @@ to. A doubled bar instead of an arrowhead marks a call that reaches a body with 
 it, and a dashed pink line means this module stopped and another one is doing the same
 work.</p>
 <div class="mapzone">
+<div class="tracebar" id="tracebar" hidden>
+  <span class="ln">tracing</span><b id="traceof"></b>
+  <span class="ln" id="tracecount"></span>
+  <button type="button" id="traceout">show the whole map</button>
+</div>
 <div class="mapwrap"><div class="keybar">{svgmap.KEYBAR}<span class="hint"
 id="keyhint">click a colour to show only those &middot; Esc clears</span></div>
-{svg}</div>
+{svg}<svg id="trace" hidden xmlns="http://www.w3.org/2000/svg" role="img"
+     aria-label="one module and everything it connects to"></svg></div>
 </div>
 
 <input type="search" id="q" placeholder="Filter the tables below...">

@@ -128,6 +128,13 @@ class Project:
             reasons = []
             if module.has_main_guard:
                 reasons.append("__main__ guard")
+            if getattr(module, "shebang", None):
+                # The author wrote an interpreter line. Nothing imports a
+                # script and nothing is meant to: a build script with fifty
+                # commits behind it was being reported as unreachable code
+                # because the only evidence it was ever run sat on line one,
+                # which nothing read.
+                reasons.append("has a #! line, so it is run directly")
             names = {c[0] for c in module.calls}
             if any(n.startswith(("argparse.", "ArgumentParser", "click.",
                                  "typer.")) or n == "ArgumentParser"

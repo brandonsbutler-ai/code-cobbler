@@ -161,6 +161,7 @@ def render(graph, project, frontier_by_module, snippets_by_module,
                 f'</title></path>')
 
     node_svg = []
+    cards = {}
     for name, node in sorted(nodes.items()):
         state, why = state_of(node, tested=name in tested,
                               deadend=bool(deadends_by_module.get(name)))
@@ -183,6 +184,18 @@ def render(graph, project, frontier_by_module, snippets_by_module,
         record = hist_files.get(relpath, {})
         authors = record.get("authors") or []
         owner = authors[0] if authors else "no history"
+        # Kept as drawn, keyed by module. The payload is assembled in a
+        # SECOND loop below, where these names still exist but hold the last
+        # card drawn -- every module briefly carried the same card because of
+        # exactly that.
+        cards[name] = {
+            "name": _fit(filename, 16, keep_end=7),
+            "location": _fit(location, 19),
+            "meta": _fit(size + "  \u00b7  " + owner, 19),
+            "marks": marks,
+            "title": f"{relpath} \u00b7 {size} \u00b7 {owner}",
+            "stroke": stroke,
+        }
         x, y = node["x"], node["y"]
         node_svg.append(
             f'<g class="node" data-name="{_e(name)}" data-state="{state}" '
@@ -293,6 +306,11 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             "external": sorted(project.external.get(name, ()))[:12],
             # Why this is not in the orphan list even though no import names
             # it. Without this the map states an exclusion it cannot justify.
+            # Everything needed to redraw this card somewhere else, already
+            # truncated HERE. The trace view draws the same cards from the
+            # same strings; a second copy of _fit() in JavaScript is two
+            # truncation rules that agree until the day one of them changes.
+            "card": cards.get(name),
             "loaded_by": (getattr(project, "convention_reached", {})
                           .get(name).as_dict()
                           if (getattr(project, "convention_reached", {})
