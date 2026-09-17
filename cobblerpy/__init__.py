@@ -73,6 +73,7 @@ class Survey:
                         if k != "files"} if self.history.get("available")
                        else self.history,
             "skipped_files": self.skipped,
+            "excluded_directories": getattr(self.project, "excluded", {}),
             "origins": self.origins,
             "origin_totals": self.origin_totals,
             "history_coverage": self.history_coverage,
@@ -82,8 +83,9 @@ class Survey:
 def survey(root, with_history=True, max_files=5000):
     """Scan, graph, and read a project for signs of unfinished work."""
     root = os.path.abspath(root)
-    modules, skipped = scan_tree(root, max_files=max_files)
+    modules, skipped, excluded = scan_tree(root, max_files=max_files)
     project = Project(root, modules, skipped)
+    project.excluded = excluded
     frontier = analyse_project(project)
     history = ({"available": False, "reason": "history not requested"}
                if not with_history

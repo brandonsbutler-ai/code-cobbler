@@ -133,6 +133,12 @@ def build(files, git=False):
 # cannot fail in the direction that matters.
 KNOWN = {
     "README.md": "The service lives in app/. Helpers are in helpers/.\n",
+    # A directory the survey must walk past AND must mention walking past.
+    # Without it the exclusion checks only ever ran their negative branch:
+    # "the map says nothing about exclusions" passed while nothing proved it
+    # says something when there IS something to say.
+    ".venv/lib/site.py": "VERSION = 1\n",
+    "node_modules/pkg/thing.py": "VERSION = 1\n",
     "app/ingest.py": '''
         def parse_record(raw):
             return raw
@@ -438,6 +444,22 @@ def verify_map_and_exports(root, workdir):
         check(f"a dead end carries the lines it stops on ({len(_dead)})",
               all(all(d.get("lineno") for d in _data[k]["deadends"])
                   for k in _dead), _dead[:4])
+
+    # What the survey walked past has to be ON THE PAGE. Excluding a
+    # virtualenv is right; a page that says "975 modules" while 9,219 files
+    # were declined cannot be told apart from a small project.
+    _excluded = getattr(s.project, "excluded", {}) or {}
+    if _excluded:
+        check("the map says how many files the survey did not read",
+              "were not read" in legend_text or "was not read" in legend_text,
+              legend_text[:160])
+        check("the map names the directories it walked past",
+              all(name in legend_text for name in
+                  sorted(_excluded, key=lambda k: -_excluded[k])[:2]),
+              sorted(_excluded))
+    else:
+        check("with nothing excluded the map says nothing about exclusions",
+              "were not read" not in legend_text)
 
     check("the description matches the layout the code produces",
           "top to bottom" in legend_text and "Left to right" not in legend_text,

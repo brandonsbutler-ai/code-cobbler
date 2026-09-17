@@ -145,14 +145,14 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             # cut-out and the glowing edge is what carries the state.
             f'<rect class="card" x="{x}" y="{y}" width="{NODE_W}" '
             f'height="{NODE_H}" rx="8" stroke="{stroke}"/>'
-            f'<text class="fname" x="{x + 9}" y="{y + 19}">'
-            f'{_e(_fit(filename, 20))}</text>'
-            f'<text class="meta" x="{x + 9}" y="{y + 35}">'
-            f'{_e(_fit(location, 24))}</text>'
+            f'<text class="fname" x="{x + 9}" y="{y + 22}">'
+            f'{_e(_fit(filename, 16))}</text>'
+            f'<text class="meta" x="{x + 9}" y="{y + 40}">'
+            f'{_e(_fit(location, 19))}</text>'
             # Size and owner share a line: two facts, one row, and the card
             # loses a quarter of its height.
-            f'<text class="meta owner" x="{x + 9}" y="{y + 50}">'
-            f'{_e(_fit(size + "  \u00b7  " + owner, 24))}</text>'
+            f'<text class="meta owner" x="{x + 9}" y="{y + 56}">'
+            f'{_e(_fit(size + "  \u00b7  " + owner, 19))}</text>'
             f'{badge}'
             + (f'<text class="marks" x="{x + NODE_W - 9}" '
                f'y="{y + 20}" text-anchor="end">{marks}</text>'

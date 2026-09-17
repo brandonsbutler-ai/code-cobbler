@@ -36,6 +36,13 @@ def _print_summary(s, limit=12):
     print(f"\n{s.root}")
     print(f"{len(mods)} modules, {loc:,} lines"
           + (f", {s.skipped} skipped (file limit)" if s.skipped else ""))
+    _excluded = getattr(s.project, "excluded", {}) or {}
+    if _excluded:
+        _total = sum(_excluded.values())
+        _named = ", ".join(f"{n} ({c:,})" for n, c in
+                           sorted(_excluded.items(), key=lambda kv: -kv[1])[:3])
+        print(f"  {_total:,} more .py not read, in directories a survey does "
+              f"not walk into: {_named}")
     if not mods:
         return
 

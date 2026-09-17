@@ -475,13 +475,35 @@ SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "env", ".tox", ".mypy_cache
 
 
 def scan_tree(root, skip_dirs=None, max_files=5000):
-    """Scan every .py under `root`. Returns (modules, skipped_count)."""
+    """Scan every .py under `root`.
+
+    Returns (modules, skipped_count, excluded) where `excluded` maps a
+    directory name to how many .py files were passed over because of it.
+
+    The third value exists because the second was not enough. Pointed at a
+    real project this walked past 9,219 Python files -- 5,974 in a `.claude`
+    directory and 3,245 in a virtualenv's site-packages -- surveyed 975, and
+    reported "0 skipped", which is true of the file LIMIT and silent about
+    everything else. Excluding a virtualenv is right; saying nothing about it
+    is the behaviour this tool exists to argue against.
+    """
     skip = set(skip_dirs or ()) | SKIP_DIRS
     root = os.path.abspath(root)
     modules, skipped = [], 0
+    excluded = {}
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames
-                       if d not in skip and not d.startswith(".")]
+        keep = []
+        for d in dirnames:
+            if d in skip or d.startswith("."):
+                # Count what is inside before dropping it, or the number is
+                # unknowable by the time anybody asks.
+                buried = sum(1 for _r, _d, fs in os.walk(os.path.join(dirpath, d))
+                             for f in fs if f.endswith(".py"))
+                if buried:
+                    excluded[d] = excluded.get(d, 0) + buried
+            else:
+                keep.append(d)
+        dirnames[:] = keep
         for name in sorted(filenames):
             if not name.endswith(".py"):
                 continue
@@ -489,4 +511,4 @@ def scan_tree(root, skip_dirs=None, max_files=5000):
                 skipped += 1
                 continue
             modules.append(scan_file(os.path.join(dirpath, name), root))
-    return modules, skipped
+    return modules, skipped, excluded
