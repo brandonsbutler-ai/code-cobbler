@@ -201,7 +201,10 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 #trace .node{cursor:pointer}
 #trace .lvl{font:10.5px ui-monospace,SFMono-Regular,Menlo,monospace;
       fill:var(--faint);letter-spacing:.7px}
-#trace .edge{stroke:var(--mut);stroke-width:1.6}
+/* No stroke here on purpose: each vein carries its own condition
+   gradient as a presentation attribute, and a CSS declaration would
+   override it and repaint every vein flat grey. */
+#trace .edge{stroke-width:1.6}
 #trace marker#tarrow path{fill:var(--mut)}
 #trace .seed .card{stroke-width:3;filter:drop-shadow(0 0 12px currentColor)}
 /* Six states, and the reader should be able to trace the working path by
@@ -733,13 +736,37 @@ function drawTrace(seed){
     y += lines * (NODE_H + Y_GAP);
   }
   const width = CHART_W;
+  // A vein is stroked with a gradient running from its source's condition
+  // colour to its destination's, so the path reads through the same legend
+  // the cards use. The colour is already in the payload -- DATA[x].card.stroke
+  // IS the palette entry for DATA[x].state -- so nothing new is plumbed here.
+  //
+  // gradientUnits is userSpaceOnUse, one gradient per vein, and that is NOT a
+  // style choice. Sharing one objectBoundingBox gradient per state-pair was
+  // tried and MEASURED: a vein between two cards in the same column is a
+  // perfectly vertical path, its bounding box has zero width, and SVG ignores
+  // an objectBoundingBox paint on a degenerate box. Headless Chromium painted
+  // 0 of 181 pixels on that line while the diagonal beside it graded
+  // correctly. Centre-aligned levels make the same-column vein the COMMON
+  // case, so the shared form would have gone invisible exactly where the trace
+  // is narrowest.
+  const veins = [];
   for(const entry of placed){
     const name = entry[0], at = entry[1];
     for(const other of (DATA[name].uses || [])){
       const to = placed.get(other);
       if(!to || to.y <= at.y) continue;
-      edges.push('<path class="edge" d="M' + (at.x + NODE_W / 2) + ','
-        + (at.y + NODE_H) + ' L' + (to.x + NODE_W / 2) + ',' + to.y
+      const x1 = at.x + NODE_W / 2, y1 = at.y + NODE_H;
+      const x2 = to.x + NODE_W / 2, y2 = to.y;
+      const id = 'vein_' + DATA[name].state + '_' + DATA[other].state
+        + '_' + veins.length;
+      veins.push('<linearGradient id="' + id + '" gradientUnits="userSpaceOnUse"'
+        + ' x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '">'
+        + '<stop offset="0" stop-color="' + attr(DATA[name].card.stroke) + '"/>'
+        + '<stop offset="1" stop-color="' + attr(DATA[other].card.stroke) + '"/>'
+        + '</linearGradient>');
+      edges.push('<path class="edge" stroke="url(#' + id + ')" d="M' + x1 + ','
+        + y1 + ' L' + x2 + ',' + y2
         + '" marker-end="url(#arrow)"/>');
     }
   }
@@ -748,7 +775,7 @@ function drawTrace(seed){
   traceSvg.setAttribute('height', y);
   traceSvg.innerHTML = '<defs><marker id="tarrow" viewBox="0 0 8 8" refX="7" '
     + 'refY="4" markerWidth="7" markerHeight="7" orient="auto">'
-    + '<path d="M0,0 L8,4 L0,8 z"/></marker></defs>'
+    + '<path d="M0,0 L8,4 L0,8 z"/></marker>' + veins.join('') + '</defs>'
     + '<g class="edges">' + edges.join('').replace(/url\\(#arrow\\)/g, 'url(#tarrow)')
     + '</g><g class="nodes">' + parts.join('') + '</g>';
   return {shown: placed.size, above: above.size, below: below.size,
