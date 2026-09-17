@@ -34,7 +34,6 @@ filled in", which is the question that decides whether continuing beats
 starting over.
 """
 
-import re
 from collections import defaultdict
 
 # Definition names too common to mean anything. Sharing `main` is not evidence.

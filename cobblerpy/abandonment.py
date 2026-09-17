@@ -11,7 +11,6 @@ context to decide quickly. Signals carry a weight so they can be ranked, and a
 note saying what would make the signal innocent.
 """
 
-import os
 from collections import defaultdict
 
 # weight, label, and the innocent explanation that must be offered alongside
@@ -63,6 +62,12 @@ def _unused_imports(module):
         if any(head in s for s in module.strings):
             continue
         if head in ("annotations", "__future__"):
+            continue
+        # The author said they meant it. An import that exists so a bundler
+        # can see the package is real and deliberate, and reporting it as
+        # abandoned work is a finding the reader dismisses in five seconds --
+        # after which they start dismissing the others too.
+        if lineno in getattr(module, "kept_imports", ()):
             continue
         out.append((alias, target, lineno))
     return out

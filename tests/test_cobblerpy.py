@@ -27,9 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cobblerpy import survey                                    # noqa: E402
 from cobblerpy.abandonment import analyse_module, score         # noqa: E402
 from cobblerpy.clusters import analyse as analyse_clusters, split  # noqa: E402
-from cobblerpy.graph import Project                             # noqa: E402
 from cobblerpy.layout import compute, state_of                  # noqa: E402
-from cobblerpy.origin import classify                           # noqa: E402
 from cobblerpy.scan import _looks_like_code, scan_file, scan_tree  # noqa: E402
 
 
@@ -240,6 +238,104 @@ class TestCommentClassifier(unittest.TestCase):
         """Removing it must change verdicts; it guarded 1143 of 48,482."""
         self.assertFalse(_looks_like_code("# handler"))       # bare name
         self.assertTrue(_looks_like_code("# handler()"))      # a call
+
+    def _flagged(self, source):
+        """Line numbers scan() reports as disabled code, for real source."""
+        t = Tree({"m.py": source})
+        self.addCleanup(t.close)
+        module = next(m for m in t.survey().project.modules
+                      if m.relpath == "m.py")
+        return module.commented_code
+
+    def test_a_trailing_comment_is_an_annotation_not_disabled_code(self):
+        """Nobody disables a statement by appending it to a live one.
+
+        `candidates.append(dotted)  # import pkg.module` is a note about the
+        line it sits on. All five of this project's own commented-out-code
+        findings were of that shape, and 7 of the corpus's 22 -- a finding the
+        reader can dismiss in five seconds teaches them to dismiss the rest.
+        """
+        self.assertEqual(
+            self._flagged("candidates = []\n"
+                          "candidates.append(dotted)  # import pkg.module\n"),
+            [], "a trailing annotation was reported as disabled code")
+        # The SAME text, owning its line, is disabled code.
+        self.assertEqual(
+            self._flagged("candidates = []\n"
+                          "# import pkg.module\n"),
+            [2], "a whole-line disabled import was not reported")
+
+    def test_the_whole_line_rule_is_what_rejects_the_annotation(self):
+        """Prove the clause, not just the outcome.
+
+        The text after the `#` is identical in both cases above, so
+        _looks_like_code cannot be what tells them apart -- and if some other
+        clause were doing the work, loosening this one would change nothing
+        and the test above would stay green for the wrong reason.
+        """
+        self.assertTrue(_looks_like_code("# import pkg.module"),
+                        "the text alone reads as code in both placements, so "
+                        "only the position can be deciding it")
+        indented = self._flagged("def go():\n"
+                                 "    x = 1\n"
+                                 "    # x = 2\n"
+                                 "    return x\n")
+        self.assertEqual(indented, [3],
+                         "an indented whole-line comment is still whole-line")
+
+
+class TestDeliberateImports(unittest.TestCase):
+    """`# noqa: F401` means the author meant it.
+
+    An import that exists so a bundler can see the package is real and
+    deliberate. Four of this project's own eleven unused-import findings were
+    already marked that way and reported anyway -- a finding the reader can
+    dismiss in five seconds, after which they start dismissing the others.
+    """
+
+    def _unused(self, source):
+        t = Tree({"m.py": source, "run.py": 'if __name__ == "__main__":\n    pass\n'})
+        self.addCleanup(t.close)
+        s = t.survey()
+        row = next(r for r in s.frontier if r["relpath"] == "m.py")
+        return [text for text, _line
+                in (row.get("signals") or {}).get("unused_import", [])]
+
+    def test_an_unmarked_unused_import_is_still_reported(self):
+        self.assertEqual(self._unused("import zlib\nx = 1\n"),
+                         ["zlib (from zlib)"])
+
+    def test_the_marked_one_is_not(self):
+        self.assertEqual(self._unused("import zlib  # noqa: F401\nx = 1\n"), [])
+        self.assertEqual(self._unused("import zlib  # noqa\nx = 1\n"), [],
+                         "a bare noqa silences everything, so it covers F401")
+        self.assertEqual(
+            self._unused("from PySide6 import QtCore, QtGui  # noqa: F401\nx = 1\n"),
+            [], "the real shape: a bundler import, marked")
+
+    def test_a_different_code_does_not_silence_it(self):
+        """The near-miss, and the clause that rejects it.
+
+        `# noqa: E501` is a line-length waiver. If the code list were not
+        read, it would silence the import too -- and the test above would
+        stay green, because it never asks about any code but F401.
+        """
+        self.assertEqual(self._unused("import zlib  # noqa: E501\nx = 1\n"),
+                         ["zlib (from zlib)"])
+        from cobblerpy.scan import _keeps_import
+        self.assertTrue(_keeps_import("# noqa: F401"))
+        self.assertTrue(_keeps_import("# noqa: E501, F401"))
+        self.assertTrue(_keeps_import("# noqa"))
+        self.assertFalse(_keeps_import("# noqa: E501"))
+        self.assertFalse(_keeps_import("# nothing to do with noqa codes here"),
+                         "prose that happens to contain the word")
+        self.assertFalse(_keeps_import("# TODO: add noqa here later"))
+
+    def test_the_mark_only_covers_its_own_line(self):
+        """Otherwise one waiver anywhere silences the whole file."""
+        self.assertEqual(
+            self._unused("import zlib  # noqa: F401\nimport gzip\nx = 1\n"),
+            ["gzip (from gzip)"])
 
 
 class TestTruncation(unittest.TestCase):
@@ -1982,6 +2078,55 @@ class TestConventions(unittest.TestCase):
         key = next(k for k in s.modules_by_key if k.endswith("conftest"))
         self.assertNotIn(key, s.project.orphans)
         self.assertEqual(s.project.convention_reached[key].loader, "pytest")
+
+    def test_what_a_tool_loads_is_a_place_the_code_runs_from(self):
+        """Held back from the orphan list, and a reachability root too.
+
+        Saying "pytest loads conftest.py" and then reporting everything
+        conftest imports as unreached is two statements about one file that
+        cannot both be true. On the corpus it left 312 modules -- a third of
+        the project -- coloured "no static path reaches it".
+        """
+        t = Tree({
+            "run.py": 'if __name__ == "__main__":\n    pass\n',
+            "tests/conftest.py": "import helper\n",
+            "helper.py": "def fixture_support():\n    return 1\n",
+            "stranded.py": "def nothing_calls_me():\n    return 2\n",
+        })
+        self.addCleanup(t.close)
+        s = t.survey()
+        self.assertIn("helper", s.project.reachable,
+                      "the module conftest imports is still called unreachable")
+        self.assertNotIn("stranded", s.project.reachable,
+                         "everything became reachable, so this proves nothing")
+        # And the map agrees, because it colours from layers(), not reachable.
+        placed = {n for names in s.project.layers().values() for n in names}
+        self.assertIn("helper", placed)
+        self.assertNotIn("stranded", placed)
+
+    def test_both_reachability_walks_use_the_same_roots(self):
+        """Two walks, one answer.
+
+        reachable and layers() each did their own breadth-first search from
+        their own idea of a starting point. Fixing one left the other
+        disagreeing with it, and nothing failed: the totals counted a module
+        one way while the chart coloured it the other.
+        """
+        t = Tree({
+            "run.py": 'if __name__ == "__main__":\n    pass\n',
+            "tests/conftest.py": "import helper\n",
+            "helper.py": "def go():\n    return 1\n",
+            "tests/test_thing.py": "import fixtures_only\n",
+            "fixtures_only.py": "def make():\n    return 2\n",
+            "stranded.py": "x = 1\n",
+        })
+        self.addCleanup(t.close)
+        s = t.survey()
+        placed = {n for names in s.project.layers().values() for n in names}
+        self.assertEqual(placed, s.project.reachable,
+                         "the depth layering and the reachable set disagree")
+        self.assertIn("fixtures_only", placed)
+        self.assertTrue(s.project.roots(), "there are no roots at all")
 
     def test_nothing_is_both_held_back_and_reported_as_an_orphan(self):
         t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n',

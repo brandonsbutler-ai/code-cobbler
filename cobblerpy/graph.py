@@ -110,6 +110,14 @@ class Project:
                     self.external[module.dotted].add(target.split(".")[0])
 
         self._find_entry_points()
+        # Conventions are read BEFORE the reachability walk, because a module
+        # something else loads is a place execution begins. Held back from the
+        # orphan list but not used as a root, the tool said "pytest loads
+        # conftest.py" and then reported everything conftest imports as
+        # unreached -- two statements about the same file that cannot both be
+        # true. On the corpus that left 23 modules unreachable whose only
+        # importer was a file we had just said gets loaded.
+        self.convention_reached = conventions.reached(self.root, self.modules)
         self._walk_reachable()
         self._find_orphans()
         self._find_cycles()
@@ -147,9 +155,33 @@ class Project:
             if reasons:
                 self.entry_points.append((module.dotted or module.relpath, reasons))
 
+    def roots(self):
+        """Every place the code is run from, in one list.
+
+        Two kinds, and the difference is recorded elsewhere rather than
+        flattened here: an entry point begins execution on its own evidence,
+        and a convention-reached module is one a NAMED tool begins it in.
+        Both are places the program starts.
+
+        ONE list, because reachability was computed twice from two different
+        root sets -- _walk_reachable() here and layers() below -- and fixing
+        the first left the second disagreeing with it. The map colours a
+        module from layers(); the totals count it from reachable.
+        """
+        seen, out = set(), []
+        for name, _why in self.entry_points:
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+        for name in self.convention_reached:
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+        return out
+
     def _walk_reachable(self):
-        """Modules reachable by import from any entry point."""
-        queue = deque(name for name, _ in self.entry_points)
+        """Modules reachable by import from anything that gets run."""
+        queue = deque(self.roots())
         seen = set(queue)
         while queue:
             current = queue.popleft()
@@ -175,7 +207,6 @@ class Project:
         exclusion now comes from conventions.py, names the tool that does the
         loading, and is KEPT so the map can say what it held back and why.
         """
-        self.convention_reached = conventions.reached(self.root, self.modules)
         entry_names = {name for name, _ in self.entry_points}
         for module in self.modules:
             key = module.dotted or module.relpath
@@ -247,14 +278,15 @@ class Project:
 
     # -- reporting helpers ------------------------------------------------
     def layers(self):
-        """Modules grouped by import depth from the entry points.
+        """Modules grouped by import depth from the places code is run from.
 
         Depth is the shortest import path from a start point, which is a rough
         but useful stand-in for "how close is this to the top of the program".
         """
         depth = {}
-        queue = deque((name, 0) for name, _ in self.entry_points)
-        for name, _ in self.entry_points:
+        starts = self.roots()
+        queue = deque((name, 0) for name in starts)
+        for name in starts:
             depth[name] = 0
         while queue:
             current, d = queue.popleft()
