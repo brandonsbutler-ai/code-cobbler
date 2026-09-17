@@ -61,8 +61,8 @@ _CAVEAT = {
     UNIQUE:
         "\"nowhere else\" means nowhere else in what was surveyed",
     NEVER_COMMITTED:
-        "no commit covers this file, so there is no record of how long it was "
-        "worked on -- it may also simply not be yours",
+        "the project has a history and this file is not in it, so there is no "
+        "record of how long it was worked on -- it may also not be yours",
     ISOLATED:
         "nothing imports it, it imports nothing internal, and it defines "
         "nothing unique -- which is what scratch work looks like",
@@ -98,6 +98,11 @@ def find(project, modules_by_key, history=None, limit=None):
     much there is to read.
     """
     files = (history or {}).get("files") or {}
+    # "Never committed" is only worth saying when there is a history to be
+    # absent from. Surveyed without git -- or on a directory that is not a
+    # repository -- it was the verdict on every single module, which is true
+    # of the whole project and tells the reader nothing about any file in it.
+    has_history = bool((history or {}).get("available") and files)
     orphans = [k for k in project.orphans if k in modules_by_key]
     live = set(modules_by_key) - set(orphans)
 
@@ -136,7 +141,7 @@ def find(project, modules_by_key, history=None, limit=None):
 
         record = files.get(module.relpath) or {}
         verdict = _verdict(counterpart, bool(uses_live), bool(unique),
-                           bool(record))
+                           committed=bool(record), has_history=has_history)
         records.append({
             "module": key,
             "relpath": module.relpath,
@@ -157,10 +162,10 @@ def find(project, modules_by_key, history=None, limit=None):
     return records[:limit] if limit else records
 
 
-def _verdict(counterpart, wired, unique, committed):
+def _verdict(counterpart, wired, unique, committed, has_history):
     if counterpart and counterpart["datable"]:
         return ORIGINAL_DIRECTION if counterpart["older"] else LATER_ATTEMPT
-    if not committed:
+    if has_history and not committed:
         return NEVER_COMMITTED
     if wired and unique:
         return UNIQUE_AND_WIRED

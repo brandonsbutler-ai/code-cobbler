@@ -1302,9 +1302,56 @@ abandoned code does not get started again.</p>
         f'<div class="tally"><span class="dot s-{_e(k)}"></span>'
         f'<b>{_tally.get(k, 0)}</b> <span class="ln">{_e(k)}</span></div>'
         for k in _order if _tally.get(k))
+    # What is in the code nothing reaches, and whether any of it is worth
+    # keeping. Ranked by lines, because the reader is deciding where to spend
+    # an afternoon and that is bounded by how much there is to read. Every
+    # verdict is named for what was MEASURED; whether it adds up to something
+    # worth having is a judgement about a business, and a tool that says
+    # "valuable" gets switched off the first time it is wrong.
+    from .salvage import find as _find_salvage, summarise as _sum_salvage
+    _left = _find_salvage(project, modules_by_key, history)
+    if _left:
+        _totals = _sum_salvage(_left)
+        _by_verdict = "".join(
+            f'<div class="tally"><b>{v["modules"]}</b> '
+            f'<span class="ln">{_e(k)} &middot; {v["lines"]:,} lines</span></div>'
+            for k, v in sorted(_totals.items(), key=lambda kv: -kv[1]["lines"]))
+        _shown = _left[:10]
+        _rows = "".join(
+            f'<div class="attempt"><a class="goto" data-goto="{_e(r["module"])}">'
+            f'{_e(r["relpath"])}</a> <span class="ln">{r["loc"]:,} lines'
+            + (f' &middot; {r["commits"]} commit'
+               f'{"s" if r["commits"] != 1 else ""}' if r["commits"] else "")
+            + (f' &middot; last touched {_e(r["last_touched"])}'
+               if r["last_touched"] else "")
+            + f'</span>'
+            f'<div class="ln">{_e(r["verdict"])}</div>'
+            + (f'<div class="ln ev">defines {_e(", ".join(r["unique"][:4]))}'
+               + (f' and {r["unique_count"] - 4} more' if r["unique_count"] > 4
+                  else "")
+               + ', found in no other file</div>' if r["unique"] else "")
+            + (f'<div class="ln ev">imports {_e(", ".join(r["uses_live"][:4]))}'
+               ', which are still reached</div>' if r["uses_live"] else "")
+            + (f'<div class="ln ev">same definitions as '
+               f'{_e(r["counterpart"]["module"])}; this one dates from '
+               f'{_e(r["counterpart"]["mine"] or "?")} '
+               f'({_e(r["counterpart"]["mine_from"] or "?")}), that one from '
+               f'{_e(r["counterpart"]["theirs"] or "?")}</div>'
+               if r["counterpart"] else "")
+            + f'<div class="ln ev more">{_e(r["caveat"])}</div>'
+            '</div>'
+            for r in _shown)
+        _more = (f'<p class="lede">{len(_left) - len(_shown)} more, each on '
+                 f'its own card.</p>' if len(_left) > len(_shown) else "")
+        left_html = (f'<div class="tallies">{_by_verdict}</div>{_rows}{_more}')
+    else:
+        left_html = ('<p class="empty">Every module is reached from a start '
+                     'point or loaded by a tool. Nothing was left behind.</p>')
+
     summary_html = (
         f'<h4>what this project is made of</h4><div class="tallies">{_bars}</div>'
         f'<h4>the same job, started over</h4>{attempts_html}'
+        f'<h4>what was left behind</h4>{left_html}'
         f'<h4>where the work stopped</h4>{_frontier_short}'
         f'<h4>what the history says</h4>{history_html}')
 

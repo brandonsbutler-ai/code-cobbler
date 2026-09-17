@@ -1589,6 +1589,258 @@ console.log(JSON.stringify({markup: document.getElementById('trace').innerHTML,
         self.assertEqual(seen["card"]["name"], "b.py")
 
 
+class TestSalvage(unittest.TestCase):
+    """What is in the code nothing reaches, and what the evidence says of it.
+
+    Every verdict here is reachable from a purpose-built tree. A verdict that
+    no fixture produces is a branch nobody has run -- and `original
+    direction`, the one that matters most, fires on none of the corpus, so
+    without a fixture for it there would be no evidence it works at all.
+    """
+
+    def _repo(self, commits, extra=None):
+        """A repository with dated commits, then optional untracked files."""
+        import subprocess
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+
+        def git(*args):
+            subprocess.run(("git", "-C", root) + args, capture_output=True)
+
+        git("init", "-q")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "Tester")
+        for when, files in commits:
+            for relpath, text in files.items():
+                write(root, relpath, text)
+            git("add", "-A")
+            subprocess.run(
+                ("git", "-C", root, "commit", "-q", "-m", when, "--date", when),
+                capture_output=True,
+                env={**os.environ, "GIT_COMMITTER_DATE": when})
+        for relpath, text in (extra or {}).items():
+            write(root, relpath, text)
+        return root
+
+    SHARED = ("def reconcile_ledger():\n    return 1\n"
+              "def settle_batch():\n    return 2\n"
+              "def post_journal():\n    return 3\n")
+
+    def test_every_verdict_is_reachable_and_carries_its_caveat(self):
+        from cobblerpy import survey as do_survey, salvage
+        root = self._repo(
+            [("2024-01-01T00:00:00",
+              {"main.py": "import keeper\nif __name__ == '__main__':\n"
+                          "    keeper.go()\n",
+               # Here FIRST, and superseded later by keeper.py.
+               "keeper_old.py": self.SHARED}),
+             ("2025-06-01T00:00:00",
+              {"keeper.py": "def go():\n    return reconcile_ledger()\n" + self.SHARED,
+               "wired.py": "import keeper\ndef unique_capability_here():\n"
+                           "    return keeper.go()\n",
+               "lonely.py": "x = 1\n"})],
+            extra={"scratch.py": "import keeper\ndef scratch_only():\n"
+                                 "    return keeper.go()\n"})
+        s = do_survey(root)
+        rows = {r["module"]: r for r in salvage.find(
+            s.project, s.modules_by_key, s.history)}
+        self.assertEqual(rows["keeper_old"]["verdict"], salvage.ORIGINAL_DIRECTION)
+        self.assertEqual(rows["scratch"]["verdict"], salvage.NEVER_COMMITTED)
+        self.assertEqual(rows["wired"]["verdict"], salvage.UNIQUE_AND_WIRED)
+        self.assertEqual(rows["lonely"]["verdict"], salvage.ISOLATED)
+        for row in rows.values():
+            self.assertTrue(row["caveat"], f"{row['module']} has no caveat")
+            self.assertNotEqual(row["caveat"], row["verdict"])
+
+    def test_the_original_direction_is_the_one_that_came_first(self):
+        """The whole claim is chronological, so it has to flip with the dates.
+
+        On the corpus this verdict fires on nothing: of the pairs whose dates
+        are knowable, the unreachable one is newer far more often than older.
+        Which is exactly why it needs a fixture where it is TRUE and one where
+        it is false.
+        """
+        from cobblerpy import survey as do_survey, salvage
+        for label, old_first in (("the old one was there first", True),
+                                 ("the old one came later", False)):
+            with self.subTest(label):
+                dates = (("2024-01-01T00:00:00", "2025-06-01T00:00:00")
+                         if old_first else
+                         ("2025-06-01T00:00:00", "2024-01-01T00:00:00"))
+                root = self._repo([
+                    (dates[1] if old_first else dates[0],
+                     {"main.py": "import keeper\nif __name__ == '__main__':\n"
+                                 "    keeper.go()\n"}),
+                ] + [])
+                # Two commits in the order the subtest wants.
+                import subprocess
+                def commit(when, relpath, text):
+                    write(root, relpath, text)
+                    subprocess.run(("git", "-C", root, "add", "-A"),
+                                   capture_output=True)
+                    subprocess.run(
+                        ("git", "-C", root, "commit", "-q", "-m", when,
+                         "--date", when), capture_output=True,
+                        env={**os.environ, "GIT_COMMITTER_DATE": when})
+                first, second = (("keeper_old.py", self.SHARED),
+                                 ("keeper.py",
+                                  "def go():\n    return reconcile_ledger()\n"
+                                  + self.SHARED))
+                if not old_first:
+                    commit(dates[1], second[0], second[1])
+                    commit(dates[0], first[0], first[1])
+                else:
+                    commit(dates[0], first[0], first[1])
+                    commit(dates[1], second[0], second[1])
+                s = do_survey(root)
+                rows = {r["module"]: r for r in salvage.find(
+                    s.project, s.modules_by_key, s.history)}
+                self.assertIn("keeper_old", rows)
+                self.assertEqual(
+                    rows["keeper_old"]["verdict"],
+                    salvage.ORIGINAL_DIRECTION if old_first
+                    else salvage.LATER_ATTEMPT,
+                    rows["keeper_old"]["counterpart"])
+
+    def test_without_a_history_nothing_is_called_never_committed(self):
+        """True of every file, so it is a fact about the survey, not the file."""
+        from cobblerpy import salvage
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n',
+                  "spare.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        s = t.survey()                        # with_history=False
+        rows = salvage.find(s.project, s.modules_by_key, s.history)
+        self.assertTrue(rows, "the fixture left nothing behind")
+        self.assertNotIn(salvage.NEVER_COMMITTED,
+                         {r["verdict"] for r in rows})
+
+    def test_a_date_in_the_filename_counts_when_git_does_not_know(self):
+        """Untracked dated scratch is exactly the tree this gets asked about."""
+        from cobblerpy import salvage
+        self.assertEqual(salvage._stamped("x/_combined_e2e_20260619.py"),
+                         "2026-06-19")
+        self.assertEqual(salvage._stamped("attest_canon_2026-08-27.py"),
+                         "2026-08-27")
+        self.assertIsNone(salvage._stamped("build_deb.py"))
+        self.assertIsNone(salvage._stamped("v1500_run2.py"),
+                          "a version number is not a date")
+        self.assertIsNone(salvage._stamped("port_29999.py"))
+        # Eight digits that are not a date. A pattern of \d{4}\d{2}\d{2}
+        # takes all of these, and the two fixtures above do not catch it --
+        # they are rejected by their SHAPE, not by the month and day ranges.
+        self.assertIsNone(salvage._stamped("report_20261332.py"),
+                          "month 13 is not a month")
+        self.assertIsNone(salvage._stamped("chunk_20260000.py"),
+                          "month 00 and day 00 are not a date")
+        self.assertIsNone(salvage._stamped("build_20260732.py"),
+                          "day 32 is not a day")
+        self.assertIsNone(salvage._stamped("run_19991231.py"),
+                          "the century is anchored at 20xx")
+
+    def test_an_untracked_dated_file_is_dated_by_its_name(self):
+        """The date in the filename has to actually be USED, not just parsed.
+
+        _stamped() can be perfect and _earliest() can still ignore it: the
+        untracked file is the one with no git date, which is precisely the
+        case the filename is there to cover. Checking the regex alone left
+        that unproven -- and this fixture is the only thing in the suite where
+        the date comes from anywhere but git.
+        """
+        from cobblerpy import survey as do_survey, salvage
+        root = self._repo(
+            [("2025-06-01T00:00:00",
+              {"main.py": "import keeper\nif __name__ == '__main__':\n"
+                          "    keeper.go()\n",
+               "keeper.py": "def go():\n    return reconcile_ledger()\n"
+                            + self.SHARED})],
+            # Never committed, and named with a date two years EARLIER.
+            extra={"keeper_20240101.py": self.SHARED})
+        s = do_survey(root)
+        rows = {r["module"]: r for r in salvage.find(
+            s.project, s.modules_by_key, s.history)}
+        row = rows["keeper_20240101"]
+        self.assertEqual(row["counterpart"]["mine_from"], "the filename",
+                         "the date in the name was not used")
+        self.assertEqual(row["counterpart"]["mine"], "2024-01-01")
+        self.assertEqual(row["counterpart"]["theirs_from"], "git")
+        self.assertEqual(row["verdict"], salvage.ORIGINAL_DIRECTION,
+                         "a file dated only by its name cannot be placed in "
+                         "time, so it fell through to another verdict")
+
+    def test_the_earlier_of_the_two_dates_wins(self):
+        """A file can be dated twice, and the dates can disagree.
+
+        A dated scratch file committed months after it was written has a git
+        date that says when it was swept into the repository, not when the
+        work happened. The earlier of the two is the one that bears on "which
+        came first", and the record says which source it came from.
+        """
+        from cobblerpy import salvage
+        files = {"keep_20230101.py": {"first_seen": "2025-06-01"}}
+        self.assertEqual(salvage._earliest("keep_20230101.py", files),
+                         ("2023-01-01", "the filename"))
+        # And the other way round: committed before somebody renamed it with
+        # a later date on it.
+        files = {"keep_20260101.py": {"first_seen": "2025-06-01"}}
+        self.assertEqual(salvage._earliest("keep_20260101.py", files),
+                         ("2025-06-01", "git"))
+        self.assertEqual(salvage._earliest("plain.py",
+                                           {"plain.py": {"first_seen": "2025-06-01"}}),
+                         ("2025-06-01", "git"))
+        self.assertEqual(salvage._earliest("dated_20240202.py", {}),
+                         ("2024-02-02", "the filename"))
+        self.assertEqual(salvage._earliest("nothing.py", {}), (None, None))
+
+    def test_ranked_by_the_work_in_it(self):
+        from cobblerpy import salvage
+        # Named so that alphabetical order is the REVERSE of size order.
+        # With small/middle/big the two agreed, and ranking by name passed.
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n',
+                  "a_smallest.py": "x = 1\n",
+                  "c_biggest.py": "y = 2\n" * 300,
+                  "b_middling.py": "z = 3\n" * 40})
+        self.addCleanup(t.close)
+        s = t.survey()
+        rows = salvage.find(s.project, s.modules_by_key, s.history)
+        self.assertEqual([r["module"] for r in rows],
+                         ["c_biggest", "b_middling", "a_smallest"])
+
+    def test_the_map_carries_what_was_left_behind(self):
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n',
+                  "stranded.py": "def only_here():\n    return 1\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            doc = fh.read()
+        page = Page(doc)
+        text = " ".join(page.text_parts)
+        self.assertIn("what was left behind", text.lower())
+        self.assertIn("stranded.py", text)
+        # And it is a LINK to the module's own card, not a dead mention.
+        self.assertTrue(page.find("a", **{"data-goto": "stranded"}),
+                        "the module named in the summary cannot be opened")
+
+    def test_the_section_says_so_when_nothing_was_left_behind(self):
+        """The negative branch, which is where a check like this goes stale."""
+        t = Tree({"run.py": "import lib\nif __name__ == '__main__':\n"
+                            "    lib.go()\n",
+                  "lib.py": "def go():\n    return 1\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        self.assertEqual(s.project.orphans, [])
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            text = " ".join(Page(fh.read()).text_parts)
+        self.assertIn("Nothing was left behind", text)
+
+
 class TestConventions(unittest.TestCase):
     """Files a named tool loads without importing them.
 

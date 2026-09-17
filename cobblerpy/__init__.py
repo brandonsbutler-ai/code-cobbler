@@ -58,6 +58,12 @@ class Survey:
         return coverage_note(self.origins, self.history)
 
     @property
+    def left_behind(self):
+        """What nothing reaches, ranked by the work in it."""
+        from .salvage import find
+        return find(self.project, self.modules_by_key, self.history)
+
+    @property
     def totals(self):
         return summarise(self.frontier)
 
@@ -81,6 +87,7 @@ class Survey:
                        else self.history,
             "skipped_files": self.skipped,
             "excluded_directories": getattr(self.project, "excluded", {}),
+            "left_behind": self.left_behind,
             "loaded_by_convention": {
                 k: c.as_dict()
                 for k, c in getattr(self.project, "convention_reached", {}).items()},
