@@ -380,6 +380,24 @@ def verify_map_and_exports(root, workdir):
             check("the map names the gap every attempt shares",
                   "every attempt stopped at" in legend_text, legend_text[:140])
         check("the map shows how the work grew", "HOW IT GREW" in legend_text)
+        # The continuation links, read off the GRAPH rather than the prose.
+        # This is the one inference drawn on the map, so it has to be present
+        # AND explained; a dashed line nothing accounts for is worse than none.
+        with open(out, encoding="utf-8") as _fh:
+            _svg = _fh.read()
+        _links = re.findall(
+            r'<path class="continues"[^>]*data-from="([^"]+)" data-to="([^"]+)"',
+            _svg)
+        _expected = sum(len(g["attempts"]) - 1 for g in _groups)
+        check(f"the graph links each attempt to the probable continuation "
+              f"({_expected})", len(_links) == _expected, _links)
+        check("every continuation link points at the attempt to resume from",
+              all(to in {g["resume_at"] for g in _groups} for _f, to in _links),
+              _links)
+        check("the legend explains the continuation link",
+              "probable continuation" in legend_text)
+        check("a module the flow stops inside gets its own state",
+              'data-state="deadend"' in _svg)
         _first = _groups[0]["lineage"]
         if len(_first) > 1 and _first[1]["added"]:
             check("the lineage says what each attempt added",
@@ -387,6 +405,14 @@ def verify_map_and_exports(root, workdir):
     else:
         check("with no restart groups the map omits the section",
               "HOW IT GREW" not in legend_text)
+
+    # The prose has to describe the chart that is drawn, whether or not there
+    # are restart groups. It said "left to right is distance from a start
+    # point" for a while after the layout became top-down -- the kind of wrong
+    # that survives every structural test, because nothing reads the sentence.
+    check("the description matches the layout the code produces",
+          "top to bottom" in legend_text and "Left to right" not in legend_text,
+          [l for l in ("top to bottom", "Left to right") if l in legend_text])
     drawn = page.attr_values("data-name")
     missing = sorted(set(s.project.by_dotted) - drawn)
     check(f"every module appears as a node ({len(drawn)} drawn)",

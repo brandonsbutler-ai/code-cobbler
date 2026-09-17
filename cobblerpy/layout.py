@@ -25,8 +25,11 @@ anything onto the machine.
 from collections import defaultdict
 
 # Geometry, in SVG user units.
-NODE_W = 188
-NODE_H = 40
+# A node is a CARD now, not a label: filename, where it lives, how big it is
+# and who last touched it. Four lines need the height, and the width is set by
+# the longest of the four rather than by the module name alone.
+NODE_W = 210
+NODE_H = 74
 X_GAP = 108          # horizontal space between layers
 Y_GAP = 18           # vertical space between nodes in a layer
 MARGIN = 28
@@ -84,18 +87,23 @@ def compute(project, frontier_by_module=None):
     order = _order_layers(layers, edges)
 
     nodes = {}
-    tallest = max((len(v) for v in order.values()), default=1)
+    # TOP DOWN, like an org chart: depth is a ROW, and the modules at that
+    # depth spread across it. Left-to-right put depth on the x axis, which is
+    # the conventional dependency-graph reading but not the one people already
+    # know -- everybody can read an org chart without being told how, and the
+    # thing being shown here is the same shape: what sits under what.
+    widest = max((len(v) for v in order.values()), default=1)
     for depth in sorted(order):
         names = order[depth]
-        # Centre each column vertically so the picture reads as a flow rather
-        # than a ragged left-aligned list.
-        offset = (tallest - len(names)) * (NODE_H + Y_GAP) / 2
+        # Centre each ROW horizontally, so a row of one sits under the middle
+        # of the row above it rather than hard against the left margin.
+        offset = (widest - len(names)) * (NODE_W + X_GAP) / 2
         for i, name in enumerate(names):
             row = frontier_by_module.get(name, {})
             nodes[name] = {
                 "name": name,
-                "x": MARGIN + depth * (NODE_W + X_GAP),
-                "y": MARGIN + offset + i * (NODE_H + Y_GAP),
+                "x": MARGIN + offset + i * (NODE_W + X_GAP),
+                "y": MARGIN + depth * (NODE_H + Y_GAP),
                 "depth": depth,
                 "score": row.get("score", 0),
                 "counts": row.get("counts", {}),
@@ -110,22 +118,28 @@ def compute(project, frontier_by_module=None):
         if a not in nodes or b not in nodes:
             continue
         src, dst = nodes[a], nodes[b]
-        x1, y1 = src["x"] + NODE_W, src["y"] + NODE_H / 2
-        x2, y2 = dst["x"], dst["y"] + NODE_H / 2
-        if dst["depth"] <= src["depth"]:
-            # A back edge (a cycle, or a jump to an earlier layer). Leave from
-            # the same side it arrives on, so it reads as going backwards.
-            x1 = src["x"]
-            x2 = dst["x"] + NODE_W
-        mid = (x1 + x2) / 2
+        back = dst["depth"] <= src["depth"]
+        # Elbow connectors, not curves: down out of the parent, across, and
+        # down into the child. That right-angled shape is what makes a diagram
+        # read as a hierarchy -- a bezier between two boxes reads as a network,
+        # which is the thing this is trying not to look like.
+        x1, y1 = src["x"] + NODE_W / 2, src["y"] + NODE_H
+        x2, y2 = dst["x"] + NODE_W / 2, dst["y"]
+        if back:
+            # A cycle or a jump upwards. Leave from the top and arrive at the
+            # bottom, so it visibly goes against the grain of the chart.
+            y1 = src["y"]
+            y2 = dst["y"] + NODE_H
+        mid = (y1 + y2) / 2
         routed.append({
             "from": a, "to": b,
-            "path": f"M{x1:.0f},{y1:.0f} C{mid:.0f},{y1:.0f} {mid:.0f},{y2:.0f} {x2:.0f},{y2:.0f}",
-            "back": dst["depth"] <= src["depth"],
+            "path": (f"M{x1:.0f},{y1:.0f} L{x1:.0f},{mid:.0f} "
+                     f"L{x2:.0f},{mid:.0f} L{x2:.0f},{y2:.0f}"),
+            "back": back,
         })
 
-    width = MARGIN * 2 + (max(order, default=0) + 1) * (NODE_W + X_GAP) - X_GAP
-    height = MARGIN * 2 + tallest * (NODE_H + Y_GAP) - Y_GAP
+    width = MARGIN * 2 + widest * (NODE_W + X_GAP) - X_GAP
+    height = MARGIN * 2 + (max(order, default=0) + 1) * (NODE_H + Y_GAP) - Y_GAP
     return {"nodes": nodes, "edges": routed,
             "width": max(width, 320), "height": max(height, 200)}
 

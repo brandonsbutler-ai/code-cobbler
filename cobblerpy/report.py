@@ -25,17 +25,32 @@ from .deadends import by_module as deadends_by_module, find as find_deadends
 from .layout import compute as compute_layout
 
 _CSS = """
-:root{--bg:#f7f7f6;--fg:#1a1a18;--mut:#6b6b66;--line:#dcdcd6;--card:#fff;
+/* Dark by default, and the same palette as the desktop window.
+   This file is the thing that gets sent to somebody, so it is the thing that
+   has to look like the product. It used to default to light and go dark only
+   if the VIEWER'S OPERATING SYSTEM said so, which meant the flagship artifact
+   of a dark editor-native tool arrived looking like a different product on
+   most machines. The colours are the ones a Python developer already reads:
+   green furthest along, amber unfinished, coral will not parse, violet
+   nothing imports it, blue the action. */
+:root{--bg:#0f1116;--fg:#d6dae3;--mut:#8b93a3;--faint:#5e6675;
+      --line:#262b36;--line2:#1f242e;--card:#161920;--sunk:#1b1f28;
+      --accent:#58a6ff;--warn:#d8a657;--warnbg:#241c10;--ok:#7ee787;
+      --hot:#f4796b;--hotbg:#2a1a16;--violet:#bc8cff}
+/* A light variant for anyone who explicitly asks for one -- printing, a
+   projector, a reviewer who wants it on paper. Dark stays the default. */
+@media(prefers-color-scheme:light){:root:not([data-theme=dark]){
+      --bg:#f7f7f6;--fg:#1a1a18;--mut:#6b6b66;--faint:#9a9a94;
+      --line:#dcdcd6;--line2:#ebebe7;--card:#fff;--sunk:#f6f6f4;
       --accent:#1f4d8f;--warn:#8a5a00;--warnbg:#fdf4e3;--ok:#2d6a4f;
-      --hot:#a13d2d;--hotbg:#fbecea}
-@media(prefers-color-scheme:dark){:root:not([data-theme=light]){
-      --bg:#16161a;--fg:#e8e8e4;--mut:#9a9a94;--line:#32323a;--card:#1e1e24;
-      --accent:#7aa8e8;--warn:#e0b060;--warnbg:#2a2318;--ok:#7fc8a4;
-      --hot:#e08878;--hotbg:#2c1e1c}}
+      --hot:#a13d2d;--hotbg:#fbecea;--violet:#6b3fa0}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);padding:24px 16px;
      font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-.wrap{max-width:1180px;margin:0 auto}
+/* Geared for 1920. The old 1180px cap used 41% of a wide screen and left the
+   graph in a letterbox; the tables are the widest thing here and they were
+   the ones being squeezed. */
+.wrap{max-width:1680px;margin:0 auto}
 h1{font-size:22px;margin:0 0 2px}
 h2{font-size:16px;margin:30px 0 4px;color:var(--accent)}
 h2 .n{color:var(--mut);font-weight:400;font-size:13px}
@@ -65,6 +80,48 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
      border:1px solid var(--line);margin:1px 3px 1px 0;white-space:nowrap}
 .tag.hot{background:var(--hotbg);color:var(--hot);border-color:transparent}
 .chain.more{color:var(--mut);font-style:italic}
+/* The graph. Cards are cut-outs -- their fill is the panel's own background --
+   and the state is carried by a glowing edge instead of a colour wash, which
+   keeps four lines of text legible inside every one of them. */
+#graph .card{fill:var(--card);stroke-width:1.5;
+             filter:drop-shadow(0 0 4px currentColor)}
+#graph .node{color:var(--accent)}
+#graph .node[data-state="clean"]     .card{stroke:#33d6c8}
+#graph .node[data-state="clean"]     {color:#33d6c8}
+#graph .node[data-state="warm"]      .card{stroke:var(--warn)}
+#graph .node[data-state="warm"]      {color:var(--warn)}
+#graph .node[data-state="hot"]       .card{stroke:var(--hot)}
+#graph .node[data-state="hot"]       {color:var(--hot)}
+#graph .node[data-state="broken"]    .card{stroke:var(--hot)}
+#graph .node[data-state="orphan"]    .card{stroke:var(--violet)}
+#graph .node[data-state="orphan"]    {color:var(--violet)}
+#graph .node[data-state="unreached"] .card{stroke:var(--mut)}
+#graph .node[data-state="unreached"] {color:var(--mut)}
+/* A dead end is its own state: execution reaches this module and stops
+   inside it, which is not the same fact as "carries signals of unfinished
+   work" and should not share its colour. */
+#graph .node[data-state="deadend"]   .card{stroke:#ff6ec7;stroke-width:2}
+#graph .node[data-state="deadend"]   {color:#ff6ec7}
+
+/* The one hypothesis on the map: this module stopped, and THAT one is doing
+   the same work. Dashed because it is inferred from shared definition names
+   rather than read from an import, and every one carries its reason in a
+   tooltip. */
+#graph .continues{stroke:#ff6ec7;stroke-width:1.6;fill:none;
+                  stroke-dasharray:7 5;opacity:.75}
+#graph .continues:hover{opacity:1;stroke-width:2.4}
+#graph marker#continues path{stroke:#ff6ec7}
+#graph .node:hover .card{stroke-width:2.5;
+                         filter:drop-shadow(0 0 9px currentColor)}
+#graph .fname{font:600 12.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+              fill:var(--fg)}
+#graph .meta{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;
+             fill:var(--mut)}
+#graph .meta.owner{fill:var(--faint)}
+#graph .marks{font:600 11px ui-monospace,SFMono-Regular,Menlo,monospace;
+              fill:currentColor}
+#graph .badge{font:9.5px ui-monospace,SFMono-Regular,Menlo,monospace;
+              fill:var(--faint);letter-spacing:.5px}
 .attempt{margin-bottom:18px}
 .wall{background:var(--hotbg);border:1px solid var(--hot);border-left:3px solid var(--hot);
       border-radius:8px;padding:10px 13px;margin:8px 0 12px}
@@ -269,6 +326,9 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
         from .attempts import find as _find_attempts
         attempts = _find_attempts(project, modules_by_key, origins)
     attempts = attempts or []
+    # Resolved BEFORE the graph is drawn: the continuation links on the map
+    # come from these groups, so computing them afterwards would draw a map
+    # with the findings missing from it.
     frontier_by_module = {r["module"]: r for r in frontier}
 
     # The graph, the source behind each node, and the points where the flow
@@ -287,7 +347,9 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
             }
     dead = deadends_by_module(find_deadends(project, modules_by_key, origins))
     svg, payload = svgmap.render(graph, project, frontier_by_module,
-                                 snippets_by_module, dead, origins)
+                                 snippets_by_module, dead, origins,
+                                 history=history, modules_by_key=modules_by_key,
+                                 attempts=attempts)
     title = title or f"Codebase map -- {os.path.basename(project.root)}"
     mods = project.modules
     total_loc = sum(m.loc for m in mods)
@@ -619,9 +681,13 @@ can follow. Treat every such finding as "no static path was found", never as
 "dead".</div>
 
 <h2>The map</h2>
-<p class="lede">Left to right is distance from a start point. Click any module for its source,
-its signals and what it connects to. A doubled bar instead of an arrowhead marks a call that
-reaches a body with nothing in it.</p>
+<p class="lede">Read it top to bottom. Each row is one step further from a start
+point, so the top of the chart is where execution begins and everything below it is
+something that row depends on. Each card carries the filename, where it lives, how big
+it is and who last touched it. Click one for its source, its signals and what it connects
+to. A doubled bar instead of an arrowhead marks a call that reaches a body with nothing in
+it, and a dashed pink line means this module stopped and another one is doing the same
+work.</p>
 <div class="legend">{svgmap.LEGEND}</div>
 <div class="mapwrap">{svg}</div>
 
