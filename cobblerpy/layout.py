@@ -25,13 +25,18 @@ anything onto the machine.
 from collections import defaultdict
 
 # Geometry, in SVG user units.
-# A node is a CARD now, not a label: filename, where it lives, how big it is
-# and who last touched it. Four lines need the height, and the width is set by
-# the longest of the four rather than by the module name alone.
-NODE_W = 210
-NODE_H = 74
-X_GAP = 108          # horizontal space between layers
-Y_GAP = 18           # vertical space between nodes in a layer
+# A card holds three lines, not four: the filename, where it lives, and its
+# size and owner together. A 210x74 card was mostly empty -- an eleven
+# character filename in a box sized for thirty-one -- and eight of them plus a
+# 108px gutter came to 2,492px, which is a horizontal scrollbar on any screen.
+#
+# At 152x54 with a 30px gutter, eight fit in 1,482px and the scrollbar goes.
+# Long names truncate rather than widen every card in the chart to suit the
+# worst one: the full path is in the panel a click away.
+NODE_W = 172
+NODE_H = 58
+X_GAP = 30          # horizontal space between layers
+Y_GAP = 30           # vertical space between nodes in a layer
 MARGIN = 28
 
 

@@ -410,6 +410,35 @@ def verify_map_and_exports(root, workdir):
     # are restart groups. It said "left to right is distance from a start
     # point" for a while after the layout became top-down -- the kind of wrong
     # that survives every structural test, because nothing reads the sentence.
+    # Clicking a card has to answer the question it was clicked for. The panel
+    # is built in the browser from an embedded payload, so the check reads the
+    # PAYLOAD -- the data the click handler will render -- rather than the
+    # markup, which does not exist until somebody clicks.
+    import json as _json
+    _payload = re.search(r"const DATA = (\{.*?\});\n", _svg, re.S)
+    if _payload:
+        _data = _json.loads(_payload.group(1)
+                            .replace("\\u003c", "<").replace("\\u003e", ">"))
+        _verdicts = {k: v.get("verdict") for k, v in _data.items()
+                     if v.get("verdict")}
+        if _groups:
+            _resume = {g["resume_at"] for g in _groups}
+            check("clicking the attempt to resume from says so",
+                  all(_verdicts.get(r, {}).get("kind") == "resume"
+                      for r in _resume if r in _verdicts),
+                  {r: _verdicts.get(r, {}).get("kind") for r in _resume})
+            _others = set(_verdicts) - _resume
+            check("clicking a superseded attempt says another got further",
+                  all(_verdicts[o]["kind"] == "superseded" for o in _others),
+                  {o: _verdicts[o]["kind"] for o in _others})
+            check("every verdict carries the names it was matched on",
+                  all(v.get("shared") for v in _verdicts.values()),
+                  [k for k, v in _verdicts.items() if not v.get("shared")])
+        _dead = [k for k, v in _data.items() if v.get("deadends")]
+        check(f"a dead end carries the lines it stops on ({len(_dead)})",
+              all(all(d.get("lineno") for d in _data[k]["deadends"])
+                  for k in _dead), _dead[:4])
+
     check("the description matches the layout the code produces",
           "top to bottom" in legend_text and "Left to right" not in legend_text,
           [l for l in ("top to bottom", "Left to right") if l in legend_text])

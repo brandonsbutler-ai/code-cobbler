@@ -16,6 +16,17 @@ import json
 
 from .layout import NODE_H, NODE_W, state_of
 
+def _fit(text, chars):
+    """Truncate to fit a card. The full value is in the panel, one click away.
+
+    Sizing every card to the longest name in the project makes the whole chart
+    as wide as its worst case -- one 31-character filename would widen 109
+    boxes.
+    """
+    text = str(text)
+    return text if len(text) <= chars else text[:chars - 1] + "\u2026"
+
+
 _PALETTE = {
     "clean":     ("#2d6a4f", "#e7f2ec", "reachable, no unfinished-work signals"),
     "warm":      ("#8a5a00", "#fdf4e3", "carries signals of unfinished work"),
@@ -134,11 +145,14 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             # cut-out and the glowing edge is what carries the state.
             f'<rect class="card" x="{x}" y="{y}" width="{NODE_W}" '
             f'height="{NODE_H}" rx="8" stroke="{stroke}"/>'
-            f'<text class="fname" x="{x + 11}" y="{y + 20}">{_e(filename)}</text>'
-            f'<text class="meta" x="{x + 11}" y="{y + 36}">{_e(location)}</text>'
-            f'<text class="meta" x="{x + 11}" y="{y + 51}">{_e(size)}</text>'
-            f'<text class="meta owner" x="{x + 11}" y="{y + 66}">'
-            f'{_e(owner)}</text>'
+            f'<text class="fname" x="{x + 9}" y="{y + 19}">'
+            f'{_e(_fit(filename, 20))}</text>'
+            f'<text class="meta" x="{x + 9}" y="{y + 35}">'
+            f'{_e(_fit(location, 24))}</text>'
+            # Size and owner share a line: two facts, one row, and the card
+            # loses a quarter of its height.
+            f'<text class="meta owner" x="{x + 9}" y="{y + 50}">'
+            f'{_e(_fit(size + "  \u00b7  " + owner, 24))}</text>'
             f'{badge}'
             + (f'<text class="marks" x="{x + NODE_W - 9}" '
                f'y="{y + 20}" text-anchor="end">{marks}</text>'
@@ -165,6 +179,39 @@ def render(graph, project, frontier_by_module, snippets_by_module,
   <g class="nodes">{''.join(node_svg)}</g>
 </svg>"""
 
+    # What each card has to be able to answer when it is clicked: either
+    # "execution reaches here and stops, here is the line", or "this stopped
+    # and that one carries on, here is what they share". A card that opens a
+    # panel of facts without leading with the reason makes the reader do the
+    # joining, and the reason is the only part they cannot reconstruct.
+    verdicts = {}
+    for group in attempts:
+        winner = group.get("resume_at")
+        for attempt in group.get("attempts", []):
+            key = attempt["module"]
+            if key == winner:
+                verdicts[key] = {
+                    "kind": "resume",
+                    "headline": "this is where it goes",
+                    "detail": (f"furthest along of {len(group['attempts'])} "
+                               f"attempts at this job -- "
+                               f"{attempt['percent']}% of what it started"),
+                    "shared": group.get("shared", [])[:6],
+                    "facts": attempt.get("facts", []),
+                    "other": group.get("resume_relpath", ""),
+                }
+            else:
+                verdicts[key] = {
+                    "kind": "superseded",
+                    "headline": "another attempt got further",
+                    "detail": (f"{attempt['percent']}% of what it started; "
+                               f"{group.get('resume_relpath', '')} is at "
+                               f"{group.get('resume_percent', 0)}%"),
+                    "shared": group.get("shared", [])[:6],
+                    "facts": attempt.get("facts", []),
+                    "other": group.get("resume_relpath", ""),
+                }
+
     payload = {}
     for name, node in nodes.items():
         state, why = state_of(node)
@@ -175,6 +222,7 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             "loc": node["loc"],
             "depth": node["depth"],
             "counts": node["counts"],
+            "verdict": verdicts.get(name),
             "origin": origins.get(name, {}).get("origin", "unknown"),
             "origin_why": origins.get(name, {}).get("why", ""),
             "uses": sorted(project.imports.get(name, ())),
