@@ -21,10 +21,17 @@ from collections import defaultdict
 _SEP = "\x1f"          # unit separator: safe inside commit subjects
 
 
+# git reads the TARGET repo's own .git/config, and several config keys name a
+# command git will execute -- core.fsmonitor is one. A `-c` value on the command
+# line wins over the repo's config, so this neutralises the vector for every
+# call. (origin.py carries the same constant; both run against untrusted repos.)
+_GIT = ("git", "-c", "core.fsmonitor=")
+
+
 def _git(root, *args, timeout=60):
     """Run git, returning stdout or None when git or the repo is unavailable."""
     try:
-        r = subprocess.run(("git", "-C", root) + args, capture_output=True,
+        r = subprocess.run(_GIT + ("-C", root) + args, capture_output=True,
                            timeout=timeout)
     except (OSError, subprocess.SubprocessError):
         return None

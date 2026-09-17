@@ -21,6 +21,7 @@ A FAIL sets the exit code. This script is allowed to say the tool does not
 work, which is the only reason it is worth running.
 """
 
+import ast
 import os
 import re
 import shutil
@@ -802,10 +803,23 @@ def verify_documentation():
             loaded, why = False, f"{type(exc).__name__}: {exc}"
         check(f"packaging/{entry} imports without a relative-import error",
               loaded, why)
+        # This check runs in BOTH environments so the check count does not move
+        # with the optional gui extra. With the module loaded it is a real
+        # attribute test; when the toolkit is absent it falls back to the entry
+        # file's own module-scope binding of `main`, which is a fact the source
+        # states and ast can confirm without importing Qt.
         if loaded and not why:
-            check(f"packaging/{entry} exposes a callable main",
-                  callable(getattr(module, "main", None)),
-                  sorted(n for n in vars(module) if not n.startswith("_"))[:6])
+            has_main = callable(getattr(module, "main", None))
+            detail = sorted(n for n in vars(module) if not n.startswith("_"))[:6]
+        else:
+            tree = ast.parse(open(path, encoding="utf-8").read())
+            has_main = any(
+                (isinstance(n, ast.FunctionDef) and n.name == "main")
+                or (isinstance(n, (ast.Import, ast.ImportFrom))
+                    and any((a.asname or a.name) == "main" for a in n.names))
+                for n in tree.body)
+            detail = "toolkit absent; main is bound at module scope"
+        check(f"packaging/{entry} exposes a callable main", has_main, detail)
 
     import tomllib
     with open(os.path.join(ROOT, "pyproject.toml"), "rb") as fh:

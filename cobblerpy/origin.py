@@ -35,9 +35,18 @@ _PACKAGE_MARKERS = ("setup.py", "setup.cfg", "pyproject.toml", "PKG-INFO",
                     "LICENSE", "LICENSE.txt", "LICENCE", "COPYING")
 
 
+# git reads the TARGET repo's own .git/config, and several config keys name a
+# command git will execute -- core.fsmonitor is one, and it fires on `ls-files`.
+# A hostile repo could then run code merely by being surveyed, which is exactly
+# what this tool promises never happens. A `-c` value on the command line wins
+# over the repo's config, so this neutralises the vector for every call.
+# (history.py carries the same constant; both run against untrusted repos.)
+_GIT = ("git", "-c", "core.fsmonitor=")
+
+
 def _git(root, *args, timeout=60):
     try:
-        r = subprocess.run(("git", "-C", root) + args, capture_output=True,
+        r = subprocess.run(_GIT + ("-C", root) + args, capture_output=True,
                            timeout=timeout)
     except (OSError, subprocess.SubprocessError):
         return None

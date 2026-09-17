@@ -548,6 +548,16 @@ def scan_file(path, root):
         module.error = f"syntax error at line {exc.lineno}: {exc.msg}"
         _read_comments(module, source)
         return module
+    except (ValueError, MemoryError, RecursionError) as exc:
+        # A pathological file defeats the parser rather than the grammar: a huge
+        # unary chain overflows the parser stack (MemoryError), deep nesting
+        # exhausts recursion, a null byte is rejected outright (ValueError). One
+        # such file must not abort a survey of a thousand others -- it is a
+        # finding, recorded like any unparsable file. (_looks_like_code catches
+        # the same set for the same reason.)
+        module.error = f"could not parse: {type(exc).__name__}"
+        _read_comments(module, source)
+        return module
 
     module.shebang = _shebang(source)
     module.docstring = ast.get_docstring(tree)
