@@ -125,8 +125,37 @@ def build(files, git=False):
 
 
 # A fixture whose every property is known by construction.
+#
+# It now includes TWO COMPETING ATTEMPTS at one job -- app/ingest.py and
+# app/ingest_v2.py -- because without them the restart checks only ever ran
+# their negative branch. "The map omits the section" passed while nothing
+# proved the section appears when it should, which is a green check that
+# cannot fail in the direction that matters.
 KNOWN = {
     "README.md": "The service lives in app/. Helpers are in helpers/.\n",
+    "app/ingest.py": '''
+        def parse_record(raw):
+            return raw
+
+        def validate_record(row):
+            pass
+
+        def store_record(row):
+            pass
+    ''',
+    "app/ingest_v2.py": '''
+        def parse_record(raw):
+            return dict(raw)
+
+        def validate_record(row):
+            return True
+
+        def enrich_record(row):
+            return row
+
+        def store_record(row):
+            pass
+    ''',
     "app/__init__.py": "",
     "app/main.py": '''
         """Entry point."""
@@ -337,6 +366,27 @@ def verify_map_and_exports(root, workdir):
 
     from cobblerpy import survey
     s = survey(root, with_history=False)
+
+    # The restart findings have to reach the MAP, not just the terminal. They
+    # were computed before anything rendered them, and the names leak into the
+    # page through other lists -- so a substring search over the file called
+    # them present while no section existed. These read the page's TEXT, which
+    # is what a person actually sees.
+    legend_text = " ".join(page.text_of.values())
+    from cobblerpy.attempts import find as _find_attempts
+    _groups = _find_attempts(s.project, s.modules_by_key, s.origins)
+    if _groups:
+        if any(g.get("common_gaps") for g in _groups):
+            check("the map names the gap every attempt shares",
+                  "every attempt stopped at" in legend_text, legend_text[:140])
+        check("the map shows how the work grew", "HOW IT GREW" in legend_text)
+        _first = _groups[0]["lineage"]
+        if len(_first) > 1 and _first[1]["added"]:
+            check("the lineage says what each attempt added",
+                  _first[1]["added"][0] in legend_text, _first[1]["added"])
+    else:
+        check("with no restart groups the map omits the section",
+              "HOW IT GREW" not in legend_text)
     drawn = page.attr_values("data-name")
     missing = sorted(set(s.project.by_dotted) - drawn)
     check(f"every module appears as a node ({len(drawn)} drawn)",

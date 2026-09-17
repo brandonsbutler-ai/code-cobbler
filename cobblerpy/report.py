@@ -66,6 +66,19 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 .tag.hot{background:var(--hotbg);color:var(--hot);border-color:transparent}
 .chain.more{color:var(--mut);font-style:italic}
 .attempt{margin-bottom:18px}
+.wall{background:var(--hotbg);border:1px solid var(--hot);border-left:3px solid var(--hot);
+      border-radius:8px;padding:10px 13px;margin:8px 0 12px}
+.wall b{color:var(--hot)}
+.lineage{margin:4px 0 14px}
+.lincap{font-size:11px;letter-spacing:.9px;color:var(--mut);margin-bottom:6px}
+.step{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;
+      margin-bottom:2px}
+.step .rail{color:var(--line)}
+.step .node{color:var(--mut)}
+.step .node.lead{color:var(--ok);font-weight:600}
+.stepbody{margin:1px 0 7px 26px;font-size:11.5px}
+.added{color:var(--accent)}
+.dropped{color:var(--mut)}
 .attempt-head{margin-bottom:7px}
 tr.lead td{background:color-mix(in srgb,var(--ok) 9%,transparent)}
 .tag.ok{background:var(--ok);color:#fff;border-color:transparent}
@@ -438,11 +451,53 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
                 f'{_e(", ".join(names)) if names else "the only tests for this job"}'
                 f"</div>"
                 for mod, names in group["elsewhere"].items())
+
+            # The wall: what every attempt left unfinished. First, because when
+            # four people stopped in the same place that is the finding, and
+            # the ranked rows below only say which of them got nearest to it.
+            wall = ""
+            if group.get("common_gaps"):
+                names = ", ".join(group["common_gaps"])
+                wall = (f'<div class="wall"><b>every attempt stopped at '
+                        f'{_e(names)}</b><div class="ln">'
+                        f'{len(group["attempts"])} attempts reached the same '
+                        f'place and none got past it. Whatever is in the way is '
+                        f'probably not the code, and a fifth attempt will stop '
+                        f'here too.</div></div>')
+
+            # The lineage: how the work grew. Ordered by what each attempt
+            # DEFINES rather than by commit date, because a squashed or
+            # rebased history is one timestamp for every file in it.
+            lineage = ""
+            if group.get("lineage"):
+                steps = group["lineage"]
+                rows_ = []
+                for i, step in enumerate(steps):
+                    lead = step["module"] == group["resume_at"]
+                    glyph = "&#9492;&#9472;" if i == len(steps) - 1 else "&#9500;&#9472;"
+                    detail = ""
+                    if step["added"]:
+                        detail += (f'<div class="added">+ '
+                                   f'{_e(", ".join(step["added"]))}</div>')
+                    if step["dropped"]:
+                        detail += (f'<div class="dropped">&minus; '
+                                   f'{_e(", ".join(step["dropped"]))}'
+                                   f'  <span class="ln">(an earlier attempt had '
+                                   f'this)</span></div>')
+                    rows_.append(
+                        f'<div class="step"><span class="rail">{glyph}</span> '
+                        f'<span class="{"node lead" if lead else "node"}">'
+                        f'{_e(step["relpath"])}</span> '
+                        f'<span class="ln">{step["percent"]}%</span>'
+                        f'<div class="stepbody">{detail}</div></div>')
+                lineage = ('<div class="lineage"><div class="lincap">HOW IT GREW'
+                           '</div>' + "".join(rows_) + "</div>")
             blocks.append(
                 f'<div class="attempt"><div class="attempt-head">'
                 f'<b>{len(group["attempts"])} attempts at one job</b>'
                 f'<span class="ln"> &middot; sharing '
                 f'{_e(", ".join(group["shared"][:6]))}</span></div>'
+                f"{wall}{lineage}"
                 f'<div class="tablewrap"><table><tbody>{"".join(rows)}</tbody>'
                 f"</table></div>{extra}</div>")
         attempts_html = "".join(blocks)
