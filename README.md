@@ -23,6 +23,31 @@ commit messages say "wip". You have to work out not just what the code does, but
 
 Structure is the easy half. The hard half is the frontier.
 
+### The shape this was built against
+
+A software shop writing Python for healthcare customers, with a turnover rate high enough that
+developers routinely leave mid-stream. Each departure leaves a half-finished effort behind, in
+whatever style that developer preferred. The next developer picks it up, cannot reconstruct the
+reasoning, loses confidence that continuing is the right call -- and starts again.
+
+**Four fresh restarts of the same half-completed work, stacked on top of each other.** Not four
+abandoned features: four attempts at one feature, each abandoned at a different point, each
+written to a different taste.
+
+That is the case this tool is aimed at, and it sets the bar:
+
+- **show the previous train of thought**, so a stranger can follow a decision they were not
+  present for
+- **find the restarts** -- say which files are competing attempts at the same job, and which
+  attempt got furthest
+- **recommend where to resume**, with the evidence attached, so the developer can judge the
+  recommendation rather than take it on faith
+- **give them grounds for confidence**, because a rewrite is usually not a technical decision.
+  It is what happens when nobody can tell whether continuing is safe
+
+The cost of getting this wrong is measured in rewrites. A rewrite of work that was 70% done is
+the most expensive thing on this list, and it happens because the 70% is invisible.
+
 ## What it tells you
 
 **Where it starts** -- entry points, with the reason each one qualifies, because the evidence
