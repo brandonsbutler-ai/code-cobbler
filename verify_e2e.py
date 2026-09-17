@@ -24,6 +24,7 @@ work, which is the only reason it is worth running.
 import os
 import re
 import shutil
+from html.parser import HTMLParser
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,56 @@ PASS, FAIL = [], []
 
 # Filled in by verify_documentation, settled in main().
 STATED_E2E = set()
+
+
+class _Doc(HTMLParser):
+    """The generated map as an element tree rather than as a string.
+
+    `'<svg id="graph"' in doc` tests the generator's spelling; it passes on a
+    page where that text sits in a comment and fails on one that writes the
+    attributes in the other order. The question is whether the page HAS an svg
+    with that id once parsed, which only a parser answers.
+    """
+
+    def __init__(self, markup):
+        super().__init__(convert_charrefs=True)
+        self.elements = []
+        self.text_of = {}
+        self._stack = []
+        self.feed(markup)
+
+    def handle_starttag(self, tag, attrs):
+        self.elements.append((tag, dict(attrs)))
+        self._stack.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        self.elements.append((tag, dict(attrs)))
+
+    def handle_endtag(self, tag):
+        if self._stack and self._stack[-1] == tag:
+            self._stack.pop()
+
+    def handle_data(self, data):
+        if self._stack:
+            self.text_of[self._stack[-1]] = self.text_of.get(self._stack[-1], "") + data
+
+    def find(self, tag, **attrs):
+        return [a for t, a in self.elements
+                if t == tag and all(a.get(k) == v for k, v in attrs.items())]
+
+    def has(self, tag, **attrs):
+        return bool(self.find(tag, **attrs))
+
+    def attr_values(self, name):
+        return {a[name] for _t, a in self.elements if name in a}
+
+    def script_text(self):
+        return self.text_of.get("script", "")
+
+
+def parse_page(path):
+    with open(path, encoding="utf-8") as fh:
+        return _Doc(fh.read())
 
 
 def check(claim, ok, evidence=""):
@@ -261,25 +312,35 @@ def verify_map_and_exports(root, workdir):
 
     with open(out, encoding="utf-8") as fh:
         doc = fh.read()
-    # Strip the embedded source payload before checking markup: the map carries
-    # the project's own code, so a naive search matches CONTENT, not markup.
-    markup = re.sub(r"const DATA = .*?;\n", "", doc, flags=re.S)
-    external = [t for t in re.findall(r"<(?:script|link|img|iframe)[^>]*>", markup)
-                if "http" in t]
+    # Parsed, not matched. The map embeds the project's own source, so a
+    # substring search over the file is searching the CONTENT as much as the
+    # markup -- a page whose only <svg id="graph"> is inside a docstring used
+    # to pass. The parser sees elements, which is the thing being claimed.
+    page = parse_page(out)
+    external = [a.get("src") or a.get("href") for t, a in page.elements
+                if t in ("script", "link", "img", "iframe")
+                and str(a.get("src", "") or a.get("href", "")).startswith("http")]
     check("no external assets (works offline from file://)", not external, external)
-    check("the graph is inline SVG", '<svg id="graph"' in doc)
-    check("nodes are clickable and keyboard reachable",
-          "data-name=" in doc and "tabindex=" in doc)
-    check("source snippets are embedded", '"regions"' in doc)
-    check("the legend says what each colour derives from", "no static path" in doc)
+    check("the graph is a real inline svg element with that id",
+          page.has("svg", id="graph"),
+          [a.get("id") for t, a in page.elements if t == "svg"])
+    nodes = [a for _t, a in page.elements if "data-name" in a]
+    check(f"nodes are clickable and keyboard reachable ({len(nodes)} nodes)",
+          nodes and all("tabindex" in a for a in nodes),
+          [a.get("data-name") for a in nodes if "tabindex" not in a][:6])
+    check("source snippets are embedded", '"regions"' in page.script_text())
+    legend = " ".join(page.text_of.values()).lower()
+    check("the legend says what each colour derives from",
+          "no static path" in legend)
     check("proof and inference are distinguished for the reader",
-          "lower bound" in doc.lower())
+          "lower bound" in legend)
 
     from cobblerpy import survey
     s = survey(root, with_history=False)
-    for name in s.project.by_dotted:
-        if not check(f"module appears as a node: {name}", f'data-name="{name}"' in doc):
-            break
+    drawn = page.attr_values("data-name")
+    missing = sorted(set(s.project.by_dotted) - drawn)
+    check(f"every module appears as a node ({len(drawn)} drawn)",
+          not missing, missing[:8])
 
     with open(mmd, encoding="utf-8") as fh:
         mermaid = fh.read()
