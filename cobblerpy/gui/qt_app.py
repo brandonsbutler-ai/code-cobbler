@@ -13,6 +13,7 @@ import os
 import sys
 import webbrowser
 
+from .. import BRAND, __version__
 from .session import ProjectError, Session, folders_from_drop
 
 # An editor's palette, cool rather than warm, and borrowed from the syntax
@@ -52,6 +53,7 @@ QWidget#root {{ background: {BG}; }}
 QLabel#wordmark  {{ font-family: {MONO}; font-size: 20px; font-weight: 700;
                     color: {GREEN}; letter-spacing: -0.5px; }}
 QLabel#tagline   {{ font-size: 12.5px; color: {MUTED}; }}
+QLabel#toolver   {{ font-family: {MONO}; font-size: 11px; color: {FAINT}; }}
 QLabel#cap       {{ font-family: {MONO}; font-size: 10.5px; color: {FAINT};
                     font-weight: 700; letter-spacing: 1.2px; }}
 QLabel#path      {{ font-family: {MONO}; font-size: 11.5px; color: {MUTED}; }}
@@ -209,7 +211,7 @@ def build(qt, session=None):
             self.session = session
             self.worker = None
             self.setObjectName("root")
-            self.setWindowTitle("cobblerpy")
+            self.setWindowTitle(BRAND)
             # Geared for 1920x1080: the findings sit beside the controls, and
             # a survey of a real project is a long list, so the right-hand
             # column takes the width rather than the reader taking the scroll.
@@ -234,7 +236,10 @@ def build(qt, session=None):
             col.setContentsMargins(26, 24, 18, 24); col.setSpacing(0)
             outer.addWidget(left)
 
-            col.addWidget(self._label("cobblerpy", "wordmark"))
+            # The product is CodeCobbler; the tool underneath is cobblerpy,
+            # and that is still what you type, import and script against.
+            col.addWidget(self._label(BRAND, "wordmark"))
+            col.addWidget(self._label(f"cobblerpy {__version__}", "toolver"))
             col.addSpacing(2)
             col.addWidget(self._label(
                 "Point it at a codebase somebody left behind.", "tagline", True))

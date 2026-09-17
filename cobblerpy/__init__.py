@@ -24,7 +24,14 @@ from .origin import classify as classify_origins, coverage_note, summarise as su
 from .scan import scan_tree
 
 __version__ = "0.1.0"
-__all__ = ["survey", "Project", "scan_tree", "analyse_project", "__version__"]
+
+# The product name, for anything a person looks at -- the map's title bar, the
+# desktop window. The TOOL is cobblerpy and stays cobblerpy: the command, the
+# package, the import and every script anyone has already written.
+BRAND = "CodeCobbler"
+
+__all__ = ["survey", "Project", "scan_tree", "analyse_project",
+           "__version__", "BRAND"]
 
 
 class Survey:

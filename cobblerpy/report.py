@@ -19,6 +19,7 @@ import html
 import json
 import os
 
+from . import BRAND, __version__
 from . import snippets as snip
 from . import svgmap
 from .deadends import by_module as deadends_by_module, find as find_deadends
@@ -36,16 +37,18 @@ _CSS = """
 :root{--bg:#0f1116;--fg:#d6dae3;--mut:#8b93a3;--faint:#5e6675;
       --line:#262b36;--line2:#1f242e;--card:#161920;--sunk:#1b1f28;
       --accent:#58a6ff;--warn:#d8a657;--warnbg:#241c10;--ok:#7ee787;
-      --hot:#f4796b;--hotbg:#2a1a16;--violet:#bc8cff}
+      --hot:#f4796b;--hotbg:#2a1a16;--violet:#bc8cff;
+      --barbg:#12151c;--barh:52px}
 /* A light variant for anyone who explicitly asks for one -- printing, a
    projector, a reviewer who wants it on paper. Dark stays the default. */
 @media(prefers-color-scheme:light){:root:not([data-theme=dark]){
       --bg:#f7f7f6;--fg:#1a1a18;--mut:#6b6b66;--faint:#9a9a94;
       --line:#dcdcd6;--line2:#ebebe7;--card:#fff;--sunk:#f6f6f4;
       --accent:#1f4d8f;--warn:#8a5a00;--warnbg:#fdf4e3;--ok:#2d6a4f;
-      --hot:#a13d2d;--hotbg:#fbecea;--violet:#6b3fa0}}
+      --hot:#a13d2d;--hotbg:#fbecea;--violet:#6b3fa0;
+      --barbg:#fff}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);padding:24px 16px;
+body{margin:0;background:var(--bg);color:var(--fg);padding:0 0 28px;
      font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 /* Geared for 1920. The old 1180px cap used 41% of a wide screen and left the
    graph in a letterbox; the tables are the widest thing here and they were
@@ -56,9 +59,11 @@ body{margin:0;background:var(--bg);color:var(--fg);padding:24px 16px;
 /* Two thirds chart, one third detail. The chart was shifted left and left at
    its own width, so the page got wider without the chart getting wider with
    it. */
-.wrap{max-width:2100px;margin:0 auto;display:flex;gap:24px;align-items:flex-start}
+.wrap{max-width:2100px;margin:0 auto;padding:22px 16px 0;
+      display:flex;gap:24px;align-items:flex-start}
 .left{flex:2 1 0;min-width:0}
-#panel{flex:1 1 0;min-width:340px;max-width:660px;position:sticky;top:18px;max-height:calc(100vh - 36px);
+#panel{flex:1 1 0;min-width:340px;max-width:660px;position:sticky;
+       top:calc(var(--barh) + 14px);max-height:calc(100vh - var(--barh) - 28px);
        overflow:auto;background:var(--card);border:1px solid var(--line);
        border-radius:10px}
 #panel .phead{position:sticky;top:0;background:var(--card);padding:13px 16px;
@@ -101,6 +106,31 @@ body{margin:0;background:var(--bg);color:var(--fg);padding:24px 16px;
        padding:8px 11px;margin-bottom:7px;font-size:12px}
 @media(max-width:1180px){.wrap{display:block}
   #panel{position:static;max-height:none;margin-top:20px;width:100%}}
+/* Title bar. The page used to open on a single heading that ran the job
+   description and the folder together, which reads like the name of the
+   product rather than the name of the job. The
+   product is CodeCobbler; the tool that produced the file is cobblerpy; the
+   folder is the subject. The bar keeps those three apart. */
+.topbar{position:sticky;top:0;z-index:40;height:var(--barh);
+     background:var(--barbg);border-bottom:1px solid var(--line)}
+.topbar .inner{max-width:2100px;height:100%;margin:0 auto;padding:0 16px;
+     display:flex;align-items:center;gap:13px}
+.topbar .mark{width:27px;height:27px;border-radius:8px;flex:none;font-size:12.5px;
+     background:linear-gradient(150deg,var(--accent),#2c62ab);color:#0b0d12;
+     font-weight:800;letter-spacing:-.6px;
+     display:flex;align-items:center;justify-content:center}
+.topbar .word{font-size:17px;font-weight:650;letter-spacing:.2px;white-space:nowrap}
+.topbar .word i{font-style:normal;color:var(--accent)}
+.topbar .rule{width:1px;height:20px;flex:none;background:var(--line)}
+.topbar .what{color:var(--mut);font-size:12.5px;white-space:nowrap}
+.topbar .subj{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;
+     min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar .right{margin-left:auto;display:flex;align-items:center;gap:10px;flex:none;
+     color:var(--faint);font-size:11.5px;white-space:nowrap}
+.topbar .tool{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--mut);
+     background:var(--sunk);border:1px solid var(--line);border-radius:999px;
+     padding:3px 9px}
+@media(max-width:820px){.topbar .what,.topbar .rule,.topbar .right{display:none}}
 h1{font-size:22px;margin:0 0 2px}
 h2{font-size:16px;margin:30px 0 4px;color:var(--accent)}
 h2 .n{color:var(--mut);font-weight:400;font-size:13px}
@@ -513,7 +543,11 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
                                  snippets_by_module, dead, origins,
                                  history=history, modules_by_key=modules_by_key,
                                  attempts=attempts)
-    title = title or f"Codebase map -- {os.path.basename(project.root)}"
+    # The product is CodeCobbler. The tool is cobblerpy -- that is the name
+    # on the command, the package and the import, and it stays. The subject is
+    # whatever folder was read. All three used to be mashed into one <h1>.
+    subject = os.path.basename(project.root.rstrip(os.sep)) or project.root
+    title = title or subject
     mods = project.modules
     total_loc = sum(m.loc for m in mods)
     parse_errors = [m for m in mods if m.error]
@@ -904,7 +938,16 @@ abandoned code does not get started again.</p>
     doc = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>{_e(title)}</title><style>{_CSS}</style></head><body><div class="wrap"><div class="left">
+<title>{_e(BRAND)} &mdash; {_e(subject)}</title>
+<style>{_CSS}</style></head><body>
+<header class="topbar"><div class="inner">
+<span class="mark">CC</span><span class="word">Code<i>Cobbler</i></span>
+<span class="rule"></span><span class="what">codebase map</span>
+<span class="subj">{_e(subject)}</span>
+<span class="right"><span class="tool">cobblerpy {_e(__version__)}</span>
+<span>{_e(stamp)}</span></span>
+</div></header>
+<div class="wrap"><div class="left">
 <h1>{_e(title)}</h1>
 <div class="sub">{_e(project.root)} &middot; mapped {stamp} by cobblerpy</div>
 <div class="stats">{stats}</div>

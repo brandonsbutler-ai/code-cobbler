@@ -56,26 +56,41 @@ class Page(HTMLParser):
         self.text_parts = []
         self.script = []
         self._stack = []
+        self._located = []
         self.feed(markup)
 
     def handle_starttag(self, tag, attrs):
         self.elements.append((tag, dict(attrs)))
-        self._stack.append(tag)
+        self._stack.append((tag, dict(attrs)))
 
     def handle_startendtag(self, tag, attrs):
         self.elements.append((tag, dict(attrs)))
 
     def handle_endtag(self, tag):
-        if tag in self._stack:
-            while self._stack and self._stack.pop() != tag:
+        if tag in [t for t, _a in self._stack]:
+            while self._stack and self._stack.pop()[0] != tag:
                 pass
 
     def handle_data(self, data):
-        top = self._stack[-1] if self._stack else ""
+        top = self._stack[-1][0] if self._stack else ""
         if top == "script":
             self.script.append(data)
         elif top != "style":
             self.text_parts.append(data)
+            self._located.append((list(self._stack), data))
+
+    def text_in(self, tag, **attrs):
+        """The text inside one element, joined with nothing between.
+
+        Whole-document text searches are how a check about the HEADER passes
+        because the same word appears in the body. This narrows it. Nothing is
+        inserted between parts, so a wordmark split across two spans for colour
+        still reads as one word.
+        """
+        return "".join(
+            data for stack, data in self._located
+            if any(t == tag and all(a.get(k) == v for k, v in attrs.items())
+                   for t, a in stack))
 
     def find(self, tag, **attrs):
         return [a for t, a in self.elements
@@ -739,6 +754,75 @@ class TestMap(unittest.TestCase):
         # Note for anyone mutating svgmap: the `<` and `>` escapes are each
         # independently sufficient to stop `</script>` closing the block, so
         # removing one changes nothing. Remove both and this goes red.
+
+    def test_the_title_bar_names_product_tool_and_subject_separately(self):
+        """Three different names, three different places on the page.
+
+        The page used to open on a single heading, "Codebase map -- <folder>",
+        which reads as though the product were called that. CodeCobbler is the
+        product, cobblerpy is the tool that wrote the file (and the name on the
+        command, the package and the import), and the folder is the subject.
+        """
+        import cobblerpy
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n'})
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            doc = fh.read()
+        page = Page(doc)
+        self.assertTrue(page.has("header", **{"class": "topbar"}),
+                        f"no title bar; headers: {page.find('header')}")
+        # The wordmark is two spans so half of it can carry the accent colour;
+        # join without a separator or the assertion tests the markup's spacing.
+        bar = page.text_in("header", **{"class": "topbar"})
+        self.assertIn(cobblerpy.report.BRAND, bar)
+        self.assertIn(f"cobblerpy {cobblerpy.__version__}", bar,
+                      "the bar does not carry the real tool version")
+        subject = os.path.basename(t.dir)
+        self.assertIn(subject, bar,
+                      "the surveyed folder is not named in the bar itself")
+        # And the old mashed-together heading is gone.
+        self.assertNotIn("Codebase map --", doc)
+
+    def test_no_two_css_rules_claim_the_same_bare_class(self):
+        """A second `.name{}` silently overrides the first.
+
+        The title bar shipped as `.bar` for one render. So did a 7px accent
+        progress bar 150 lines further down the same stylesheet, and the later
+        rule won: `height:7px;background:var(--accent)` painted a blue band
+        straight through the wordmark. Nothing failed -- the page rendered, the
+        markup parsed, and only a screenshot showed it.
+        """
+        import re
+        from cobblerpy.report import _CSS
+        body = re.sub(r"/\*.*?\*/", "", _CSS, flags=re.S)
+        # @media blocks are a DIFFERENT cascade context: `.wrap` is declared
+        # once at top level and again under max-width:1180px on purpose. Drop
+        # them, brace-balanced, or the check reports the intended override.
+        while True:
+            at = re.search(r"@media[^{]*\{", body)
+            if not at:
+                break
+            depth, i = 1, at.end()
+            while i < len(body) and depth:
+                depth += (body[i] == "{") - (body[i] == "}")
+                i += 1
+            body = body[:at.start()] + body[i:]
+        seen = {}
+        for selectors, _decls in re.findall(r"([^{}]+)\{([^{}]*)\}", body):
+            for sel in selectors.split(","):
+                sel = sel.strip()
+                if re.fullmatch(r"\.[A-Za-z][\w-]*", sel):
+                    seen[sel] = seen.get(sel, 0) + 1
+        dupes = sorted(k for k, n in seen.items() if n > 1)
+        self.assertEqual(dupes, [], f"one class, two rules: {dupes}")
+        self.assertIn(".topbar", seen,
+                      "the scan found no bare class selectors, so it is not "
+                      "looking at the stylesheet")
 
 
 class TestDesktopSession(unittest.TestCase):
