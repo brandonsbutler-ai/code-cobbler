@@ -128,6 +128,80 @@ mechanism was load-bearing.
 It also caught a false-positive class nobody would invent: **worked examples inside explanatory
 comment blocks**, which CPython's own `typing.py` is full of. The flag rate on real code is 0.30%.
 
+## Running it, on Linux and on Windows
+
+Python 3.9 or newer, and nothing else. The library and the command line import
+only the standard library, so there is no install step you can get wrong and
+nothing to pin.
+
+### Straight from the source tree
+
+No install at all. From the directory holding `cobblerpy/`:
+
+| | |
+|---|---|
+| Linux, macOS | `python3 -m cobblerpy ./inherited-project --map map.html` |
+| Windows (PowerShell or cmd) | `py -m cobblerpy .\inherited-project --map map.html` |
+
+`py` is the launcher that ships with python.org installs; `python` works too
+where it is on PATH. Everything after `-m cobblerpy` is identical on both.
+
+### Installed
+
+```bash
+python3 -m pip install .            # Linux, macOS
+py -m pip install .                 # Windows
+```
+
+That puts `cobblerpy` on PATH, so the command is just `cobblerpy <folder>`.
+Add `[gui]` -- `pip install ".[gui]"` -- for the window, which is the one part
+that pulls a dependency (PySide6).
+
+### Paths and quoting, which differ
+
+- A Windows path with spaces needs quotes: `py -m cobblerpy "C:\Work\Some Project"`.
+- A trailing backslash before a closing quote escapes it. Write
+  `"C:\Work\Project"`, not `"C:\Work\Project\"`.
+- The map is written wherever `--map` says. `--map map.html` lands in the
+  current directory on both; open it by double-clicking, or with
+  `xdg-open map.html` on Linux and `start map.html` on Windows.
+
+### The map opens anywhere
+
+One HTML file with nothing outside it -- no CDN, no fonts, no network. It
+opens from a `file://` URL, survives being e-mailed, and renders the same in
+Chrome, Edge and Firefox on either platform. It needs JavaScript enabled,
+which is how the chart, the trace and the detail panel work; with JavaScript
+off you get the page and no interaction.
+
+Geared for a 1920-wide window. Narrower than about 1180 and the detail panel
+moves below the chart rather than beside it.
+
+### A single executable, for a machine with no Python
+
+```bash
+python3 -m pip install pyinstaller
+python3 packaging/build_standalone.py
+```
+
+Built on the machine it is for -- PyInstaller does not cross-compile, so a
+Windows .exe has to be built on Windows. It produces, in `dist/`:
+
+| | Linux | Windows |
+|---|---|---|
+| command line | `dist/cobblerpy` | `dist\cobblerpy.exe` |
+| window | `dist/CobblerPy` | `dist\CobblerPy.exe` |
+
+On Linux it also writes `dist/cobblerpy.desktop`; copy it to
+`~/.local/share/applications/` for a menu entry. On Windows the `.exe` runs
+from wherever you put it -- there is no installer and nothing is written to
+the registry.
+
+The window build needs PySide6 present at build time, because PyInstaller
+works out what to bundle by reading the imports. `packaging/app_entry.py`
+imports it at the top level for exactly that reason, and that import is marked
+`# noqa: F401` because it is deliberate.
+
 ## The desktop application
 
 ```bash
@@ -168,7 +242,7 @@ Every option the command accepts. `--help` prints the same list.
 
 ```bash
 python3 -m unittest discover -s tests -v     # 141 tests, no pytest required
-python3 verify_e2e.py                        # 94 end-to-end claim checks
+python3 verify_e2e.py                        # 102 end-to-end claim checks
 ```
 
 `verify_e2e.py` checks the PRODUCT rather than its units. It builds a codebase whose every
