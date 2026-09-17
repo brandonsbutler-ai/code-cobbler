@@ -201,10 +201,11 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 #trace .node{cursor:pointer}
 #trace .lvl{font:10.5px ui-monospace,SFMono-Regular,Menlo,monospace;
       fill:var(--faint);letter-spacing:.7px}
-/* No stroke here on purpose: each vein carries its own condition
-   gradient as a presentation attribute, and a CSS declaration would
-   override it and repaint every vein flat grey. */
-#trace .edge{stroke-width:1.6}
+/* The stroke here is only a FALLBACK. Each vein sets its own condition
+   gradient as an inline style, which out-ranks this rule -- and has to,
+   because this <svg> also carries class="chart" and would otherwise be
+   repainted flat by `.chart .edge`. */
+#trace .edge{stroke:var(--mut);stroke-width:1.6}
 #trace marker#tarrow path{fill:var(--mut)}
 #trace .seed .card{stroke-width:3;filter:drop-shadow(0 0 12px currentColor)}
 /* Six states, and the reader should be able to trace the working path by
@@ -765,8 +766,14 @@ function drawTrace(seed){
         + '<stop offset="0" stop-color="' + attr(DATA[name].card.stroke) + '"/>'
         + '<stop offset="1" stop-color="' + attr(DATA[other].card.stroke) + '"/>'
         + '</linearGradient>');
-      edges.push('<path class="edge" stroke="url(#' + id + ')" d="M' + x1 + ','
-        + y1 + ' L' + x2 + ',' + y2
+      // An INLINE STYLE, not a stroke="" attribute. A presentation attribute
+      // loses to ANY stylesheet declaration, and this <svg> carries
+      // class="chart", so `.chart .edge{stroke:var(--line)}` matched every vein
+      // and repainted it flat grey -- getComputedStyle returned rgb(38,43,54)
+      // on a path whose stroke attribute was url(#vein_...). The markup was
+      // right and the render was wrong. An inline style wins the cascade.
+      edges.push('<path class="edge" style="stroke:url(#' + id + ')" d="M'
+        + x1 + ',' + y1 + ' L' + x2 + ',' + y2
         + '" marker-end="url(#arrow)"/>');
     }
   }
