@@ -1569,6 +1569,134 @@ class TestLaunch(unittest.TestCase):
         self.assertIn("pkg-map-", opened[0])
 
 
+class TestConnectionEvidence(unittest.TestCase):
+    """The lines that show HOW one module reaches another.
+
+    The panel used to render `uses: a, b, c` as bare names and throw away the
+    line numbers, even though the scanner records both the import's lineno and
+    every call site's. "How are these two related" is answerable in the source
+    the map already carries.
+    """
+
+    FIXTURE = {
+        "a.py": ("from b import go\n"
+                 "import c\n"
+                 "def run():\n"
+                 "    return go() + c.x\n"),
+        "b.py": "def go():\n    return 1\n",
+        "c.py": "x = 2\n",
+    }
+
+    def _project(self, fixture=None):
+        t = Tree(fixture or self.FIXTURE)
+        self.addCleanup(t.close)
+        return t.survey().project
+
+    def test_the_import_line_and_the_call_site_are_both_evidence(self):
+        p = self._project()
+        got = p.evidence_for("a", "b")
+        self.assertEqual([e["line"] for e in got], [1, 4],
+                         f"expected the import and the call, got {got}")
+        self.assertEqual(got[0]["text"], "from b import go")
+        self.assertIn("go()", got[1]["text"])
+
+    def test_a_module_reached_only_by_import_shows_just_that_line(self):
+        p = self._project()
+        got = p.evidence_for("a", "c")
+        self.assertEqual([e["line"] for e in got], [2], got)
+        self.assertEqual(got[0]["text"], "import c")
+
+    def test_the_payload_carries_the_evidence_for_each_connection(self):
+        """The map has to answer it without another round trip to the source."""
+        import json, re
+        from cobblerpy.report import write_map
+        t = Tree(self.FIXTURE)
+        self.addCleanup(t.close)
+        sv = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        write_map(sv.project, sv.frontier, sv.history, out,
+                  origins=sv.origins, modules_by_key=sv.modules_by_key)
+        doc = open(out, encoding="utf-8").read()
+        data = json.loads(re.search(r"const DATA = (\{.*?\});\n", doc, re.S).group(1)
+                          .replace("\\u003c", "<").replace("\\u003e", ">"))
+        links = data["a"]["links"]
+        self.assertIn("b", links, links)
+        self.assertEqual([e["line"] for e in links["b"]["lines"]], [1, 4])
+        self.assertEqual(links["b"]["lines"][0]["text"], "from b import go")
+        self.assertEqual(links["b"]["more"], 0)
+
+    def test_the_panel_shows_the_line_that_joins_two_modules(self):
+        """Clicking a module answers "how is this related", in code.
+
+        Native <details> on purpose: the `uses:` names are already links that
+        navigate to the other module, and hanging a second click behaviour off
+        them would break the one that exists.
+        """
+        import json, re, shutil, subprocess
+        if not shutil.which("node"):
+            self.skipTest("node not installed")
+        from cobblerpy.report import write_map
+        t = Tree(self.FIXTURE)
+        self.addCleanup(t.close)
+        sv = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        write_map(sv.project, sv.frontier, sv.history, out,
+                  origins=sv.origins, modules_by_key=sv.modules_by_key)
+        doc = open(out, encoding="utf-8").read()
+        js = re.findall(r"<script>(.*?)</script>", doc, re.S)[-1]
+        stub = """
+const made = {};
+function fake(id){ return {id:id, textContent:'', innerHTML:'', dataset:{}, attrs:{},
+  scrollTop:0, get hidden(){ return 'hidden' in this.attrs; },
+  setAttribute(k,v){ this.attrs[k]=v; }, removeAttribute(k){ delete this.attrs[k]; },
+  hasAttribute(k){ return k in this.attrs; }, addEventListener(){},
+  scrollIntoView(){}, closest(){ return null; },
+  classList:{toggle(){}, remove(){}, add(){}, contains(){ return false; }},
+  querySelectorAll(){ return []; }}; }
+function el(id){ if(!made[id]) made[id]=fake(id); return made[id]; }
+global.CSS = {escape: s => s};
+global.window = {addEventListener(){}, removeEventListener(){}};
+global.document = {getElementById: id => el(id), querySelectorAll: () => [],
+  querySelector: sel => sel === '.mapwrap' ? el('mapwrap') : null,
+  addEventListener(){}};
+"""
+        probe = """
+openModule('a');
+const ids = Object.keys(made);
+console.log(JSON.stringify({panes: ids.map(i => made[i].innerHTML || '')}));
+"""
+        script = os.path.join(t.dir, "panel.js")
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(stub + "\n" + js + probe)
+        r = subprocess.run(["node", script], capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-900:])
+        html = " ".join(json.loads(r.stdout.strip().splitlines()[-1])["panes"])
+        self.assertIn("<details", html, "no disclosure for the connection evidence")
+        self.assertIn("from b import go", html, "the import line is not shown")
+        self.assertRegex(html, r">\s*1\s*<", "the line number is not shown")
+
+    def test_a_much_used_connection_is_capped_and_says_how_many_it_held_back(self):
+        """Truncating in silence is the behaviour this tool argues against.
+
+        A test file calling its subject 99 times is real -- the corpus has one.
+        The panel shows the first few and states the remainder.
+        """
+        body = "import b\n" + "".join(f"b.go()  # {i}\n" for i in range(20))
+        p = self._project({"a.py": body, "b.py": "def go():\n    return 1\n"})
+        full = p.evidence_for("a", "b")
+        self.assertEqual(len(full), 21, "evidence_for must stay COMPLETE")
+        from cobblerpy.svgmap import cap_evidence
+        capped = cap_evidence(full)
+        self.assertEqual(len(capped["lines"]), 8)
+        self.assertEqual(capped["more"], 13)
+
+    def test_an_edge_that_does_not_exist_has_no_evidence(self):
+        """Never invent a relationship the source does not show."""
+        p = self._project()
+        self.assertEqual(p.evidence_for("b", "c"), [])
+        self.assertEqual(p.evidence_for("a", "nosuchmodule"), [])
+
+
 class TestFolderRibbons(unittest.TestCase):
     """What the overview draws BETWEEN folders.
 

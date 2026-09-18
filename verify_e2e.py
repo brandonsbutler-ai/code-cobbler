@@ -749,6 +749,19 @@ def verify_documentation():
     check(f"README states the real test count ({units})", stated == {units},
           f"states {sorted(stated)}, actual {units}")
 
+    # Every edge the chart draws must be explainable in the source. The panel
+    # offers evidence for a connection, so an edge with none would be the map
+    # asserting a relationship it cannot show -- which is the failure this
+    # whole tool argues against. Measured on its own corpus: 61 edges, 0
+    # without evidence.
+    from cobblerpy import survey as _survey
+    _own = _survey(ROOT, with_history=False).project
+    _edges = [(a, b) for a, tg in _own.imports.items() for b in tg]
+    _blind = [(a, b) for a, b in _edges if not _own.evidence_for(a, b)]
+    check(f"every import edge on the chart can be evidenced in the source "
+          f"({len(_edges)} edges)",
+          not _blind, f"{len(_blind)} without evidence: {_blind[:3]}")
+
     # The README's description of the map, checked against the map the tool
     # actually draws. Two sentences had gone stale without anything noticing:
     # "left to right is distance from a start point" survived the move to a
