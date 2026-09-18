@@ -34,6 +34,7 @@ MACOS = platform.system() == "Darwin"
 
 CLI_NAME = "cobblerpy"
 APP_NAME = "CobblerPy"
+LAUNCHER_NAME = "CodeCobbler"
 
 
 def _run(cmd):
@@ -79,6 +80,38 @@ def build_cli():
         return 1
     print(f"\nbuilt {built}  ({os.path.getsize(built) / 1048576:.0f} MB)")
     print(f"Smoke-test it:\n    {built} --version")
+    return 0
+
+
+def build_launcher():
+    """The one-file program: double-click for the shelf, drop a folder to map.
+
+    No Qt, so it is a few MB rather than sixty -- this is the artifact to hand
+    somebody who has neither Python nor a toolchain.
+    """
+    cmd = [
+        "pyinstaller",
+        "--onefile",
+        "--name", LAUNCHER_NAME,
+        "--distpath", os.path.join(ROOT, "dist"),
+        "--workpath", os.path.join(ROOT, "build"),
+        "--specpath", os.path.join(ROOT, "build"),
+        "--console",
+        "--exclude-module", "PySide6",
+        "--exclude-module", "tkinter",
+        "--paths", ROOT,
+        os.path.join(ROOT, "packaging", "launcher_entry.py"),
+    ]
+    code = _run(cmd)
+    if code:
+        return code
+    built = _built(LAUNCHER_NAME)
+    if not built:
+        print(f"expected dist/{LAUNCHER_NAME} but it was not produced",
+              file=sys.stderr)
+        return 1
+    print(f"\nbuilt {built}  ({os.path.getsize(built) / 1048576:.0f} MB)")
+    print(f"Smoke-test it:\n    {built} <a folder with python in it>")
     return 0
 
 
@@ -166,17 +199,23 @@ def main(argv=None):
         print("pyinstaller not found. Install it with:\n"
               "    python3 -m pip install pyinstaller", file=sys.stderr)
         return 2
-    want_cli = "--app" not in argv
-    want_app = "--cli" not in argv
+    # --launcher on its own is the common case: the one-file program to hand
+    # somebody, without dragging Qt in for a window they did not ask for.
+    picked = [f for f in ("--cli", "--app", "--launcher") if f in argv]
+    want_cli = not picked or "--cli" in argv
+    want_app = not picked or "--app" in argv
+    want_launcher = not picked or "--launcher" in argv
     code = 0
+    if want_launcher:
+        code = build_launcher() or code
     if want_cli:
         code = build_cli() or code
     if want_app:
         code = build_app() or code
     if not code:
-        print("\nBoth are self-contained: the target machine needs no Python,\n"
-              "no pip and no Qt. Put the application somewhere a person can\n"
-              "double-click it and drop a project folder on the window.")
+        print("\nSelf-contained: the target machine needs no Python and no pip.\n"
+              "dist/CodeCobbler is the one to hand somebody -- double-click for\n"
+              "the shelf, or drop a project folder onto it.")
     return code
 
 

@@ -216,6 +216,23 @@ moves below the chart rather than beside it.
 
 ```bash
 python3 -m pip install pyinstaller
+python3 packaging/build_standalone.py --launcher   # dist/CodeCobbler, ~7 MB
+```
+
+One file. Double-click it for the shelf, or drop a project folder on it. The
+machine it runs on needs **no Python, no pip and nothing installed** -- measured
+on the Linux build: `ldd` lists only libc, libz, libpthread, libdl and the
+loader, and it was verified by copying the binary elsewhere, clearing the
+environment with `env -i`, and mapping a tree with it.
+
+Built on glibc 2.39 it requires only **GLIBC_2.14** (2011), so it runs on
+anything reasonably current. It is architecture- and OS-specific, though:
+PyInstaller does not cross-compile, so the Windows `.exe` has to be built on
+Windows and the Linux binary on Linux. Ship it as a `.tar.gz` -- the execute bit
+survives, which saves the recipient a `chmod +x`.
+
+```bash
+python3 -m pip install pyinstaller
 python3 packaging/build_standalone.py
 ```
 
