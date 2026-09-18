@@ -197,7 +197,9 @@ def main(argv=None, notify=None, open_url=None, registry=None, shelf=None):
     # not a reasonable thing to do, so the icon asks for the shelf instead and
     # a bare `cobble` in a terminal still means "here".
     if "--shelf" in argv and not paths:
-        open_url("file://" + write_shelf(registry, shelf))
+        written = write_shelf(registry, shelf)
+        if not open_url("file://" + written):
+            notify(f"No browser to open it with; the shelf is at {written}")
         return 0
 
     if not paths:
@@ -236,9 +238,16 @@ def main(argv=None, notify=None, open_url=None, registry=None, shelf=None):
     record_map(registry, os.path.basename(target.rstrip(os.sep)) or target,
                destination, count)
     write_shelf(registry, shelf)
-    notify(f"{count:,} module{'s' if count != 1 else ''} mapped -- "
-           f"opening the map")
-    open_url("file://" + destination)
+    # Try FIRST, then say what happened. webbrowser.open returns False rather
+    # than raising when it cannot find a browser -- headless, over ssh, inside a
+    # container -- and announcing "opening the map" before checking left
+    # somebody told it worked with no path to the file that was written.
+    mapped = f"{count:,} module{'s' if count != 1 else ''} mapped"
+    if open_url("file://" + destination):
+        notify(f"{mapped} -- opening the map")
+    else:
+        notify(f"{mapped}. No browser to open it with; the map is at "
+               f"{destination}")
     return 0
 
 

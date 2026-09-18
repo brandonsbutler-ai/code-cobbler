@@ -1522,11 +1522,16 @@ class TestLaunch(unittest.TestCase):
                  else {"pkg/a.py": "import pkg.b\n", "pkg/b.py": "x = 1\n"})
         self.addCleanup(t.close)
         said, opened = [], []
+        # open_url returns TRUTHY on success -- webbrowser.open returns False
+        # when it cannot find a browser, and the launcher has to believe it.
+        def _open(url):
+            opened.append(url)
+            return True
         argv = [a.replace("<TREE>", t.dir) for a in argv]
         # Registry and shelf point INTO the fixture. Without this the suite
         # writes to the real shared shelf: a run left nine rows named after
         # temp directories on the shelf a person actually opens.
-        code = launch.main(argv, notify=said.append, open_url=opened.append,
+        code = launch.main(argv, notify=said.append, open_url=_open,
                            registry=os.path.join(t.dir, "maps.json"),
                            shelf=os.path.join(t.dir, "shelf.html"))
         # The map is written BESIDE the tree, so rmtree(t.dir) never reaches
@@ -1551,6 +1556,31 @@ class TestLaunch(unittest.TestCase):
                          f"the run touched the real registry at {real}")
         self.assertTrue(os.path.isfile(os.path.join(t.dir, "maps.json")),
                         f"it did not use the registry it was given; said {said}")
+
+    def test_when_no_browser_can_be_opened_it_says_where_the_map_is(self):
+        """webbrowser.open returns False rather than raising.
+
+        On a headless machine, over ssh, or in a container there is no browser
+        to find. Announcing "opening the map" and discarding that False leaves
+        somebody told it worked, with no path to the thing that was written.
+        """
+        from cobblerpy import launch
+        t = Tree({"only.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        said = []
+        code = launch.main([t.dir], notify=said.append,
+                           open_url=lambda _u: False,
+                           registry=os.path.join(t.dir, "maps.json"),
+                           shelf=os.path.join(t.dir, "shelf.html"))
+        joined = " ".join(said)
+        self.assertEqual(code, 0, joined)
+        self.assertNotIn("opening the map", joined,
+                         "it claimed to open a map it could not open")
+        self.assertIn("-map-", joined, f"the map path was never shown: {said}")
+        for m in said:
+            if "-map-" in m:
+                self.addCleanup(_unlink_quietly,
+                                m.split()[-1].replace("file://", ""))
 
     def test_one_folder_becomes_a_map_beside_it_and_is_opened(self):
         code, said, opened, t = self._run(["<TREE>"])
@@ -1730,6 +1760,20 @@ class TestShelf(unittest.TestCase):
         text = open(out, encoding="utf-8").read()
         self.assertIn("atlas", text)
         self.assertIn("977", text)
+
+    def test_the_shelf_path_says_where_it_is_when_it_cannot_be_opened(self):
+        """Same flaw as the map path, and it had it too."""
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        shelf = os.path.join(d, "shelf.html")
+        said = []
+        code = launch.main(["--shelf"], notify=said.append,
+                           open_url=lambda _u: False,
+                           registry=os.path.join(d, "maps.json"), shelf=shelf)
+        self.assertEqual(code, 0, said)
+        self.assertIn(shelf, " ".join(said),
+                      f"the shelf was written and never named: {said}")
 
     def test_launching_with_no_folder_opens_the_shelf_not_the_current_directory(self):
         """A desktop icon inherits an ARBITRARY working directory.
