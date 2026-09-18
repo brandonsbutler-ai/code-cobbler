@@ -40,6 +40,14 @@ def write(root, relpath, text):
     return path
 
 
+def _unlink_quietly(path):
+    """Remove a file if it is there. Used to clean maps a test caused to exist."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 class Page(HTMLParser):
     """The generated map as an element tree, so tests ask what it IS.
 
@@ -1515,8 +1523,34 @@ class TestLaunch(unittest.TestCase):
         self.addCleanup(t.close)
         said, opened = [], []
         argv = [a.replace("<TREE>", t.dir) for a in argv]
-        code = launch.main(argv, notify=said.append, open_url=opened.append)
+        # Registry and shelf point INTO the fixture. Without this the suite
+        # writes to the real shared shelf: a run left nine rows named after
+        # temp directories on the shelf a person actually opens.
+        code = launch.main(argv, notify=said.append, open_url=opened.append,
+                           registry=os.path.join(t.dir, "maps.json"),
+                           shelf=os.path.join(t.dir, "shelf.html"))
+        # The map is written BESIDE the tree, so rmtree(t.dir) never reaches
+        # it. 126 orphan files accumulated in /tmp before anybody looked.
+        for url in opened:
+            self.addCleanup(_unlink_quietly, url.replace("file://", ""))
         return code, said, opened, t
+
+    def test_a_run_writes_only_to_the_registry_it_was_given(self):
+        """The suite must not touch the shelf a person opens.
+
+        It did: nine rows named after temp directories turned up on the real
+        shared shelf because this harness overrode notify and open_url but not
+        the registry.
+        """
+        from cobblerpy import launch
+        real = launch.registry_path()
+        before = os.path.getmtime(real) if os.path.exists(real) else None
+        _code, said, _opened, t = self._run(["<TREE>"])
+        after = os.path.getmtime(real) if os.path.exists(real) else None
+        self.assertEqual(before, after,
+                         f"the run touched the real registry at {real}")
+        self.assertTrue(os.path.isfile(os.path.join(t.dir, "maps.json")),
+                        f"it did not use the registry it was given; said {said}")
 
     def test_one_folder_becomes_a_map_beside_it_and_is_opened(self):
         code, said, opened, t = self._run(["<TREE>"])
@@ -1608,7 +1642,9 @@ class TestShelf(unittest.TestCase):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         reg = os.path.join(d, "maps.json")
-        launch.record_map(reg, "fortefed", "/w/fortefed-map-1.html", 55)
+        m = os.path.join(d, "fortefed-map-1.html")
+        open(m, "w", encoding="utf-8").close()
+        launch.record_map(reg, "fortefed", m, 55)
         entries = launch.shelf_entries(reg)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["project"], "fortefed")
@@ -1638,28 +1674,53 @@ class TestShelf(unittest.TestCase):
                          time.strftime("%Y-%m-%d %H:%M", time.localtime(long_ago)),
                          "the shelf dated it now, not when the map was written")
 
+    def test_a_map_that_no_longer_exists_drops_off_the_shelf(self):
+        """A shelf row is a link. A link to a deleted file is a broken promise.
+
+        Also the cleanup for a real mess: temp-directory surveys left nine
+        rows on the live shelf, every one of them pointing at a path that had
+        already been removed.
+        """
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        reg = os.path.join(d, "maps.json")
+        kept = os.path.join(d, "kept.html")
+        with open(kept, "w", encoding="utf-8") as fh:
+            fh.write("<html></html>")
+        launch.record_map(reg, "real", kept, 3)
+        launch.record_map(reg, "vanished", os.path.join(d, "gone.html"), 9)
+        names = [e["project"] for e in launch.shelf_entries(reg)]
+        self.assertEqual(names, ["real"], names)
+
     def test_re_mapping_a_project_replaces_its_row_rather_than_stacking(self):
         """Nine rows for one project is the scatter it exists to fix."""
         from cobblerpy import launch
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         reg = os.path.join(d, "maps.json")
-        launch.record_map(reg, "fortefed", "/w/a.html", 55)
-        launch.record_map(reg, "fortefed", "/w/b.html", 57)
-        launch.record_map(reg, "fortefide", "/w/c.html", 977)
+        a, b, c = (os.path.join(d, n) for n in ("a.html", "b.html", "c.html"))
+        for f in (a, b, c):
+            open(f, "w", encoding="utf-8").close()
+        launch.record_map(reg, "fortefed", a, 55)
+        launch.record_map(reg, "fortefed", b, 57)
+        launch.record_map(reg, "fortefide", c, 977)
         entries = launch.shelf_entries(reg)
         self.assertEqual(len(entries), 2, entries)
         fed = [e for e in entries if e["project"] == "fortefed"][0]
         self.assertEqual(fed["modules"], 57)
-        self.assertEqual(fed["map"], "/w/b.html")
+        self.assertEqual(fed["map"], b)
 
     def test_the_shelf_lists_every_project_with_a_link_to_its_map(self):
         from cobblerpy import launch
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         reg = os.path.join(d, "maps.json")
-        launch.record_map(reg, "fortefed", os.path.join(d, "fed.html"), 55)
-        launch.record_map(reg, "fortefide", os.path.join(d, "fide.html"), 977)
+        for n, mods in (("fed.html", 55), ("fide.html", 977)):
+            f = os.path.join(d, n)
+            open(f, "w", encoding="utf-8").close()
+            launch.record_map(reg, n.split(".")[0].replace("fed", "fortefed")
+                              .replace("fide", "fortefide"), f, mods)
         out = os.path.join(d, "shelf.html")
         launch.write_shelf(reg, out)
         page = Page(open(out, encoding="utf-8").read())
