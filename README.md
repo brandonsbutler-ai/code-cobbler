@@ -241,8 +241,8 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 150 tests, no pytest required
-python3 verify_e2e.py                        # 103 end-to-end claim checks
+python3 -m unittest discover -s tests -v     # 156 tests, no pytest required
+python3 verify_e2e.py                        # 107 end-to-end claim checks
 ```
 
 `verify_e2e.py` checks the PRODUCT rather than its units. It builds a codebase whose every
@@ -269,19 +269,31 @@ attempt was caught by an IndentationError rather than by the test, which proves 
 
 ## The map
 
-`--map out.html` writes one self-contained page. Left to right is distance from a start point.
+`--map out.html` writes one self-contained page.
 
-Click any module for its source, its signals, and what it connects to. The source shown is only
-the regions that matter -- the lines a signal points at, with context, plus every definition
-header -- and gaps between regions are marked rather than closed up, because a snippet that looks
-continuous but is not would mislead anyone reading line numbers. Hovering a module dims everything
-it has nothing to do with.
+**One box per folder, biggest first**, so the top of the chart is where the work went. Inside a
+box a card is as wide as its module is long, and every box starts at the left edge -- the order
+is top to bottom, by how much code is in it, not left to right by depth.
 
-A doubled bar instead of an arrowhead marks a **dead-end**: a call that reaches a body with
-nothing in it. That is the boundary where somebody stopped -- the caller exists, the callee does
-not -- and the panel shows both sides at once, because neither half explains the situation alone.
-Each one reports where it stands and what it was shaped to do, never why anybody stopped. Motive
-is not recoverable and guessing at it would poison the rest.
+**Ribbons join folders, not modules.** One per ordered folder pair, however many imports it
+carries, thicker the more that passes through it, and coloured by a gradient from the condition at
+one end to the condition at the other. A ribbon per *import* is deliberately not drawn: on a chart
+this size every one of them had to be followed by eye. The aggregate is what a reader can follow
+-- on a 977-module tree that is 41 ribbons rather than 597 crossing lines. Ribbons are drawn over
+the folder boxes but under the cards, so they can never cover the thing you are reading.
+
+Click any module for its source, its signals, and what it connects to, plus a top-to-bottom
+flowchart of just that module's path. The source shown is only the regions that matter -- the
+lines a signal points at, with context, plus every definition header -- and gaps between regions
+are marked rather than closed up, because a snippet that looks continuous but is not would mislead
+anyone reading line numbers. Hovering a module dims everything it has nothing to do with.
+
+A **dead-end** -- a call that reaches a body with nothing in it -- is the boundary where somebody
+stopped: the caller exists, the callee does not. Its card carries the dead-end colour, and the
+panel shows both sides at once, because neither half explains the situation alone. A dead end is
+terminal, so it is left out of the flowchart a click opens and counted in the bar instead; it is
+not a route to anywhere. Each one reports where it stands and what it was shaped to do, never why
+anybody stopped. Motive is not recoverable and guessing at it would poison the rest.
 
 Colour states what it is derived from, and grey is deliberately not a shade of red: "no static
 path reaches this" is an inference, while the others are read from the syntax.

@@ -11,6 +11,7 @@ static path reaches this" is an inference about a language that dispatches
 through registries and getattr, while the others are read from the syntax.
 """
 
+from collections import Counter
 import html
 import json
 
@@ -82,6 +83,136 @@ assert not (set(_PALETTE) - {"confirmed", "tested", "live", "unfinished",
 
 def _e(v):
     return html.escape("" if v is None else str(v))
+
+
+# Worst-first. When the modules at one end of a ribbon are split evenly between
+# conditions, the tie goes to the more alarming one: a ribbon that hides trouble
+# behind an equally-common healthy state is worse than one that overstates it.
+_SEVERITY = ("broken", "deadend", "unfinished", "maybe", "tested", "live",
+             "confirmed")
+
+
+# A state missing here would fall through to arbitrary dict order, making a
+# ribbon's colour nondeterministic on a tie. Guarded like _PALETTE above.
+assert set(_SEVERITY) == set(_PALETTE), (set(_SEVERITY) ^ set(_PALETTE))
+
+
+def _dominant(state_by_module, names):
+    """The condition most of these modules are in, worst-first on a tie."""
+    counts = Counter(state_by_module.get(n) for n in names)
+    counts.pop(None, None)
+    if not counts:
+        return None
+    top = max(counts.values())
+    for state in _SEVERITY:
+        if counts.get(state) == top:
+            return state
+    return next(iter(counts))
+
+
+def folder_ribbons(project, folders, state_by_module):
+    """One ribbon per ordered folder pair that carries imports.
+
+    The overview used to draw an edge per import. Every one of them crossed the
+    whole chart and had to be followed by eye, so they were cut. A ribbon is the
+    aggregate: the 1104 imports of the 977-module corpus become 41 ribbons,
+    which is a number a reader can actually follow.
+
+    Imports WITHIN one folder are not ribbons -- they would start and end in the
+    same box and say nothing at this scale. A module's own connections are in
+    its trace, one click away.
+    """
+    where = {name: node["folder"]
+             for name, node in (folders.get("nodes") or {}).items()}
+    pairs = {}
+    for source, targets in (project.imports or {}).items():
+        src_folder = where.get(source)
+        if src_folder is None:
+            continue
+        for target in targets:
+            dst_folder = where.get(target)
+            if dst_folder is None or dst_folder == src_folder:
+                continue
+            pairs.setdefault((src_folder, dst_folder), []).append((source, target))
+
+    ribbons = []
+    for (src_folder, dst_folder), links in pairs.items():
+        ribbons.append({
+            "src": src_folder, "dst": dst_folder, "count": len(links),
+            "src_state": _dominant(state_by_module, (a for a, _b in links)),
+            "dst_state": _dominant(state_by_module, (b for _a, b in links)),
+        })
+    return ribbons
+
+
+def _border_point(box, toward_x, toward_y):
+    """Where a line from this box's centre toward a point leaves the box.
+
+    Ribbons attach to the border rather than the centre, so a ribbon reads as
+    leaving a folder instead of appearing from under its cards.
+    """
+    cx, cy = box["x"] + box["w"] / 2.0, box["y"] + box["h"] / 2.0
+    dx, dy = toward_x - cx, toward_y - cy
+    if not dx and not dy:
+        return cx, cy
+    half_w, half_h = box["w"] / 2.0 + 3, box["h"] / 2.0 + 3
+    scale = min(half_w / abs(dx) if dx else float("inf"),
+                half_h / abs(dy) if dy else float("inf"))
+    return cx + dx * scale, cy + dy * scale
+
+
+def _ribbon_svg(ribbons, folders):
+    """(paths, gradient defs) for the folder ribbons.
+
+    Each ribbon gets its OWN gradient in userSpaceOnUse units, for the reason
+    the trace veins do: a shared objectBoundingBox gradient is dropped outright
+    on a path whose bounding box has zero width or height, which is every
+    ribbon between two boxes on the same shelf or in the same column.
+
+    The paint is an INLINE STYLE. A presentation attribute loses to any
+    stylesheet declaration, and this svg carries class="chart".
+    """
+    import math
+    boxes = {box["folder"]: box for box in (folders or {}).get("boxes", [])}
+    paths, defs = [], []
+    ordered = sorted(ribbons, key=lambda r: (-r["count"], r["src"], r["dst"]))
+    for index, ribbon in enumerate(ordered):
+        src, dst = boxes.get(ribbon["src"]), boxes.get(ribbon["dst"])
+        if src is None or dst is None:
+            continue
+        if ribbon["src_state"] is None or ribbon["dst_state"] is None:
+            continue
+        sx, sy = _border_point(src, dst["x"] + dst["w"] / 2.0,
+                               dst["y"] + dst["h"] / 2.0)
+        ex, ey = _border_point(dst, src["x"] + src["w"] / 2.0,
+                               src["y"] + src["h"] / 2.0)
+        # Bowed perpendicular to its own direction, so A->B and B->A separate
+        # instead of lying on top of each other as one ambiguous line.
+        dx, dy = ex - sx, ey - sy
+        span = math.hypot(dx, dy) or 1.0
+        bow = min(64.0, span * 0.16)
+        mx = (sx + ex) / 2.0 - dy / span * bow
+        my = (sy + ey) / 2.0 + dx / span * bow
+        # Weight says how much passes through it, log-scaled: a 300-import
+        # dependency is heavier than a 3-import one but not a hundred times so.
+        weight = min(6.0, 1.3 + math.log2(ribbon["count"] + 1) * 0.9)
+        gid = (f"ribbon_{ribbon['src_state']}_{ribbon['dst_state']}_{index}")
+        defs.append(
+            f'<linearGradient id="{gid}" gradientUnits="userSpaceOnUse" '
+            f'x1="{sx:.1f}" y1="{sy:.1f}" x2="{ex:.1f}" y2="{ey:.1f}">'
+            f'<stop offset="0" stop-color="{_PALETTE[ribbon["src_state"]][0]}"/>'
+            f'<stop offset="1" stop-color="{_PALETTE[ribbon["dst_state"]][0]}"/>'
+            f"</linearGradient>")
+        paths.append(
+            f'<path class="ribbon" style="stroke:url(#{gid})" '
+            f'stroke-width="{weight:.1f}" '
+            f'data-src="{_e(ribbon["src"])}" data-dst="{_e(ribbon["dst"])}" '
+            f'data-count="{ribbon["count"]}" '
+            f'd="M{sx:.1f},{sy:.1f} Q{mx:.1f},{my:.1f} {ex:.1f},{ey:.1f}" '
+            f'marker-end="url(#arrow)"><title>{_e(ribbon["src"])} imports '
+            f'{_e(ribbon["dst"])} &#183; {ribbon["count"]} '
+            f'time{"s" if ribbon["count"] != 1 else ""}</title></path>')
+    return paths, defs
 
 
 def render(graph, project, frontier_by_module, snippets_by_module,
@@ -180,9 +311,13 @@ def render(graph, project, frontier_by_module, snippets_by_module,
 
     node_svg = []
     cards = {}
+    # Kept so the ribbons can be coloured by the conditions at their ends
+    # without computing state_of a second time and risking a divergent answer.
+    state_by_module = {}
     for name, node in sorted(nodes.items()):
         state, why = state_of(node, tested=name in tested,
                               deadend=bool(deadends_by_module.get(name)))
+        state_by_module[name] = state
         stroke, fill, _ = _PALETTE[state]
         label = name.rsplit(".", 1)[-1][:24]
         prefix = name.rsplit(".", 1)[0][:26] if "." in name else ""
@@ -289,14 +424,21 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             f'{box["modules"]:,} file{"s" if box["modules"] != 1 else ""}'
             f' &#183; {box["loc"]:,} lines</text></g>')
 
+    ribbon_svg, ribbon_defs = [], []
     if folders:
-        # No connections in the overview. Every one of them crossed the whole
+        # Still no MODULE-level edges here: every one of them crossed the whole
         # chart and had to be followed by eye, which is the thing the reader
-        # said was hard; a module's own connections are one click away in its
+        # said was hard. A module's own connections are one click away in its
         # trace, laid out short enough to read.
+        #
+        # What the overview draws instead is the AGGREGATE -- one ribbon per
+        # ordered folder pair. The corpus's 1104 imports become 41 ribbons,
+        # drawn behind the boxes so they can never obscure a card.
         edge_svg = []
         continuation_svg = []
         width, height = folders["width"], folders["height"]
+        ribbon_svg, ribbon_defs = _ribbon_svg(
+            folder_ribbons(project, folders, state_by_module), folders)
     else:
         width, height = graph["width"], graph["height"]
 
@@ -313,8 +455,10 @@ def render(graph, project, frontier_by_module, snippets_by_module,
     <marker id="continues" viewBox="0 0 10 10" refX="9" refY="5"
             markerWidth="9" markerHeight="9" orient="auto"><path
             d="M0,1 L9,5 L0,9" fill="none" stroke-width="1.4"/></marker>
+    {''.join(ribbon_defs)}
   </defs>
   <g class="folders">{''.join(box_svg)}</g>
+  <g class="ribbons">{''.join(ribbon_svg)}</g>
   <g class="edges">{''.join(edge_svg)}</g>
   <g class="nodes">{''.join(node_svg)}</g>
 </svg>"""

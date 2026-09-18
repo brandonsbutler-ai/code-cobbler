@@ -749,6 +749,37 @@ def verify_documentation():
     check(f"README states the real test count ({units})", stated == {units},
           f"states {sorted(stated)}, actual {units}")
 
+    # The README's description of the map, checked against the map the tool
+    # actually draws. Two sentences had gone stale without anything noticing:
+    # "left to right is distance from a start point" survived the move to a
+    # folder layout where every box sits at x=0, and a "doubled bar instead of
+    # an arrowhead" marks dead-ends in a document where url(#stub) appears zero
+    # times. Prose is a claim; this is the tool that reads it.
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as _d:
+        _out = os.path.join(_d, "docmap.html")
+        subprocess.run([sys.executable, "-m", "cobblerpy", ROOT, "--map", _out],
+                       cwd=ROOT, capture_output=True, text=True, timeout=600)
+        drawn = open(_out, encoding="utf-8").read() if os.path.exists(_out) else ""
+    boxes = drawn.count('class="folder"')
+    ribbons = drawn.count('class="ribbon"')
+    stubs = drawn.count("url(#stub)")
+
+    check("README does not still claim left-to-right is distance from a start "
+          "point (the overview stacks folder boxes at x=0)",
+          "Left to right is distance from a start point" not in readme,
+          f"{boxes} folder boxes drawn, all at x=0")
+    check(f"README describes the folder layout the map draws ({boxes} boxes)",
+          boxes == 0 or "folder" in readme.lower(),
+          f"{boxes} folder boxes drawn")
+    check(f"README documents the ribbons the map draws ({ribbons})",
+          ribbons == 0 or "ribbon" in readme.lower(),
+          f"{ribbons} ribbons drawn, README mentions ribbon: "
+          f"{'ribbon' in readme.lower()}")
+    check("README does not document a dead-end marker the map never draws",
+          stubs > 0 or "doubled bar" not in readme,
+          f"url(#stub) used {stubs} times in the drawn map")
+
     # The end-to-end count the README quotes. Nothing checked it, so it could
     # drift the way vanilla-extract's did -- 156 documented against 170 run,
     # through a rename and two reviews. The real total is only known once every

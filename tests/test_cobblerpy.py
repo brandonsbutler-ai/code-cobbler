@@ -1499,6 +1499,140 @@ class TestFolderOverview(unittest.TestCase):
                       "the trace bar is not hidden to begin with")
 
 
+class TestFolderRibbons(unittest.TestCase):
+    """What the overview draws BETWEEN folders.
+
+    Module-level edges were cut from the overview because every one of them
+    crossed the whole chart and had to be followed by eye. A ribbon is the
+    aggregate instead: one per ordered folder pair, whatever number of imports
+    it carries. On the 977-module corpus that is 41 ribbons rather than 1104
+    lines, which is the entire reason this exists.
+    """
+
+    FIXTURE = {
+        # app -> lib twice, lib -> app once, tests -> app once. No pair inside
+        # a folder, so a within-folder import cannot be mistaken for a ribbon.
+        "app/main.py": 'import lib.core\nif __name__ == "__main__":\n    lib.core.go()\n',
+        "app/util.py": "import lib.core\ndef u():\n    return lib.core.go()\n",
+        "lib/core.py": "def go():\n    # TODO: finish\n    return 1\n",
+        "lib/helper.py": "import app.util\ndef h():\n    return app.util.u()\n",
+        "tests/test_x.py": "import app.main\ndef test_m():\n    assert app.main\n",
+    }
+
+    def _ribbons(self, fixture=None, states=None):
+        from cobblerpy.layout import compute_folders
+        from cobblerpy.svgmap import folder_ribbons
+        t = Tree(fixture or self.FIXTURE)
+        self.addCleanup(t.close)
+        s = t.survey()
+        folders = compute_folders(s.project, modules_by_key=s.modules_by_key)
+        if states is None:
+            states = {name: "live" for name in s.project.by_dotted}
+        return folder_ribbons(s.project, folders, states), s, folders
+
+    def test_a_ribbon_carries_the_condition_at_each_of_its_ends(self):
+        """The colour describes the EDGE, not the folder.
+
+        A folder holds modules in several conditions at once, so colouring a
+        ribbon by the folder's overall mood would describe something the ribbon
+        is not. The ends take the condition of the modules that actually
+        participate in those imports.
+        """
+        ribbons, _s, _f = self._ribbons(states={
+            "app.main": "live", "app.util": "live",
+            "lib.core": "unfinished",          # the only lib module imported
+            "lib.helper": "deadend",           # imports OUT, never imported in
+            "tests.test_x": "tested",
+        })
+        by_pair = {(r["src"], r["dst"]): r for r in ribbons}
+        # app -> lib: live modules importing the one unfinished module
+        self.assertEqual(by_pair[("app", "lib")]["src_state"], "live")
+        self.assertEqual(by_pair[("app", "lib")]["dst_state"], "unfinished")
+        # lib -> app: the dead-end module is the one doing the importing, and
+        # lib.core's condition must not leak into a ribbon it takes no part in
+        self.assertEqual(by_pair[("lib", "app")]["src_state"], "deadend")
+        self.assertEqual(by_pair[("lib", "app")]["dst_state"], "live")
+
+    def _map(self, fixture=None):
+        """The generated overview, as text."""
+        from cobblerpy.report import write_map
+        t = Tree(fixture or self.FIXTURE)
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_every_ribbon_is_painted_by_an_inline_condition_gradient(self):
+        """Inline style, not a stroke attribute.
+
+        The trace veins shipped flat grey for exactly this reason: a
+        presentation attribute loses to any stylesheet declaration, and these
+        live inside class="chart" too.
+        """
+        import re
+        doc = self._map()
+        ribbons = re.findall(
+            r'<path class="ribbon"[^>]*style="stroke:url\(#(ribbon_[a-z]+_[a-z]+_\d+)\)"',
+            doc)
+        self.assertEqual(len(ribbons), 3,
+                         f"expected a ribbon per folder pair, got {ribbons}")
+        flat = re.findall(r'<path class="ribbon"(?![^>]*style="stroke:url\(#ribbon_)',
+                          doc)
+        self.assertEqual(flat, [], "a ribbon is not coloured by condition")
+
+    def test_the_prose_quotes_the_ribbons_it_actually_drew(self):
+        """Per-corpus numbers in generic prose are a lie waiting for a reader.
+
+        The first draft of this sentence hardcoded "41 ribbons rather than 1,104
+        lines" -- true of one corpus and false of every other, rendered into
+        every map. The figures are counted off the drawn SVG instead.
+        """
+        import re
+        doc = self._map()
+        lede = re.search(r'<p class="lede">(.*?)</p>', doc, re.S)
+        self.assertIsNotNone(lede)
+        text = re.sub(r"\s+", " ", lede.group(1))
+        # the fixture draws 3 ribbons carrying 4 imports
+        self.assertIn("3 ribbons", text)
+        self.assertIn("4 lines", text)
+        self.assertNotIn("Nothing is connected up here", text)
+
+    def test_a_ribbon_is_a_stroked_curve_and_never_a_filled_shape(self):
+        """A path defaults to fill:black. A bowed ribbon would be a blob."""
+        import re
+        doc = self._map()
+        style = re.search(r"#graph \.ribbon\{([^}]*)\}", doc)
+        self.assertIsNotNone(style, "no #graph .ribbon rule in the document")
+        self.assertIn("fill:none", style.group(1).replace(" ", ""))
+
+    def test_ribbons_are_drawn_over_the_boxes_but_under_the_cards(self):
+        """Above the folder RECTS, below the CARDS. Both halves matter.
+
+        Drawn under the folders they are invisible: `.fbox` has an opaque fill,
+        so a ribbon only showed in the ~14px gap between two boxes. The first
+        render of this feature produced 41 correct, gradient-stroked, totally
+        unseeable ribbons on the corpus. Drawn over the cards they would bury
+        the thing the reader is here to read. Between the two is the only
+        position that works.
+        """
+        doc = self._map()
+        folders_at = doc.index('<g class="folders">')
+        ribbons_at = doc.index('<g class="ribbons">')
+        nodes_at = doc.index('<g class="nodes">')
+        self.assertLess(folders_at, ribbons_at, "ribbons hidden under the boxes")
+        self.assertLess(ribbons_at, nodes_at, "ribbons would cover the cards")
+
+    def test_one_ribbon_per_ordered_folder_pair_that_carries_imports(self):
+        ribbons, _s, _f = self._ribbons()
+        got = sorted((r["src"], r["dst"], r["count"]) for r in ribbons)
+        self.assertEqual(got, [("app", "lib", 2),
+                               ("lib", "app", 1),
+                               ("tests", "app", 1)])
+
+
 class TestTrace(unittest.TestCase):
     """Clicking a module removes the rest of the map and lays out what is left.
 

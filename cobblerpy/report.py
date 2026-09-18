@@ -367,6 +367,12 @@ summary{cursor:pointer;font-size:13px}
          border-radius:9px;padding:6px;margin-bottom:16px;max-height:76vh;
          position:relative}
 #graph{display:block}
+/* Folder ribbons: the aggregate connections behind the boxes. fill:none is
+   load-bearing -- an SVG path defaults to fill:black and a bowed ribbon would
+   render as a filled blob. No stroke here on purpose: each ribbon sets its own
+   condition gradient as an INLINE style, which out-ranks any rule here. */
+#graph .ribbon{fill:none;opacity:.5}
+#graph .ribbon:hover{opacity:.95}
 .chart .edge{fill:none;stroke:var(--line);stroke-width:1.3}
 .chart .edge.back{stroke-dasharray:4 3}
 .chart .edge.deadend{stroke:var(--hot);stroke-width:1.8}
@@ -915,6 +921,26 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
                                  snippets_by_module, dead, origins,
                                  history=history, modules_by_key=modules_by_key,
                                  attempts=attempts, folders=folders)
+
+    # Counted off the SVG that was actually drawn, never hardcoded. The first
+    # draft of this sentence quoted "41 ribbons rather than 1,104 lines" --
+    # true of one corpus and false of every other, rendered into every map.
+    # A one-folder project draws no ribbons, and then it says nothing at all
+    # rather than describing something that is not on the chart.
+    import re as _re
+    ribbon_n = svg.count('class="ribbon"')
+    ribbon_carried = sum(int(n) for n in
+                         _re.findall(r'data-count="(\d+)"', svg))
+    ribbon_lede = ""
+    if ribbon_n:
+        ribbon_lede = (
+            " The ribbons are folder-to-folder, one per pair whatever number of"
+            " imports it carries, coloured from the condition at one end to the"
+            " condition at the other and thicker the more that passes through"
+            " them. A ribbon per IMPORT is not drawn on purpose: on a chart this"
+            " size every one of them had to be followed by eye, and the"
+            f" aggregate is what a reader can follow &mdash; {ribbon_n:,}"
+            f" ribbons here rather than {ribbon_carried:,} lines.")
     # The product is CodeCobbler. The tool is cobblerpy -- that is the name
     # on the command, the package and the import, and it stays. The subject is
     # whatever folder was read. All three used to be mashed into one <h1>.
@@ -1353,9 +1379,9 @@ can follow. Treat every such finding as "no static path was found", never as
 where the work went. Inside a box, a card is as wide as its module is long &mdash; a
 2,000-line module is visibly bigger than a 200-line one &mdash; and short modules carry
 their filename alone, because the folder is drawn around them and the line count is the
-width. Nothing is connected up here on purpose: every connection on a chart this size
-has to be followed by eye. Click a card and the rest of the map goes away, leaving that
-module with what imports it above and what it imports below.</p>
+width.{ribbon_lede} Click a card
+and the rest of the map goes away, leaving that module with what imports it above and
+what it imports below.</p>
 <div class="mapzone">
 <div class="tracebar" id="tracebar" hidden>
   <span class="ln" id="tracehow">the path through</span><b id="traceof"></b>
