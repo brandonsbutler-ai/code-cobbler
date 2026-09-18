@@ -152,9 +152,22 @@ notification rather than vanishing.
 One folder at a time: several are **refused by name and count**, not quietly
 reduced to the first one.
 
-Install those three front doors with `sh packaging/install-launcher.sh` -- it
-writes the `cobble` command, the application entry and the right-click script,
-adds no dependency, and is safe to re-run.
+Install the front doors with `sh packaging/install-launcher.sh` -- the `cobble`
+command, an application entry, a desktop icon and a file-manager right-click. It
+adds no dependency and is safe to re-run. (If GNOME shows the desktop icon
+greyed out, right-click it once and choose Allow Launching.)
+
+**The shelf.** Clicking the icon with nothing selected opens an index of the maps
+you have already made, newest first, each row the project name, its module count
+and when it was mapped. A desktop launch inherits an arbitrary working directory,
+so surveying "here" because somebody clicked an icon would be a guess; the shelf
+is the honest answer to a bare click. Rows are dated by the map file rather than
+by the moment they were listed, or newest-first sorts on a fiction.
+
+On a machine that dual-boots, the shelf and its register live on the volume both
+systems can see, so one bookmark serves either side. `packaging/CodeCobbler.bat`
+is the Windows equivalent of the launcher: double-click for the shelf, or drag a
+folder onto it.
 
 ### Straight from the source tree
 
@@ -263,7 +276,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 168 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 175 tests, no pytest required
 python3 verify_e2e.py                        # 109 end-to-end claim checks
 ```
 

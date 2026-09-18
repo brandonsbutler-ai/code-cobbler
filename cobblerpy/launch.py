@@ -12,6 +12,8 @@ goes through `notify`. A launcher that fails silently is worse than no
 launcher, because the folder was dropped and nothing happened.
 """
 
+import html
+import json
 import os
 import shutil
 import subprocess
@@ -21,6 +23,130 @@ import webbrowser
 
 from . import survey
 from .report import write_map
+
+
+# The shelf, and the register behind it. Maps are written BESIDE the projects
+# they describe, which is right and also leaves them scattered -- seven files
+# named cobblerpy_map_*.html in one directory, no way to tell which was current.
+#
+# W:\ is the shelf's home because it is the one path visible from both Linux
+# and Windows on this machine, so one bookmark works from either side.
+# This machine dual-boots, and the projects live on an NTFS partition that is
+# a mount point under Linux and a drive letter under Windows -- the SAME disk.
+# The shelf and its register go there so both sides list the same maps. Under ~
+# each OS would keep its own and neither would see the other's; a hardcoded
+# /media/... path does not exist under Windows at all.
+# NOT a hardcoded path. An earlier draft of this listed one developer's mount
+# point, username and all, in a repository that is public -- the same leak that
+# had to be scrubbed out of a sibling project's history. The shared volume is
+# named by the environment; the installer writes it into the launcher shim,
+# where a machine-specific value belongs.
+SHARED = tuple(p for p in (os.environ.get("CODECOBBLER_HOME"), "W:\\", "W:/") if p)
+FALLBACK = os.path.expanduser("~/.local/share/codecobbler")
+
+
+def shared_root(candidates=SHARED):
+    """The first shared volume that exists, or None on a machine without one."""
+    for path in candidates:
+        if os.path.isdir(path):
+            return path
+    return None
+
+
+def shelf_path(candidates=SHARED):
+    root = shared_root(candidates)
+    return (os.path.join(root, "CodeCobbler.html") if root
+            else os.path.join(FALLBACK, "CodeCobbler.html"))
+
+
+def registry_path(candidates=SHARED):
+    root = shared_root(candidates)
+    return (os.path.join(root, "CodeCobbler.maps.json") if root
+            else os.path.join(FALLBACK, "maps.json"))
+
+
+def record_map(registry, project, map_path, modules):
+    """Note that `project` now has a map, replacing any earlier row for it.
+
+    Keyed by project, not appended: nine rows for one project is the scatter
+    this exists to fix.
+    """
+    rows = shelf_entries(registry)
+    rows = [r for r in rows if r.get("project") != project]
+    # Dated by the MAP, not by the moment it was listed. Seeding several
+    # existing maps in one pass otherwise stamps them all with the same minute
+    # and "newest first" sorts on a fiction.
+    try:
+        stamp = time.localtime(os.path.getmtime(map_path))
+    except OSError:
+        stamp = time.localtime()
+    rows.append({"project": project, "map": map_path, "modules": modules,
+                 "when": time.strftime("%Y-%m-%d %H:%M", stamp)})
+    os.makedirs(os.path.dirname(registry) or ".", exist_ok=True)
+    with open(registry, "w", encoding="utf-8") as fh:
+        json.dump(rows, fh, indent=1)
+    return rows
+
+
+def shelf_entries(registry):
+    """Every recorded map, newest first. A missing or unreadable register is
+    an empty shelf, never an error: it is a convenience, not the product."""
+    try:
+        with open(registry, encoding="utf-8") as fh:
+            rows = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(rows, list):
+        return []
+    return sorted((r for r in rows if isinstance(r, dict)),
+                  key=lambda r: r.get("when", ""), reverse=True)
+
+
+def write_shelf(registry, path=None):
+    """Render the shelf. Returns where it was written."""
+    path = path or shelf_path()
+    rows = shelf_entries(registry)
+    if rows:
+        body = "".join(
+            '<a class="row" href="{href}"><span class="p">{p}</span>'
+            '<span class="m">{m} modules</span><span class="w">{w}</span></a>'.format(
+                href=html.escape("file://" + str(r.get("map", "")), quote=True),
+                p=html.escape(str(r.get("project", "?"))),
+                m=html.escape(str(r.get("modules", "?"))),
+                w=html.escape(str(r.get("when", ""))))
+            for r in rows)
+    else:
+        body = ('<p class="empty">No maps yet. Drop a project folder on the '
+                'CodeCobbler icon, or run <code>cobble &lt;folder&gt;</code>.</p>')
+    page = """<!doctype html><html lang="en"><meta charset="utf-8">
+<title>CodeCobbler</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{{--bg:#0d1117;--card:#161b22;--line:#30363d;--fg:#e6edf3;--mut:#8b949e;--acc:#58a6ff}}
+*{{box-sizing:border-box}}
+body{{margin:0;background:var(--bg);color:var(--fg);
+  font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:28px}}
+h1{{font-size:20px;margin:0 0 2px}} h1 span{{color:var(--acc)}}
+.sub{{color:var(--mut);font-size:13px;margin:0 0 20px}}
+.row{{display:flex;gap:14px;align-items:baseline;text-decoration:none;color:inherit;
+  background:var(--card);border:1px solid var(--line);border-radius:8px;
+  padding:11px 14px;margin:0 0 8px}}
+.row:hover{{border-color:var(--acc)}}
+.p{{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;flex:1}}
+.m,.w{{color:var(--mut);font-size:12px;white-space:nowrap}}
+.empty{{color:var(--mut)}} code{{color:var(--acc)}}
+.foot{{color:var(--mut);font-size:12px;margin-top:22px;border-top:1px solid var(--line);padding-top:12px}}
+</style>
+<h1>Code<span>Cobbler</span></h1>
+<p class="sub">{n} mapped. Newest first.</p>
+{body}
+<p class="foot">Drop a folder on the CodeCobbler icon to map it, or run
+<code>cobble &lt;folder&gt;</code>. Each map is written beside the project it
+describes, never inside it.</p>
+</html>""".format(n=len(rows), body=body)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(page)
+    return path
 
 
 def _notify(message):
@@ -52,13 +178,25 @@ def map_destination(folder, stamp=None):
     return os.path.join(parent, f"{base}-map-{stamp}.html")
 
 
-def main(argv=None, notify=None, open_url=None):
-    """Survey one folder and open its map. Returns an exit code."""
+def main(argv=None, notify=None, open_url=None, registry=None, shelf=None):
+    """Survey one folder and open its map, or open the shelf. Exit code."""
     argv = list(sys.argv[1:] if argv is None else argv)
     notify = notify or _notify
     open_url = open_url or webbrowser.open
+    registry = registry or registry_path()
+    shelf = shelf or shelf_path()
 
     paths = [a for a in argv if not a.startswith("-")]
+
+    # A desktop icon inherits an ARBITRARY working directory -- measured: a
+    # launch from this machine handed the launcher the directory of whatever
+    # started the session. Surveying that because somebody clicked an icon is
+    # not a reasonable thing to do, so the icon asks for the shelf instead and
+    # a bare `cobble` in a terminal still means "here".
+    if "--shelf" in argv and not paths:
+        open_url("file://" + write_shelf(registry, shelf))
+        return 0
+
     if not paths:
         paths = [os.getcwd()]
 
@@ -92,6 +230,9 @@ def main(argv=None, notify=None, open_url=None):
               destination, origins=surveyed.origins,
               modules_by_key=surveyed.modules_by_key)
     count = len(surveyed.project.modules)
+    record_map(registry, os.path.basename(target.rstrip(os.sep)) or target,
+               destination, count)
+    write_shelf(registry, shelf)
     notify(f"{count:,} module{'s' if count != 1 else ''} mapped -- "
            f"opening the map")
     open_url("file://" + destination)

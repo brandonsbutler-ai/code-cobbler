@@ -1569,6 +1569,125 @@ class TestLaunch(unittest.TestCase):
         self.assertIn("pkg-map-", opened[0])
 
 
+class TestShelf(unittest.TestCase):
+    """The place a person goes to find the maps they already made.
+
+    Maps land beside the projects they describe, which is right, and leaves
+    them scattered: seven files called cobblerpy_map_*.html in one directory
+    with no way to tell which was current. The shelf is the index, refreshed
+    every time a map is written.
+    """
+
+    def test_the_shelf_lives_on_the_volume_both_operating_systems_can_see(self):
+        """One shelf, not one per OS.
+
+        This machine dual-boots and the projects live on an NTFS partition that
+        is a mount point under Linux and a drive letter under Windows. A shelf
+        under ~ would give each side its own, so neither would list the other's
+        maps -- and a hardcoded /media/... path simply does not exist under
+        Windows.
+        """
+        from cobblerpy import launch
+        shared = launch.shared_root()
+        if shared is None:
+            self.skipTest("no shared volume on this machine")
+        for path in (launch.shelf_path(), launch.registry_path()):
+            self.assertTrue(path.startswith(shared),
+                            f"{path} is not on the shared volume {shared}")
+
+    def test_without_a_shared_volume_it_falls_back_instead_of_failing(self):
+        """A checkout on somebody else's machine has no W: drive."""
+        from cobblerpy import launch
+        self.assertIsNone(launch.shared_root(candidates=("/nonexistent-xyz",)))
+        fallback = launch.shelf_path(candidates=("/nonexistent-xyz",))
+        self.assertTrue(fallback)
+        self.assertNotIn("nonexistent-xyz", fallback)
+
+    def test_a_written_map_is_recorded_on_the_shelf(self):
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        reg = os.path.join(d, "maps.json")
+        launch.record_map(reg, "atlas", "/w/atlas-map-1.html", 55)
+        entries = launch.shelf_entries(reg)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["project"], "atlas")
+        self.assertEqual(entries[0]["modules"], 55)
+        self.assertIn("when", entries[0])
+
+    def test_the_shelf_dates_a_map_by_the_map_not_by_the_moment_it_was_listed(self):
+        """Otherwise "newest first" sorts on a fiction.
+
+        Seeding seven existing maps in one pass stamped all seven with the same
+        minute, which said two maps from 01:20 were as current as one from
+        23:44. The map file's own mtime is the honest answer.
+        """
+        import time
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        reg = os.path.join(d, "maps.json")
+        old_map = os.path.join(d, "old.html")
+        with open(old_map, "w", encoding="utf-8") as fh:
+            fh.write("<html></html>")
+        long_ago = time.time() - 60 * 60 * 24 * 30
+        os.utime(old_map, (long_ago, long_ago))
+        launch.record_map(reg, "ancient", old_map, 5)
+        entry = launch.shelf_entries(reg)[0]
+        self.assertEqual(entry["when"],
+                         time.strftime("%Y-%m-%d %H:%M", time.localtime(long_ago)),
+                         "the shelf dated it now, not when the map was written")
+
+    def test_re_mapping_a_project_replaces_its_row_rather_than_stacking(self):
+        """Nine rows for one project is the scatter it exists to fix."""
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        reg = os.path.join(d, "maps.json")
+        launch.record_map(reg, "atlas", "/w/a.html", 55)
+        launch.record_map(reg, "atlas", "/w/b.html", 57)
+        launch.record_map(reg, "ledger", "/w/c.html", 977)
+        entries = launch.shelf_entries(reg)
+        self.assertEqual(len(entries), 2, entries)
+        fed = [e for e in entries if e["project"] == "atlas"][0]
+        self.assertEqual(fed["modules"], 57)
+        self.assertEqual(fed["map"], "/w/b.html")
+
+    def test_the_shelf_lists_every_project_with_a_link_to_its_map(self):
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        reg = os.path.join(d, "maps.json")
+        launch.record_map(reg, "atlas", os.path.join(d, "fed.html"), 55)
+        launch.record_map(reg, "ledger", os.path.join(d, "fide.html"), 977)
+        out = os.path.join(d, "shelf.html")
+        launch.write_shelf(reg, out)
+        page = Page(open(out, encoding="utf-8").read())
+        hrefs = page.attr_values("href")
+        self.assertTrue(any("fed.html" in h for h in hrefs), hrefs)
+        self.assertTrue(any("fide.html" in h for h in hrefs), hrefs)
+        text = open(out, encoding="utf-8").read()
+        self.assertIn("atlas", text)
+        self.assertIn("977", text)
+
+    def test_launching_with_no_folder_opens_the_shelf_not_the_current_directory(self):
+        """A desktop icon inherits an ARBITRARY working directory.
+
+        Measured: a gtk-launch from this session handed the launcher
+        /media/.../CP/resume. Surveying whatever that happens to be, because
+        somebody clicked an icon, is not a reasonable thing to do.
+        """
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        opened, said = [], []
+        code = launch.main(["--shelf"], notify=said.append, open_url=opened.append,
+                           registry=os.path.join(d, "maps.json"),
+                           shelf=os.path.join(d, "shelf.html"))
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(opened), 1, f"nothing opened; said {said}")
+        self.assertIn("shelf.html", opened[0])
+
 class TestConnectionEvidence(unittest.TestCase):
     """The lines that show HOW one module reaches another.
 

@@ -16,11 +16,22 @@ ICONS="$HOME/.local/share/icons"
 SCRIPTS="$HOME/.local/share/nautilus/scripts"
 mkdir -p "$BIN" "$APPS" "$ICONS" "$SCRIPTS"
 
+# The shelf goes on a volume both operating systems can see when there is one.
+# Detected here, at install time, on the machine it is for -- a mount point with
+# somebody's username in it has no business inside the repository.
+SHARED=""
+for c in /media/"$USER"/* /run/media/"$USER"/* /mnt/*; do
+  [ -d "$c" ] && [ -w "$c" ] && SHARED="$c" && break
+done
+
 cat > "$BIN/cobble" <<EOF
 #!/bin/sh
 # CodeCobbler launcher. All behaviour is in cobblerpy/launch.py; this only says
-# where the package is, for a checkout that is not pip-installed.
-PYTHONPATH="$REPO:\$PYTHONPATH" exec python3 -m cobblerpy.launch "\$@"
+# where the package is (the checkout is not pip-installed) and, if this machine
+# has a volume both OSes can see, where the shared shelf lives.
+PYTHONPATH="$REPO:\$PYTHONPATH" \\
+CODECOBBLER_HOME="\${CODECOBBLER_HOME:-$SHARED}" \\
+exec python3 -m cobblerpy.launch "\$@"
 EOF
 chmod +x "$BIN/cobble"
 
@@ -53,7 +64,7 @@ Type=Application
 Name=CodeCobbler
 GenericName=Codebase map
 Comment=Map a Python codebase somebody else left behind
-Exec=$BIN/cobble %F
+Exec=$BIN/cobble --shelf %F
 Icon=$ICONS/codecobbler.svg
 Terminal=false
 Categories=Development;
@@ -63,10 +74,22 @@ EOF
 chmod +x "$APPS/codecobbler.desktop"
 update-desktop-database "$APPS" 2>/dev/null || true
 
+# A copy ON the desktop, which is where he asked for it. GNOME will not launch
+# a .desktop from ~/Desktop until it is marked trusted; gio is not installed
+# here, so the fallback is the one right-click ("Allow Launching") named below.
+DESK=$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")
+if [ -d "$DESK" ]; then
+  cp "$APPS/codecobbler.desktop" "$DESK/CodeCobbler.desktop"
+  chmod +x "$DESK/CodeCobbler.desktop"
+  gio set "$DESK/CodeCobbler.desktop" metadata::trusted true 2>/dev/null || true
+fi
+
 echo "installed:"
 echo "  $BIN/cobble"
 echo "  $APPS/codecobbler.desktop      (app menu + drag a folder onto it)"
 echo "  $SCRIPTS/Map with CodeCobbler  (right-click in the file manager)"
 echo "  $ICONS/codecobbler.svg"
+[ -n "$SHARED" ] && echo "  shelf on the shared volume: $SHARED/CodeCobbler.html"
+[ -d "$DESK" ] && echo "  $DESK/CodeCobbler.desktop   (if GNOME shows it greyed: right-click -> Allow Launching)"
 echo
 echo "\$HOME/.local/bin must be on your PATH. Try:  cobble --help-ish  (any folder)"
