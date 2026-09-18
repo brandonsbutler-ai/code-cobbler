@@ -98,8 +98,11 @@ def shelf_entries(registry):
         return []
     if not isinstance(rows, list):
         return []
-    return sorted((r for r in rows if isinstance(r, dict)),
-                  key=lambda r: r.get("when", ""), reverse=True)
+    # A row is a LINK. One pointing at a map that has been deleted is a broken
+    # promise, so the shelf shows what is actually there.
+    rows = [r for r in rows
+            if isinstance(r, dict) and os.path.isfile(str(r.get("map", "")))]
+    return sorted(rows, key=lambda r: r.get("when", ""), reverse=True)
 
 
 def write_shelf(registry, path=None):
