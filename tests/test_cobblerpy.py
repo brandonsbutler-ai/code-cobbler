@@ -1499,6 +1499,76 @@ class TestFolderOverview(unittest.TestCase):
                       "the trace bar is not hidden to begin with")
 
 
+class TestLaunch(unittest.TestCase):
+    """Starting the tool without an incantation.
+
+    Dropping folders on an icon means there is no terminal: nothing prints, so
+    every outcome -- including every failure -- has to come back through a
+    notification or it is silent. That is the hazard this covers.
+    """
+
+    def _run(self, argv, fixture=None):
+        """Call the launcher with the browser and notifier captured."""
+        from cobblerpy import launch
+        t = Tree(fixture if fixture is not None
+                 else {"pkg/a.py": "import pkg.b\n", "pkg/b.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        said, opened = [], []
+        argv = [a.replace("<TREE>", t.dir) for a in argv]
+        code = launch.main(argv, notify=said.append, open_url=opened.append)
+        return code, said, opened, t
+
+    def test_one_folder_becomes_a_map_beside_it_and_is_opened(self):
+        code, said, opened, t = self._run(["<TREE>"])
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(opened), 1, f"nothing was opened; said {said}")
+        path = opened[0].replace("file://", "")
+        self.assertTrue(os.path.isfile(path), f"no map at {path}")
+        # beside the project, never inside it: a map written into the tree is
+        # read by the next survey and shows up in somebody's git status
+        self.assertFalse(os.path.abspath(path).startswith(
+            os.path.abspath(t.dir) + os.sep), "map was written INSIDE the tree")
+        self.assertTrue(any("map" in m.lower() for m in said), said)
+
+    def test_several_folders_are_refused_by_count_never_silently_reduced(self):
+        """The bug this replaces: the GUI parsed every dropped folder and then
+        kept folders[0], discarding the rest without a word."""
+        code, said, opened, t = self._run(["<TREE>/pkg", "<TREE>"])
+        self.assertNotEqual(code, 0, "two folders were accepted silently")
+        self.assertEqual(opened, [], "a map was opened for an unsupported input")
+        joined = " ".join(said)
+        self.assertIn("2", joined, f"the count was not reported: {said}")
+        self.assertRegex(joined.lower(), r"one folder|a single folder",
+                         f"did not say what it can take: {said}")
+
+
+    def test_one_module_is_not_reported_as_1_modules(self):
+        _code, said, _opened, _t = self._run(
+            ["<TREE>"], fixture={"only.py": "x = 1\n"})
+        joined = " ".join(said)
+        self.assertIn("1 module mapped", joined, joined)
+
+    def test_a_path_that_does_not_exist_is_reported_not_swallowed(self):
+        code, said, opened, _t = self._run(["<TREE>/nope"])
+        self.assertEqual(code, 1)
+        self.assertEqual(opened, [])
+        self.assertRegex(" ".join(said), r"does not exist")
+
+    def test_a_folder_with_no_python_says_so(self):
+        code, said, opened, _t = self._run(
+            ["<TREE>"], fixture={"README.md": "nothing to parse here\n"})
+        self.assertEqual(code, 1)
+        self.assertEqual(opened, [])
+        self.assertRegex(" ".join(said).lower(), r"no python")
+
+    def test_a_dropped_file_resolves_to_the_folder_holding_it(self):
+        """Dropping one module out of a project is an obvious thing to do."""
+        code, said, opened, _t = self._run(["<TREE>/pkg/a.py"])
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(opened), 1, said)
+        self.assertIn("pkg-map-", opened[0])
+
+
 class TestFolderRibbons(unittest.TestCase):
     """What the overview draws BETWEEN folders.
 

@@ -134,6 +134,28 @@ Python 3.9 or newer, and nothing else. The library and the command line import
 only the standard library, so there is no install step you can get wrong and
 nothing to pin.
 
+### The short way: `cobble`
+
+```bash
+cobble                      # the current directory
+cobble ../some-project      # any folder
+cobble path/to/module.py    # a file resolves to the folder holding it
+```
+
+Surveys, writes the map **beside** the project rather than inside it, and opens
+it. No flags, no output path, nothing to find afterwards. It is also wired to a
+desktop entry and a file-manager right-click on this machine, so a folder can be
+dropped on an icon instead -- and because a launcher started that way has no
+terminal, every outcome including every failure comes back as a desktop
+notification rather than vanishing.
+
+One folder at a time: several are **refused by name and count**, not quietly
+reduced to the first one.
+
+Install those three front doors with `sh packaging/install-launcher.sh` -- it
+writes the `cobble` command, the application entry and the right-click script,
+adds no dependency, and is safe to re-run.
+
 ### Straight from the source tree
 
 No install at all. From the directory holding `cobblerpy/`:
@@ -241,8 +263,8 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 156 tests, no pytest required
-python3 verify_e2e.py                        # 107 end-to-end claim checks
+python3 -m unittest discover -s tests -v     # 162 tests, no pytest required
+python3 verify_e2e.py                        # 108 end-to-end claim checks
 ```
 
 `verify_e2e.py` checks the PRODUCT rather than its units. It builds a codebase whose every
