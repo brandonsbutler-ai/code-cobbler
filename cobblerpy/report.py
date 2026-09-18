@@ -371,6 +371,15 @@ summary{cursor:pointer;font-size:13px}
    load-bearing -- an SVG path defaults to fill:black and a bowed ribbon would
    render as a filled blob. No stroke here on purpose: each ribbon sets its own
    condition gradient as an INLINE style, which out-ranks any rule here. */
+/* Evidence WRAPS where source SCROLLS. The panel's <pre> is overflow:auto,
+   which is right for reading a region of code and wrong for a handful of
+   one-line citations: seven of eight blocks overflowed 345px, so every line
+   needed a sideways scroll to read. These are meant to be glanced at. */
+details.link pre{white-space:pre-wrap;overflow-wrap:anywhere}
+details.link{margin:2px 0 6px}
+details.link summary{cursor:pointer;color:var(--mut);font:12px ui-monospace,monospace}
+details.link summary:hover{color:var(--fg)}
+details.link[open] summary{color:var(--fg)}
 #graph .ribbon{fill:none;opacity:.5}
 #graph .ribbon:hover{opacity:.95}
 .chart .edge{fill:none;stroke:var(--line);stroke-width:1.3}
@@ -522,6 +531,35 @@ function openModule(name){
   h += '<br>used by: ' + (d.used_by.length ? d.used_by.map(link).join(', ') : 'nothing');
   if(d.external.length) h += '<br>external: ' + d.external.map(esc).join(', ');
   h += '</p>';
+
+  // HOW they connect, in the source rather than by name. The reader asking
+  // what ties two modules together wants the line that ties them, and the
+  // scanner records both halves: the import's lineno and every call site's.
+  //
+  // <details> is native and deliberate. The `uses:` names above are already
+  // links that navigate to the other module, so hanging a second click
+  // behaviour off them would break the one that works.
+  const links = d.links || {};
+  const joined = (d.uses || []).filter(
+      u => links[u] && links[u].lines && links[u].lines.length);
+  if(joined.length){
+    h += '<h4>How they connect</h4>';
+    for(const target of joined){
+      const ev = links[target];
+      const shown = ev.lines.length, total = shown + (ev.more || 0);
+      h += '<details class="link"><summary>' + esc(target)
+        + ' <span class="ln">' + (ev.more ? shown + ' of ' + total : total)
+        + (total === 1 ? ' line' : ' lines') + '</span></summary><pre>';
+      for(const l of ev.lines){
+        h += '<span><span class="ln">' + String(l.line).padStart(4) + '</span>  '
+          + esc(l.text) + '</span>\\n';
+      }
+      h += '</pre>';
+      // Held back, never dropped in silence.
+      if(ev.more) h += '<div class="gap">... ' + ev.more + ' more not shown ...</div>';
+      h += '</details>';
+    }
+  }
 
   h += '<h4>Source</h4>' + snippet(d.snippets);
   // Into the panel beside the chart. The old handler called showModal() on a

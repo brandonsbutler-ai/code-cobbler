@@ -263,8 +263,8 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 162 tests, no pytest required
-python3 verify_e2e.py                        # 108 end-to-end claim checks
+python3 -m unittest discover -s tests -v     # 168 tests, no pytest required
+python3 verify_e2e.py                        # 109 end-to-end claim checks
 ```
 
 `verify_e2e.py` checks the PRODUCT rather than its units. It builds a codebase whose every
@@ -305,7 +305,14 @@ this size every one of them had to be followed by eye. The aggregate is what a r
 the folder boxes but under the cards, so they can never cover the thing you are reading.
 
 Click any module for its source, its signals, and what it connects to, plus a top-to-bottom
-flowchart of just that module's path. The source shown is only the regions that matter -- the
+flowchart of just that module's path. **How they connect** answers the relationship in code
+rather than by name: for every module this one uses, the import that brings it into scope and
+each call site that goes through it, with line numbers. Under `from . import snippets as snip`
+the calls read `snip.for_module(...)`, so the bound name is what gets matched, not the target's.
+A connection used more than eight times shows the first eight and states how many it held back.
+Resolution runs through the same function the import graph is built from, so an edge drawn on
+the chart and the evidence for it cannot disagree — and the verifier asserts that every edge
+on the chart is evidenceable. The source shown is only the regions that matter -- the
 lines a signal points at, with context, plus every definition header -- and gaps between regions
 are marked rather than closed up, because a snippet that looks continuous but is not would mislead
 anyone reading line numbers. Hovering a module dims everything it has nothing to do with.

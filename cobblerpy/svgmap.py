@@ -110,6 +110,21 @@ def _dominant(state_by_module, names):
     return next(iter(counts))
 
 
+# How many evidence lines a connection shows before it starts counting. The
+# median edge on the corpus needs 3; a test file calling its subject 99 times
+# needs a limit. 8 covers 85% of edges outright.
+EVIDENCE_LIMIT = 8
+
+
+def cap_evidence(lines, limit=EVIDENCE_LIMIT):
+    """The first few evidence lines, and how many were held back.
+
+    Truncating in silence is the behaviour this tool exists to argue against,
+    so the count travels with the lines instead of the remainder vanishing.
+    """
+    return {"lines": lines[:limit], "more": max(0, len(lines) - limit)}
+
+
 def folder_ribbons(project, folders, state_by_module):
     """One ribbon per ordered folder pair that carries imports.
 
@@ -513,6 +528,11 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             "origin": origins.get(name, {}).get("origin", "unknown"),
             "origin_why": origins.get(name, {}).get("why", ""),
             "uses": sorted(project.imports.get(name, ())),
+            # The lines that show HOW this module reaches each one it uses.
+            # Outgoing edges only: the evidence for "used by X" is in X's own
+            # source, so it is carried once, on X, rather than twice.
+            "links": {target: cap_evidence(project.evidence_for(name, target))
+                      for target in sorted(project.imports.get(name, ()))},
             "used_by": sorted(project.imported_by.get(name, ())),
             "external": sorted(project.external.get(name, ()))[:12],
             # Why this is not in the orphan list even though no import names

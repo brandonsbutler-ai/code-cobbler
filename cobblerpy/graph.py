@@ -98,6 +98,47 @@ class Project:
                 return dot
         return None
 
+    def evidence_for(self, source, target):
+        """The lines in `source` that show how it reaches `target`.
+
+        The map named its connections and nothing else: `uses: a, b, c`. But a
+        reader asking how two modules are related wants the line that joins
+        them, and the scanner already records both halves -- every import
+        carries its lineno, and every call site carries the name as written
+        plus its own lineno.
+
+        Two kinds of line count as evidence. The import that brings the target
+        into scope, and any call made through a name that import bound. Under
+        `from b import go` the call reads `go()`, not `b.go()`, so matching on
+        the target's own name finds nothing -- the BOUND names are what the
+        call sites mention. Resolution goes through _resolve, the same function
+        the import graph itself is built from, so an edge shown on the chart
+        and the evidence for it can never disagree.
+
+        Returns [] for an edge the source does not have. A relationship the
+        code does not show is not one to illustrate.
+        """
+        module = self.by_dotted.get(source)
+        if module is None or target not in self.by_dotted:
+            return []
+
+        bound, linenos = set(), set()
+        for raw, alias, lineno, level, imported in module.imports:
+            if self._resolve(module, raw, level, alias, imported) == target:
+                linenos.add(lineno)
+                if alias:
+                    bound.add(alias)
+        if not linenos:
+            return []
+
+        for name, lineno in module.calls:
+            if name in bound or name.split(".")[0] in bound:
+                linenos.add(lineno)
+
+        lines = (module.source or "").splitlines()
+        return [{"line": n, "text": lines[n - 1].rstrip()}
+                for n in sorted(linenos) if 1 <= n <= len(lines)]
+
     def _build(self):
         for module in self.modules:
             for target, alias, lineno, level, imported in module.imports:
