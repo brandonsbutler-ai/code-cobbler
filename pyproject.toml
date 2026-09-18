@@ -35,6 +35,7 @@ gui = ["PySide6-Essentials>=6.5"]
 
 [project.scripts]
 cobblerpy = "cobblerpy.__main__:main"
+cobble = "cobblerpy.launch:main"
 cobblerpy-gui = "cobblerpy.gui.qt_app:main"
 
 [project.urls]

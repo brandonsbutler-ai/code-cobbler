@@ -720,8 +720,8 @@ def verify_no_dependencies():
     # Every declared entry point is IMPORTED AND RESOLVED, not matched against
     # a spelling: the question is whether the thing a `pip install` puts on
     # somebody's PATH actually exists and is callable.
-    check("the console entry points are cobblerpy and cobblerpy-gui",
-          sorted(scripts) == ["cobblerpy", "cobblerpy-gui"], scripts)
+    check("the console entry points are cobble, cobblerpy and cobblerpy-gui",
+          sorted(scripts) == ["cobble", "cobblerpy", "cobblerpy-gui"], scripts)
     for name, target in sorted(scripts.items()):
         module_name, _, func = target.partition(":")
         try:
