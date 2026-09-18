@@ -1,16 +1,11 @@
 # cobblerpy
 
-**Pick up a Python codebase somebody else left half-finished.**
+**Pick up where someone else left off in a Python codebase.**
 
-Point it at a directory and it reports the work already abandoned -- which files are competing
-restarts of one job and which got furthest, the calls that reach an empty body, the modules
-nothing imports and nothing starts from -- and where the previous developer stopped, with the
+Point it at a directory and it shows where the previous developer's train of thought was going,
+finds the dead ends they already discovered and abandoned, and marks where they stopped, with the
 file and the line. Structure, execution flow and what the version history says they were doing
 come with it.
-
-Reading the code tells you where it was going. It cannot tell you which roads the last developer
-already closed, because abandoned work leaves no note saying don't bother. That is the half this
-reports first.
 
 ```bash
 cobblerpy ./inherited-project                    # summary to the terminal
