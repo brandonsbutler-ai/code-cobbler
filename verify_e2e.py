@@ -761,9 +761,17 @@ def verify_documentation():
         subprocess.run([sys.executable, "-m", "cobblerpy", ROOT, "--map", _out],
                        cwd=ROOT, capture_output=True, text=True, timeout=600)
         drawn = open(_out, encoding="utf-8").read() if os.path.exists(_out) else ""
-    boxes = drawn.count('class="folder"')
-    ribbons = drawn.count('class="ribbon"')
-    stubs = drawn.count("url(#stub)")
+    # PARSED, not counted. `drawn.count('class="ribbon"')` answers a question
+    # about the generator's spelling: it counts the text wherever it appears,
+    # including inside the surveyed project's own source, which this page
+    # embeds. _Doc is in this file already and answers what the page HAS.
+    page = _Doc(drawn) if drawn else None
+    boxes = len(page.find("g", **{"class": "folder"})) if page else 0
+    ribbons = len(page.find("path", **{"class": "ribbon"})) if page else 0
+    # A marker reference is an ATTRIBUTE VALUE, so ask the parsed attributes
+    # rather than the document text.
+    stubs = (sum(1 for _t, a in page.elements
+                 if any(v == "url(#stub)" for v in a.values())) if page else 0)
 
     check("README does not still claim left-to-right is distance from a start "
           "point (the overview stacks folder boxes at x=0)",

@@ -1644,14 +1644,18 @@ class TestFolderRibbons(unittest.TestCase):
         """
         import re
         doc = self._map()
-        ribbons = re.findall(
-            r'<path class="ribbon"[^>]*style="stroke:url\(#(ribbon_[a-z]+_[a-z]+_\d+)\)"',
-            doc)
-        self.assertEqual(len(ribbons), 3,
-                         f"expected a ribbon per folder pair, got {ribbons}")
-        flat = re.findall(r'<path class="ribbon"(?![^>]*style="stroke:url\(#ribbon_)',
-                          doc)
-        self.assertEqual(flat, [], "a ribbon is not coloured by condition")
+        # The paint is a property of each parsed <path>, so it is read off that
+        # element's own style attribute instead of pattern-matched against the
+        # whole document -- which also searches the project source this page
+        # embeds.
+        paths = [a for t, a in Page(doc).elements
+                 if t == "path" and a.get("class") == "ribbon"]
+        self.assertEqual(len(paths), 3,
+                         f"expected a ribbon per folder pair, got {len(paths)}")
+        painted = [re.fullmatch(r"stroke:url\(#ribbon_[a-z]+_[a-z]+_\d+\)",
+                                a.get("style", "")) for a in paths]
+        self.assertTrue(all(painted), "a ribbon is not coloured by condition: "
+                        + str([a.get("style") for a, m in zip(paths, painted) if not m]))
 
     def test_the_prose_quotes_the_ribbons_it_actually_drew(self):
         """Per-corpus numbers in generic prose are a lie waiting for a reader.
@@ -1688,12 +1692,13 @@ class TestFolderRibbons(unittest.TestCase):
         the thing the reader is here to read. Between the two is the only
         position that works.
         """
-        doc = self._map()
-        folders_at = doc.index('<g class="folders">')
-        ribbons_at = doc.index('<g class="ribbons">')
-        nodes_at = doc.index('<g class="nodes">')
-        self.assertLess(folders_at, ribbons_at, "ribbons hidden under the boxes")
-        self.assertLess(ribbons_at, nodes_at, "ribbons would cover the cards")
+        # PARSED document order. doc.index() finds the first place a spelling
+        # appears, and on this page that can be inside the embedded source.
+        page = Page(self._map())
+        order = [a.get("class") for t, a in page.elements
+                 if t == "g" and a.get("class") in ("folders", "ribbons", "nodes")]
+        self.assertEqual(order[:3], ["folders", "ribbons", "nodes"],
+                         f"layer order is {order[:3]}")
 
     def test_one_ribbon_per_ordered_folder_pair_that_carries_imports(self):
         ribbons, _s, _f = self._ribbons()
