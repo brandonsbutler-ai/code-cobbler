@@ -4443,6 +4443,10 @@ class TestSubclassExemptionIsNarrow(unittest.TestCase):
         "pkg/use.py": ("from pkg.base import Json, Plugin, Runner\n"
                        "def go():\n    Json().export([])\n    Plugin().setup()\n"
                        "    Runner().run()\n"),
+        # Every subclass replaces it, but the base itself is called.
+        "pkg/tool.py": ("class Tool:\n    def use(self):\n        raise NotImplementedError\n"
+                        "class Saw(Tool):\n    def use(self):\n        return 1\n"
+                        "def pick():\n    return Tool().use()\n"),
         # Every subclass replaces it, and nothing calls the base itself.
         "pkg/shapes.py": ("class Shape:\n    def area(self):\n        raise NotImplementedError\n"
                           "class Sq(Shape):\n    def area(self):\n        return 1\n"),
@@ -4462,7 +4466,8 @@ class TestSubclassExemptionIsNarrow(unittest.TestCase):
     def test_the_real_stubs_are_kept(self):
         self.assertEqual(self.stubs - {("pkg.shapes", "Shape.area")},
                          {("pkg.base", "Exporter.export"), ("pkg.base", "Plugin.setup"),
-                          ("pkg.base", "Plugin.teardown"), ("pkg.base", "Runner.run")})
+                          ("pkg.base", "Plugin.teardown"), ("pkg.base", "Runner.run"),
+                          ("pkg.tool", "Tool.use")})
 
     def test_a_generic_or_abc_class_is_still_a_real_class_for_dead_ends(self):
         """`Generic` only became visible once `Generic[T]` resolved to its
