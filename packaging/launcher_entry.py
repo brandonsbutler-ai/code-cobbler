@@ -23,7 +23,11 @@ try:
     _here = os.getcwd()
 except OSError:
     _here = None                          # deleted; nothing imports from it
-if _here:
+# Never the checkout itself, though: the `cobble` shim's ONLY entry is this
+# checkout's root, and run from inside it (or right-clicked there) the current
+# directory IS that root -- removing it left nothing to import cobblerpy from.
+_checkout = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _here and _here != _checkout:
     sys.path[:] = [p for p in sys.path if os.path.abspath(p) != _here]
 
 import shutil                                            # noqa: E402

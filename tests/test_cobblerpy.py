@@ -2176,6 +2176,52 @@ class TestNeverRunsTheCodeItReads(unittest.TestCase):
         self.assertEqual(set(self._ran()) - self.AT_STARTUP, set(), r.stderr[-300:])
         self.assertEqual(r.returncode, 0, r.stderr[-300:])
 
+    def _checkout(self):
+        """A copy of this checkout, to stand in its root as a user would."""
+        top = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, top, True)
+        co = os.path.join(top, "co")
+        for d in ("cobblerpy", "packaging"):
+            shutil.copytree(os.path.join(REPO, d), os.path.join(co, d),
+                            ignore=shutil.ignore_patterns("__pycache__"))
+        return top, co
+
+    def test_cobble_run_from_inside_its_own_checkout_still_starts(self):
+        """The shim's only path entry is the checkout. Standing in it, the
+        current-directory cleanup removed that entry and cobble could not
+        import itself -- the right-click in the file manager too."""
+        top, co = self._checkout()
+        subprocess.run(["sh", os.path.join(co, "packaging", "install-launcher.sh")],
+                       env=self._env(), capture_output=True, text=True,
+                       timeout=120, check=True, stdin=subprocess.DEVNULL)
+        r = subprocess.run([os.path.join(self.home, ".local", "bin", "cobble"), "."],
+                           cwd=co, env=self._env(), capture_output=True, text=True,
+                           timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+        self.assertIn("modules mapped", r.stderr)
+
+    def test_python_m_from_the_checkout_root_still_works(self):
+        """The README's "straight from the source tree" route."""
+        top, co = self._checkout()
+        env = self._env()
+        r = subprocess.run([sys.executable, "-m", "cobblerpy", ".", "--no-history"],
+                           cwd=co, env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+        r = subprocess.run([sys.executable, "-m", "cobblerpy.launch", "--version"],
+                           cwd=co, env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+        # pip's wrapper with the checkout as its only path entry -- what an
+        # editable install amounts to -- run from the checkout's root.
+        bindir = os.path.join(top, "bin")
+        write(bindir, "cobblerpy", f"#!{sys.executable}\nimport sys\n"
+                                   "from cobblerpy.__main__ import main\n"
+                                   "if __name__ == '__main__':\n    sys.exit(main())\n")
+        os.chmod(os.path.join(bindir, "cobblerpy"), 0o755)
+        r = subprocess.run([os.path.join(bindir, "cobblerpy"), ".", "--no-history"],
+                           cwd=co, env=self._env(PYTHONPATH=co), capture_output=True,
+                           text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+
     def test_another_program_run_with_m_keeps_its_own_directory(self):
         """The -m guard fired for ANY `python -m app` that imported cobblerpy,
         and took away the directory that app's own imports come from."""
