@@ -1632,6 +1632,30 @@ class TestLaunch(unittest.TestCase):
         self.assertEqual(len(opened), 1, said)
         self.assertIn("pkg-map-", opened[0])
 
+    def test_a_dropped_file_maps_its_project_and_writes_beside_it(self):
+        """`cobble proj/pkg/a.py` surveyed proj/pkg and wrote proj/pkg-map-*.html:
+        INSIDE the project, where its git status sees it and the next survey
+        reads it. A file means the project it belongs to."""
+        code, said, opened, t = self._run(["<TREE>/pkg/a.py"], fixture={
+            "pyproject.toml": "[project]\nname = 'p'\n",
+            "pkg/__init__.py": "", "pkg/a.py": "from pkg import b\n",
+            "pkg/b.py": "x = 1\n", "tools/run.py": "import pkg.a\n"})
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(opened), 1, said)
+        path = opened[0].replace("file://", "")
+        self.assertFalse(os.path.abspath(path).startswith(t.dir + os.sep),
+                         f"map written inside the project: {path}")
+        self.assertTrue(os.path.basename(path).startswith(
+            os.path.basename(t.dir) + "-map-"), path)
+        self.assertIn("4 modules mapped", " ".join(said))
+
+    def test_a_file_in_a_package_with_no_project_file_maps_what_holds_the_package(self):
+        code, said, opened, t = self._run(["<TREE>/app/core/x.py"], fixture={
+            "app/__init__.py": "", "app/core/__init__.py": "",
+            "app/core/x.py": "x = 1\n"})
+        self.assertEqual(code, 0, said)
+        self.assertIn(t.dir + "-map-", opened[0])
+
     def _printed(self, argv):
         import contextlib
         import io
@@ -1875,6 +1899,22 @@ class TestShelf(unittest.TestCase):
         fed = [e for e in entries if e["project"] == "atlas"][0]
         self.assertEqual(fed["modules"], 57)
         self.assertEqual(fed["map"], b)
+
+    def test_two_projects_with_the_same_folder_name_keep_their_own_rows(self):
+        """Rows were keyed by folder NAME: mapping b/src replaced a/src."""
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        reg = os.path.join(d, "maps.json")
+        one, two = (os.path.join(d, n) for n in ("one.html", "two.html"))
+        for f in (one, two):
+            open(f, "w", encoding="utf-8").close()
+        launch.record_map(reg, "src", one, 3, folder="/work/a/src")
+        launch.record_map(reg, "src", two, 5, folder="/work/b/src")
+        self.assertEqual(sorted(e["map"] for e in launch.shelf_entries(reg)),
+                         sorted([one, two]))
+        launch.record_map(reg, "src", two, 6, folder="/work/b/src")
+        self.assertEqual(len(launch.shelf_entries(reg)), 2)
 
     def test_the_shelf_lists_every_project_with_a_link_to_its_map(self):
         from cobblerpy import launch

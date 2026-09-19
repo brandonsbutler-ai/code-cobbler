@@ -27,7 +27,7 @@ from .report import write_map
 USAGE = """usage: cobble [FOLDER | FILE.py] | --shelf | --help | --version
 
   cobble               survey the current folder, write its map beside it, open it
-  cobble FOLDER        the same for FOLDER; a .py file means its project
+  cobble FOLDER        the same for FOLDER; a .py file means the project it is in
   cobble --shelf       open the shelf: every map already made, newest first
   cobble --version     print the version
 
@@ -75,14 +75,18 @@ def registry_path(candidates=SHARED):
             else os.path.join(FALLBACK, "maps.json"))
 
 
-def record_map(registry, project, map_path, modules):
+def record_map(registry, project, map_path, modules, folder=None):
     """Note that `project` now has a map, replacing any earlier row for it.
 
     Keyed by project, not appended: nine rows for one project is the scatter
-    this exists to fix.
+    this exists to fix. The key is the FOLDER when there is one -- keyed by
+    name alone, mapping b/src replaced the row for a/src. A row written before
+    folders were recorded has only its name to go on.
     """
     rows = shelf_entries(registry)
-    rows = [r for r in rows if r.get("project") != project]
+    rows = [r for r in rows
+            if not (r.get("folder") == folder if folder and "folder" in r
+                    else r.get("project") == project)]
     # Dated by the MAP, not by the moment it was listed. Seeding several
     # existing maps in one pass otherwise stamps them all with the same minute
     # and "newest first" sorts on a fiction.
@@ -90,8 +94,11 @@ def record_map(registry, project, map_path, modules):
         stamp = time.localtime(os.path.getmtime(map_path))
     except OSError:
         stamp = time.localtime()
-    rows.append({"project": project, "map": map_path, "modules": modules,
-                 "when": time.strftime("%Y-%m-%d %H:%M", stamp)})
+    row = {"project": project, "map": map_path, "modules": modules,
+           "when": time.strftime("%Y-%m-%d %H:%M", stamp)}
+    if folder:
+        row["folder"] = folder
+    rows.append(row)
     os.makedirs(os.path.dirname(registry) or ".", exist_ok=True)
     with open(registry, "w", encoding="utf-8") as fh:
         json.dump(rows, fh, indent=1)
@@ -121,9 +128,10 @@ def write_shelf(registry, path=None):
     rows = shelf_entries(registry)
     if rows:
         body = "".join(
-            '<a class="row" href="{href}"><span class="p">{p}</span>'
+            '<a class="row" href="{href}" title="{f}"><span class="p">{p}</span>'
             '<span class="m">{m} modules</span><span class="w">{w}</span></a>'.format(
                 href=html.escape("file://" + str(r.get("map", "")), quote=True),
+                f=html.escape(str(r.get("folder", "")), quote=True),
                 p=html.escape(str(r.get("project", "?"))),
                 m=html.escape(str(r.get("modules", "?"))),
                 w=html.escape(str(r.get("when", ""))))
@@ -175,6 +183,39 @@ def _notify(message):
         except (OSError, subprocess.SubprocessError):
             pass          # the message still reaches stderr below
     print(message, file=sys.stderr)
+
+
+# What makes a folder the top of a project rather than a folder in one.
+PROJECT_MARKERS = (".git", "pyproject.toml", "setup.py", "setup.cfg")
+
+
+def project_for(path):
+    """The project a dropped FILE belongs to.
+
+    The folder holding it was the answer, and for proj/pkg/a.py that is
+    proj/pkg -- so the map, written beside it, landed inside proj. The nearest
+    folder above it with a project file is the project; with none, the folder
+    holding the top of the package it sits in; with no package either, the
+    folder holding it. A home directory kept in git (dotfiles) is not a
+    project anybody means, and surveying all of it would be a surprise.
+    """
+    folder = os.path.dirname(os.path.abspath(path))
+    never = {os.path.abspath(os.path.expanduser("~")), os.path.abspath(os.sep)}
+    probe = folder
+    while True:
+        if probe not in never and any(os.path.exists(os.path.join(probe, m))
+                                      for m in PROJECT_MARKERS):
+            return probe
+        up = os.path.dirname(probe)
+        if up == probe:
+            break
+        probe = up
+    while os.path.isfile(os.path.join(folder, "__init__.py")):
+        up = os.path.dirname(folder)
+        if up == folder:
+            break
+        folder = up
+    return folder
 
 
 def map_destination(folder, stamp=None):
@@ -246,8 +287,8 @@ def main(argv=None, notify=None, open_url=None, registry=None, shelf=None):
         return 1
     if os.path.isfile(target):
         # Dropping one module out of a project is an obvious thing to do, and
-        # refusing it would be pedantry. Same rule the window's drop uses.
-        target = os.path.dirname(target)
+        # refusing it would be pedantry.
+        target = project_for(target)
 
     surveyed = survey(target)
     if not surveyed.project.modules:
@@ -260,7 +301,7 @@ def main(argv=None, notify=None, open_url=None, registry=None, shelf=None):
               modules_by_key=surveyed.modules_by_key)
     count = len(surveyed.project.modules)
     record_map(registry, os.path.basename(target.rstrip(os.sep)) or target,
-               destination, count)
+               destination, count, folder=target)
     write_shelf(registry, shelf)
     # Try FIRST, then say what happened. webbrowser.open returns False rather
     # than raising when it cannot find a browser -- headless, over ssh, inside a

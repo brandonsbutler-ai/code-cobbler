@@ -148,13 +148,15 @@ nothing to pin.
 ```bash
 cobble                      # the current directory
 cobble ../some-project      # any folder
-cobble path/to/module.py    # a file resolves to the folder holding it
+cobble path/to/module.py    # a file means the project it is in
 cobble --shelf              # the maps you have already made
 cobble --help               # also --version
 ```
 
 Surveys, writes the map **beside** the project rather than inside it, and opens
-it. No flags, no output path, nothing to find afterwards. It is also wired to a
+it. A file's project is the nearest folder above it holding `.git`,
+`pyproject.toml`, `setup.py` or `setup.cfg`; failing that, the folder holding
+its top-level package. No flags, no output path, nothing to find afterwards. It is also wired to a
 desktop entry and a file-manager right-click on this machine, so a folder can be
 dropped on an icon instead -- and because a launcher started that way has no
 terminal, every outcome including every failure comes back as a desktop
@@ -319,7 +321,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 186 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 189 tests, no pytest required
 python3 verify_e2e.py                        # 111 end-to-end claim checks
 ```
 
