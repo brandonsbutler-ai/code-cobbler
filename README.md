@@ -182,8 +182,8 @@ so surveying "here" because somebody clicked an icon would be a guess; the shelf
 is the honest answer to a bare click. Rows are dated by the map file rather than
 by the moment they were listed, or newest-first sorts on a fiction.
 
-On a machine that dual-boots, the shelf and its register live on the volume both
-systems can see, so one bookmark serves either side. `packaging/CodeCobbler.bat`
+On a machine that dual-boots, choose the volume both systems can see and one
+bookmark serves either side; on Windows the shelf goes on `W:\` when there is one. `packaging/CodeCobbler.bat`
 is the Windows equivalent of the launcher: double-click for the shelf, or drag a
 folder onto it.
 
