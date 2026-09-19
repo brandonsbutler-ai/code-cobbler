@@ -2169,6 +2169,24 @@ class TestNeverRunsTheCodeItReads(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr[-400:])
         self.assertIn("found", r.stdout)
 
+    def test_a_users_own_script_with_one_of_our_names_keeps_its_path(self):
+        """The guard matched programs by NAME, so somebody's tools/cobble.py
+        that imports cobblerpy as a library lost their PYTHONPATH=. and
+        could not import their own helpers."""
+        app = Tree({"helpers.py": "VALUE = 'found'\n",
+                    **{f"tools/{n}.py": "import cobblerpy\nimport helpers\n"
+                                        "print(helpers.VALUE)\n"
+                       for n in ("cobble", "cli_entry", "app_entry")}})
+        self.addCleanup(app.close)
+        # (Not tools/cobblerpy.py: beside the others it would BE the
+        # `cobblerpy` they import, and the guard would never run.)
+        for n in ("cobble", "cli_entry", "app_entry"):
+            r = subprocess.run([sys.executable, os.path.join("tools", f"{n}.py")],
+                               cwd=app.dir, env=self._env(PYTHONPATH=REPO + os.pathsep + "."),
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, f"tools/{n}.py: {r.stderr[-300:]}")
+            self.assertIn("found", r.stdout)
+
     def test_a_deleted_working_directory_does_not_crash_it(self):
         gone = tempfile.mkdtemp()
         r = subprocess.run(["sh", "-c", f"cd '{gone}' && rmdir '{gone}' && "

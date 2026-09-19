@@ -57,24 +57,40 @@ def _drop_the_current_directory():
     sys.path[:] = [p for p in sys.path if os.path.abspath(p) != cwd]
 
 
-# Our own programs, by the name they are started as: pip's console scripts
-# (`cobblerpy.exe` and `cobblerpy-script.py` on Windows) and the packaging
-# entries. An empty PYTHONPATH element -- PYTHONPATH=":" or "/x:" -- is the
-# current directory, and pip's `cobblerpy` then imported the project's ast.py.
-_PROGRAMS = {"cobblerpy", "cobble", "cobblerpy-gui",
-             "launcher_entry", "cli_entry", "app_entry"}
+# Our own programs, recognised by WHAT they are, never by name: somebody's
+# tools/cobble.py that imports this as a library is theirs, and the guard took
+# their deliberate PYTHONPATH=. away. Ours are the entry scripts in this
+# checkout's packaging/ (the `cobble` shim runs one of them), and the wrappers
+# pip writes for the console scripts, read back through __main__'s own loader
+# -- which also reads the copy a Windows .exe launcher carries inside it
+# (reasoned from how that launcher runs its script; not run on Windows). An
+# empty PYTHONPATH element (":" or "/x:") is the current directory, and pip's
+# `cobblerpy` then imported the project's ast.py.
+_ENTRIES = ("cobblerpy.__main__", "cobblerpy.launch", "cobblerpy.gui.qt_app")
 
 
-def _program_name():
-    name = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else ""
-    for suffix in ("-script.pyw", "-script.py", ".exe", ".py"):
-        if name.endswith(suffix):
-            return name[:-len(suffix)]
-    return name
+def _started_as_ours():
+    main = sys.modules.get("__main__")
+    path = getattr(main, "__file__", None)
+    if not path:
+        return False
+    packaging = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "packaging")
+    if os.path.dirname(os.path.realpath(path)) == os.path.realpath(packaging):
+        return True
+    # get_data, not get_source: get_source decodes through `tokenize`, which
+    # is imported from sys.path -- i.e. from the very directory this is about
+    # to remove. It ran the project's tokenize.py.
+    try:
+        source = main.__loader__.get_data(path).decode("latin-1")
+    except (AttributeError, ImportError, OSError):
+        return False
+    return "sys.exit(main())" in source and any(
+        f"from {entry} import main" in source for entry in _ENTRIES)
 
 
 if ((sys.argv[:1] == ["-m"] and (_m_target() or "").split(".")[0] == "cobblerpy")
-        or _program_name() in _PROGRAMS):
+        or _started_as_ours()):
     _drop_the_current_directory()
 
 from .abandonment import analyse_project, summarise
