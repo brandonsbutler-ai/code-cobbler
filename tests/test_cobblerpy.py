@@ -2506,6 +2506,50 @@ class TestShelf(unittest.TestCase):
         launch.record_map(reg, "src", two, 6, folder="/work/b/src")
         self.assertEqual(len(launch.shelf_entries(reg)), 2)
 
+    def test_a_write_that_dies_halfway_leaves_the_old_register(self):
+        """open(..., "w") truncated first; a crash inside json.dump left a
+        register that no longer parsed, and the shelf showed nothing."""
+        from unittest import mock
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        reg = os.path.join(d, "maps.json")
+        kept = os.path.join(d, "kept.html")
+        open(kept, "w", encoding="utf-8").close()
+        launch.record_map(reg, "kept", kept, 3, folder="/work/kept")
+
+        def dies(rows, fh, **kw):
+            fh.write('[{"project": "half')
+            raise OSError("disk full")
+        with mock.patch.object(launch.json, "dump", dies):
+            with self.assertRaises(OSError):
+                launch.record_map(reg, "new", kept, 4, folder="/work/new")
+        self.assertEqual([e["project"] for e in launch.shelf_entries(reg)], ["kept"])
+        self.assertEqual(sorted(os.listdir(d)), ["kept.html", "maps.json"],
+                         "the temporary file was left behind")
+
+    def test_a_legacy_row_for_another_folder_survives_the_first_keyed_write(self):
+        """Rows written before folders were recorded have only a name. The
+        first write for b/src dropped the old row for a/src."""
+        import json
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        for sub in ("a", "b"):
+            os.makedirs(os.path.join(d, sub, "src"))
+        a_map = os.path.join(d, "a", "src-map-20260101-000000.html")
+        b_old = os.path.join(d, "b", "src-map-20260101-000000.html")
+        b_new = os.path.join(d, "b", "src-map-20260202-000000.html")
+        for f in (a_map, b_old, b_new):
+            open(f, "w", encoding="utf-8").close()
+        reg = os.path.join(d, "maps.json")
+        with open(reg, "w", encoding="utf-8") as fh:
+            json.dump([{"project": "src", "map": a_map, "modules": 1, "when": "x"},
+                       {"project": "src", "map": b_old, "modules": 2, "when": "x"}], fh)
+        launch.record_map(reg, "src", b_new, 3, folder=os.path.join(d, "b", "src"))
+        self.assertEqual(sorted(e["map"] for e in launch.shelf_entries(reg)),
+                         sorted([a_map, b_new]))
+
     def test_the_shelf_lists_every_project_with_a_link_to_its_map(self):
         from cobblerpy import launch
         d = tempfile.mkdtemp()

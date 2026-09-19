@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import webbrowser
 
@@ -84,9 +85,7 @@ def record_map(registry, project, map_path, modules, folder=None):
     folders were recorded has only its name to go on.
     """
     rows = shelf_entries(registry)
-    rows = [r for r in rows
-            if not (r.get("folder") == folder if folder and "folder" in r
-                    else r.get("project") == project)]
+    rows = [r for r in rows if not _same_project(r, project, folder)]
     # Dated by the MAP, not by the moment it was listed. Seeding several
     # existing maps in one pass otherwise stamps them all with the same minute
     # and "newest first" sorts on a fiction.
@@ -99,10 +98,40 @@ def record_map(registry, project, map_path, modules, folder=None):
     if folder:
         row["folder"] = folder
     rows.append(row)
-    os.makedirs(os.path.dirname(registry) or ".", exist_ok=True)
-    with open(registry, "w", encoding="utf-8") as fh:
-        json.dump(rows, fh, indent=1)
+    # Written beside it and swapped in whole. Opening the register with "w"
+    # emptied it first, so a crash mid-write left a register that no longer
+    # parsed -- and a shelf with nothing on it.
+    where = os.path.dirname(registry) or "."
+    os.makedirs(where, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=where, prefix=".maps-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(rows, fh, indent=1)
+        os.replace(temporary, registry)
+    except BaseException:
+        os.unlink(temporary)
+        raise
     return rows
+
+
+def _same_project(row, project, folder):
+    """Whether an existing row is the one this map replaces.
+
+    By folder when both have one. A row from before folders were recorded
+    has only a name, so its folder is read back from its map's name --
+    `<parent>/<name>-map-<stamp>.html` is written beside `<parent>/<name>`.
+    A legacy row that cannot be placed is kept: dropping another project's
+    row is worse than one row too many.
+    """
+    if not folder:
+        return row.get("project") == project
+    if "folder" in row:
+        return row.get("folder") == folder
+    mapped = str(row.get("map", ""))
+    if row.get("project") != project or not os.path.basename(mapped).startswith(
+            f"{project}-map-"):
+        return False
+    return os.path.join(os.path.dirname(mapped), project) == folder
 
 
 def shelf_entries(registry):
