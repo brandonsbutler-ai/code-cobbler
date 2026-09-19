@@ -38,8 +38,11 @@ def _meta_line(size, owner, w, badge, continues):
     # Chromium's widths: the 8.5px spaced badge is 7px a character, the
     # continuation arrow about 20px; the 11px row is 6.2px a character.
     reserve = (7 * len(badge) + 8 if badge else 0) + (22 if continues else 0)
+    chars = int((w - 18 - reserve) / 6.2)
     text = size if badge else size + "  \u00b7  " + owner
-    return _fit(text, int((w - 18 - reserve) / 6.2))
+    if badge and len(text) > chars:
+        text = size.split()[0]            # "12,345", not "12,345 li…"
+    return _fit(text, chars)
 
 
 def _fit(text, chars, keep_end=0):

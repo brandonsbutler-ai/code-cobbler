@@ -989,8 +989,14 @@ class TestEndToEnd(unittest.TestCase):
         from cobblerpy.attempts import find as find_attempts
         from cobblerpy.deadends import find as find_deadends
         from cobblerpy.diversion import find as find_forks
+        # A history with a FORK in it: the invoice renderer is started once
+        # and left, while a writer doing the same work carries on for three
+        # more commits. Without one, "forks" could be missing from the JSON
+        # and this test would still have passed on an empty list.
         t = Tree({
-            "main.py": "import svc\n\nif __name__ == '__main__':\n    svc.caller(1)\n",
+            "main.py": "import svc\nfrom pkg import invoice_writer\n\n"
+                       "if __name__ == '__main__':\n    svc.caller(1)\n"
+                       "    invoice_writer.write_invoice_pdf([])\n",
             "svc.py": "def remediate(f):\n    pass\n\n\ndef report(f):\n"
                       "    return str(f)\n\n\ndef caller(f):\n    return remediate(f)\n",
             "ingest.py": "def parse_record(r):\n    return r\n\n\n"
@@ -999,7 +1005,21 @@ class TestEndToEnd(unittest.TestCase):
             "ingest_v2.py": "def parse_record(r):\n    return dict(r)\n\n\n"
                             "def validate_record(r):\n    return True\n\n\n"
                             "def store_record(r):\n    pass\n",
+            "pkg/__init__.py": "",
+            "pkg/invoice_render.py": "def render_invoice_pdf(rows):\n    pass\n\n\n"
+                                     "def invoice_pdf_layout(rows):\n    pass\n",
+            "pkg/invoice_writer.py": "def write_invoice_pdf(rows):\n    return rows\n",
         }, git=True)
+        for n, extra in enumerate(("pages", "totals", "footer"), start=2):
+            write(t.dir, "pkg/invoice_writer.py",
+                  f"def write_invoice_pdf(rows):\n    return rows\n\n\n"
+                  f"def invoice_pdf_{extra}(rows):\n    return rows\n")
+            write(t.dir, f"pkg/util_{extra}.py", "X = 1\n")
+            when = f"2030-01-{n:02d}T12:00:00"
+            subprocess.run(["git", "-C", t.dir, "add", "-A"], check=True)
+            subprocess.run(["git", "-C", t.dir, "commit", "-qm", f"writer: {extra}"],
+                           env=dict(os.environ, GIT_AUTHOR_DATE=when,
+                                    GIT_COMMITTER_DATE=when), check=True)
         self.addCleanup(t.close)
         out = os.path.join(t.dir, "s.json")
         r = subprocess.run([sys.executable, "-m", "cobblerpy", t.dir, "--json", out],
@@ -1013,8 +1033,9 @@ class TestEndToEnd(unittest.TestCase):
             "deadends": find_deadends(s.project, s.modules_by_key, s.origins),
             "forks": find_forks(s.project, s.modules_by_key, s.history, s.frontier),
         }
-        self.assertTrue(expect["attempts"] and expect["deadends"],
+        self.assertTrue(expect["attempts"] and expect["deadends"] and expect["forks"],
                         "the fixture no longer has the findings it is for")
+        self.assertEqual([f["stopped"] for f in data["forks"]], ["pkg.invoice_render"])
         for key, value in expect.items():
             self.assertEqual(data.get(key), json.loads(json.dumps(value, default=str)),
                              key)
@@ -1641,7 +1662,9 @@ class TestFolderOverview(unittest.TestCase):
         (6.0px for the 11px line, 7.0px for the 8.5px spaced badge)."""
         t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n'}, git=True)
         self.addCleanup(t.close)
-        write(t.dir, "a_module_nobody_committed.py", "x = 1\n" * 600)
+        # Five digits: "12,345 lines" alone runs under the badge, so a zero
+        # reserve for it fails here rather than passing on a short size.
+        write(t.dir, "a_module_nobody_committed.py", "x = 1\n" * 12345)
         # Two uncommitted attempts at one job: the one that stops carries the
         # continuation mark in the same corner as its badge.
         write(t.dir, "ingest.py", "def parse_record(r):\n    return r\n\n\n"
@@ -1687,6 +1710,7 @@ class TestFolderOverview(unittest.TestCase):
             left_of_badge = float(badge["x"]) - 7.0 * len(word)
             self.assertLessEqual(right_of_text, left_of_badge,
                                  f"{text!r} runs under {word!r}")
+            self.assertNotIn("\u2026", text, "the size was cut through a word")
         both = [c for c in badged if "continues-mark" in c]
         self.assertTrue(both, "no card has a badge AND a continuation mark")
         for card in both:
@@ -2039,8 +2063,18 @@ class TestNeverRunsTheCodeItReads(unittest.TestCase):
         self.assertEqual(self._ran(), [], "the project's own code was executed")
         self.assertEqual(r.returncode, 0, r.stderr[-400:])
 
+    # What Python's -m machinery imports before any package code runs, on
+    # 3.12 (measured one module at a time). The shim runs its entry as a
+    # SCRIPT, which imports none of them from the current directory; a shim
+    # that went back to -m would run all of these, whatever the package does.
+    RUNPY_FIRST = ("collections", "functools", "importlib", "keyword",
+                   "operator", "reprlib", "threading", "types", "warnings")
+
     def test_the_installed_cobble_command_runs_none_of_it(self):
         """The shim the installer writes, run exactly as a terminal would."""
+        for n in self.RUNPY_FIRST:
+            write(self.tree.dir, f"{n}.py",
+                  f"open({os.path.join(self.markers, n)!r}, 'w').write('ran')\n")
         subprocess.run(["sh", os.path.join(REPO, "packaging", "install-launcher.sh")],
                        env=self._env(), capture_output=True, text=True,
                        timeout=120, check=True, stdin=subprocess.DEVNULL)
