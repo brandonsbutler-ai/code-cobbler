@@ -170,6 +170,11 @@ command, an application entry, a desktop icon and a file-manager right-click. It
 adds no dependency and is safe to re-run. (If GNOME shows the desktop icon
 greyed out, right-click it once and choose Allow Launching.)
 
+It asks where the shelf of maps should live: `~/.local/share/codecobbler`, the
+default, or any writable shared volume it finds under `/media`, `/run/media` or
+`/mnt`. With `CODECOBBLER_HOME` already set it uses that and does not ask; run
+with no terminal (piped, CI) it takes the default and prints which it chose.
+
 **The shelf.** Clicking the icon with nothing selected opens an index of the maps
 you have already made, newest first, each row the project name, its module count
 and when it was mapped. A desktop launch inherits an arbitrary working directory,
@@ -325,7 +330,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 195 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 199 tests, no pytest required
 python3 verify_e2e.py                        # 115 end-to-end claim checks
 ```
 

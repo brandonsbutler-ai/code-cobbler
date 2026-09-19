@@ -16,13 +16,48 @@ ICONS="$HOME/.local/share/icons"
 SCRIPTS="$HOME/.local/share/nautilus/scripts"
 mkdir -p "$BIN" "$APPS" "$ICONS" "$SCRIPTS"
 
-# The shelf goes on a volume both operating systems can see when there is one.
-# Detected here, at install time, on the machine it is for -- a mount point with
-# somebody's username in it has no business inside the repository.
-SHARED=""
-for c in /media/"$USER"/* /run/media/"$USER"/* /mnt/*; do
-  [ -d "$c" ] && [ -w "$c" ] && SHARED="$c" && break
-done
+# Where the shelf and its register live. ASKED, not guessed: this used to take
+# the first writable mount it found without a word. The offer is the default,
+# ~/.local/share/codecobbler, then every writable volume under /media,
+# /run/media and /mnt -- found here, on the machine it is for, because a mount
+# point with somebody's username in it has no business inside the repository.
+# CODECOBBLER_HOME already set is the answer; with no terminal to ask on (piped,
+# CI) it takes the default and says so rather than waiting for nobody.
+DEFAULT_SHELF="$HOME/.local/share/codecobbler"
+if [ -n "${CODECOBBLER_HOME:-}" ]; then
+  SHELF="$CODECOBBLER_HOME"
+  echo "shelf: $SHELF  (CODECOBBLER_HOME was already set)"
+else
+  set -- "$DEFAULT_SHELF"
+  for c in /media/"${USER:-}"/* /run/media/"${USER:-}"/* /mnt/*; do
+    [ -d "$c" ] && [ -w "$c" ] && set -- "$@" "$c"
+  done
+  SHELF="$DEFAULT_SHELF"
+  if [ -t 0 ]; then
+    echo "Where should the shelf of maps you make live?"
+    i=1
+    for c in "$@"; do
+      if [ "$i" = 1 ]; then echo "  1) $c   (default)"; else echo "  $i) $c"; fi
+      i=$((i + 1))
+    done
+    while :; do
+      printf 'Choose 1-%s [1]: ' "$#"
+      read -r answer || answer=""
+      case "$answer" in
+        ""|1) break ;;
+        *[!0-9]*) ;;
+        *) if [ "$answer" -le "$#" ]; then eval "SHELF=\${$answer}"; break; fi ;;
+      esac
+      echo "  not one of the choices"
+    done
+  else
+    echo "no terminal to ask on, so the shelf goes in the default: $SHELF"
+  fi
+fi
+# The default is recorded as EMPTY: launch.py's own fallback is that folder,
+# with the register name it has always used there.
+SHARED="$SHELF"
+[ "$SHELF" = "$DEFAULT_SHELF" ] && SHARED=""
 
 cat > "$BIN/cobble" <<EOF
 #!/bin/sh
@@ -92,7 +127,7 @@ echo "  $BIN/cobble"
 echo "  $APPS/codecobbler.desktop      (app menu + drag a folder onto it)"
 echo "  $SCRIPTS/Map with CodeCobbler  (right-click in the file manager)"
 echo "  $ICONS/codecobbler.svg"
-[ -n "$SHARED" ] && echo "  shelf on the shared volume: $SHARED/CodeCobbler.html"
+echo "  shelf: $SHELF"
 [ -d "$DESK" ] && echo "  $DESK/CodeCobbler.desktop   (if GNOME shows it greyed: right-click -> Allow Launching)"
 echo
 echo "\$HOME/.local/bin must be on your PATH. Try:  cobble --help"

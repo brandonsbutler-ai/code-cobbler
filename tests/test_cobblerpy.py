@@ -1829,6 +1829,96 @@ class TestNeverRunsTheCodeItReads(unittest.TestCase):
             self.assertIn("the package is broken", fh.read())
 
 
+class TestInstaller(unittest.TestCase):
+    """packaging/install-launcher.sh, run into a scratch HOME.
+
+    It used to put the shelf on the first writable mount it found without a
+    word. Brandon's call: it ASKS, offering ~/.local/share/codecobbler (the
+    default) and every writable shared mount; with no terminal it takes the
+    default and says so; CODECOBBLER_HOME already set skips the question.
+    """
+
+    SCRIPT = os.path.join(REPO, "packaging", "install-launcher.sh")
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.home, True)
+        self.env = {"HOME": self.home, "PATH": "/usr/bin:/bin",
+                    "USER": os.environ.get("USER", "nobody")}
+
+    def _shim_default(self):
+        """What the installed `cobble` falls back to for CODECOBBLER_HOME."""
+        import re
+        with open(os.path.join(self.home, ".local", "bin", "cobble"),
+                  encoding="utf-8") as fh:
+            m = re.search(r'CODECOBBLER_HOME="\$\{CODECOBBLER_HOME:-([^}]*)\}"',
+                          fh.read())
+        self.assertIsNotNone(m, "the shim does not set CODECOBBLER_HOME")
+        return m.group(1)
+
+    def _interactive(self, answer):
+        """Run it on a pseudo-terminal, as a person at a shell would."""
+        import pty
+        import select
+        master, slave = pty.openpty()
+        p = subprocess.Popen(["sh", self.SCRIPT], stdin=slave, stdout=slave,
+                             stderr=slave, env=self.env, close_fds=True)
+        os.close(slave)
+        out, sent = b"", False
+        while True:
+            ready, _w, _x = select.select([master], [], [], 30)
+            if not ready:
+                p.kill()
+                self.fail(f"the installer hung; it said {out.decode()[-300:]}")
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out += chunk
+            if not sent and b"Choose" in out:
+                os.write(master, answer.encode() + b"\n")
+                sent = True
+        p.wait(timeout=30)
+        os.close(master)
+        self.assertEqual(p.returncode, 0, out.decode()[-400:])
+        return out.decode()
+
+    def test_with_no_terminal_it_takes_the_default_and_says_so(self):
+        r = subprocess.run(["sh", self.SCRIPT], env=self.env, stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        default = os.path.join(self.home, ".local", "share", "codecobbler")
+        self.assertIn(default, r.stdout)
+        # Empty means launch.py's own fallback, which IS that folder.
+        self.assertEqual(self._shim_default(), "")
+
+    def test_a_preset_codecobbler_home_skips_the_question(self):
+        chosen = os.path.join(self.home, "shelf-here")
+        os.makedirs(chosen)
+        self.env["CODECOBBLER_HOME"] = chosen
+        out = self._interactive("2")
+        self.assertNotIn("Choose", out)
+        self.assertEqual(self._shim_default(), chosen)
+
+    def test_it_asks_and_the_default_is_the_home_folder(self):
+        out = self._interactive("")
+        self.assertIn("1) " + os.path.join(self.home, ".local", "share", "codecobbler"),
+                      out)
+        self.assertEqual(self._shim_default(), "")
+
+    def test_a_shared_mount_it_offers_is_recorded_when_chosen(self):
+        import re
+        out = self._interactive("")
+        offered = re.findall(r"^\s*2\) (\S+)", out, re.M)
+        if not offered:
+            self.skipTest("no writable shared mount on this machine to offer")
+        out = self._interactive("2")
+        self.assertEqual(self._shim_default(), offered[0])
+        # The shim is written; nothing is written ON the mount by installing.
+
+
 class TestShelf(unittest.TestCase):
     """The place a person goes to find the maps they already made.
 
