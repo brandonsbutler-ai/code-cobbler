@@ -32,21 +32,21 @@ import sys
 def _m_target():
     """The module `python -m` was asked to run, or None.
 
-    sys.argv is ["-m"] while ANY -m program is being located, so it cannot say
-    which; sys.orig_argv can, from 3.10. On 3.9 this answers None and the guard
-    stands down rather than guessing.
+    sys.argv is ["-m", *rest] while ANY -m program is being located, so it
+    cannot say which; sys.orig_argv can, from 3.10. Parsing the options
+    missed combined flags (-Bm) and options that take a value, so the target
+    is found by position instead: it is the element just before `rest`
+    (checked on 3.12 for -m, -Bm, -Om, -mNAME, -W/-X values and
+    --check-hash-based-pycs). Written joined, as -mNAME or -BmNAME, it is
+    the text after the m. On 3.9 this answers None and the guard stands down.
     """
-    args = iter(getattr(sys, "orig_argv", [])[1:])
-    for arg in args:
-        if arg == "-m":
-            return next(args, None)
-        if arg.startswith("-m"):
-            return arg[2:]
-        if arg in ("-W", "-X"):
-            next(args, None)              # these take a value
-        elif arg == "-c" or not arg.startswith("-"):
-            return None
-    return None
+    orig = getattr(sys, "orig_argv", None)
+    if not orig or len(orig) <= len(sys.argv):
+        return None
+    target = orig[len(orig) - len(sys.argv)]
+    if target.startswith("-"):
+        target = target[target.index("m") + 1:] if "m" in target else ""
+    return target or None
 
 
 def _drop_the_current_directory():

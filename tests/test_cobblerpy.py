@@ -2083,6 +2083,21 @@ class TestNeverRunsTheCodeItReads(unittest.TestCase):
     RUNPY_FIRST = ("collections", "functools", "importlib", "keyword",
                    "operator", "reprlib", "threading", "types", "warnings")
 
+    def test_every_spelling_of_python_m_cobblerpy_is_recognised(self):
+        """Combined short options (-Bm, -Om) and options that take a value
+        (--check-hash-based-pycs always) hid the -m target from the guard."""
+        for opts in (["-m", "cobblerpy"], ["-Bm", "cobblerpy"], ["-Om", "cobblerpy"],
+                     ["-mcobblerpy"], ["-Bmcobblerpy"],
+                     ["--check-hash-based-pycs", "always", "-m", "cobblerpy"],
+                     ["-W", "ignore", "-m", "cobblerpy"], ["-X", "dev", "-m", "cobblerpy"]):
+            for f in os.listdir(self.markers):
+                os.unlink(os.path.join(self.markers, f))
+            r = subprocess.run([sys.executable, *opts, ".", "--no-history"],
+                               cwd=self.tree.dir, env=self._env(PYTHONPATH=REPO),
+                               capture_output=True, text=True, timeout=120)
+            self.assertEqual(self._ran(), [], f"{' '.join(opts)} ran the project's code")
+            self.assertEqual(r.returncode, 0, r.stderr[-300:])
+
     def test_the_installed_cobble_command_runs_none_of_it(self):
         """The shim the installer writes, run exactly as a terminal would."""
         for n in self.RUNPY_FIRST:
