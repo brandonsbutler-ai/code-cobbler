@@ -18,11 +18,26 @@ No third-party dependencies. It never imports or executes the code it reads, whi
 a codebase you are trying to understand is usually one you do not yet trust.
 
 That includes running it from inside the project, where a file named `ast.py` or
-`sitecustomize.py` would otherwise be imported in place of Python's own. `cobblerpy`,
-`cobble`, the desktop launchers and the single executable never put the current directory on
-the import path. `python3 -m` always does, and Python itself imports a few modules from there
-before any of this tool runs, so inside a project you do not trust, use `cobblerpy .`, or
-`python3 -P -m cobblerpy .` on Python 3.11 or newer, or run it from outside and name the folder.
+`json.py` would otherwise be imported in place of Python's own. Before it imports
+anything else, the tool takes the current directory off the import path whenever it is
+the program being run: `cobblerpy`, `cobble` and `cobblerpy-gui` from pip, the desktop
+launchers, the `cobble` the launcher installer writes, and `python3 -m cobblerpy` on
+Python 3.10 or newer. The single executable never has the current directory on its path.
+
+Two things happen before any line of this tool runs, and no package can stop them:
+
+- `python3 -m` puts the current directory first, and Python imports some of its own
+  modules from there to find the package. On 3.12 those are `importlib`, `types`,
+  `warnings`, `threading`, `functools`, `collections`, `keyword`, `operator` and
+  `reprlib`; on 3.9 and 3.10, `runpy` as well. On 3.9 the tool also cannot tell its own
+  `-m` run from another program's, so it leaves the path alone there.
+- An empty element in your own `PYTHONPATH` (`PYTHONPATH=:` or `/x:`) also means the
+  current directory, and Python imports `sitecustomize.py` and `usercustomize.py` from it
+  at startup; pip's `cobblerpy` wrapper then imports `re`.
+
+So inside a project you do not trust, use `cobblerpy .` or `cobble` with no empty
+`PYTHONPATH` element, or `python3 -P -m cobblerpy .` on Python 3.11 or newer, or run it
+from outside and name the folder.
 
 ## The problem it exists for
 
@@ -347,7 +362,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 220 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 222 tests, no pytest required
 python3 verify_e2e.py                        # 115 end-to-end claim checks
 ```
 

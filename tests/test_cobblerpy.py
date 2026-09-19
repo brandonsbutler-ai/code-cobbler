@@ -2037,6 +2037,47 @@ class TestNeverRunsTheCodeItReads(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr[-400:])
         self.assertIn("modules mapped", r.stderr)
 
+    # What Python itself does with an empty PYTHONPATH element, before any
+    # line of this tool runs: the directory goes on sys.path at startup, and
+    # site imports sitecustomize and usercustomize from it. No package can
+    # prevent that; the README says so. Everything after is the tool's.
+    AT_STARTUP = {"sitecustomize", "usercustomize"}
+
+    def test_console_scripts_drop_an_empty_pythonpath_entry(self):
+        """PYTHONPATH=":" (or "/x:") is the current directory, and pip's
+        `cobblerpy` then imported the project's ast.py in place of Python's."""
+        bindir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, bindir, True)
+        for name, target in (("cobblerpy", "cobblerpy.__main__"),
+                             ("cobble", "cobblerpy.launch"),
+                             ("cobblerpy-gui", "cobblerpy.gui.qt_app")):
+            # The wrapper pip writes, byte for byte in what matters.
+            write(bindir, name, f"#!{sys.executable}\nimport re\nimport sys\n"
+                                f"from {target} import main\n"
+                                "if __name__ == '__main__':\n"
+                                "    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n"
+                                "    sys.exit(main())\n")
+            os.chmod(os.path.join(bindir, name), 0o755)
+        for name, args in (("cobblerpy", [".", "--no-history"]), ("cobble", ["."]),
+                           ("cobblerpy-gui", [])):
+            for pythonpath in (REPO + os.pathsep, os.pathsep + REPO):
+                for f in os.listdir(self.markers):
+                    os.unlink(os.path.join(self.markers, f))
+                subprocess.run([os.path.join(bindir, name), *args], cwd=self.tree.dir,
+                               env=self._env(PYTHONPATH=pythonpath),
+                               capture_output=True, text=True, timeout=120)
+                self.assertEqual(set(self._ran()) - self.AT_STARTUP, set(),
+                                 f"{name} with PYTHONPATH={pythonpath!r} ran the "
+                                 f"project's code")
+
+    def test_the_launcher_script_drops_an_empty_pythonpath_entry(self):
+        r = subprocess.run([sys.executable, os.path.join(REPO, "packaging",
+                                                         "launcher_entry.py"), "."],
+                           cwd=self.tree.dir, env=self._env(PYTHONPATH=REPO + os.pathsep),
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(set(self._ran()) - self.AT_STARTUP, set(), r.stderr[-300:])
+        self.assertEqual(r.returncode, 0, r.stderr[-300:])
+
     def test_another_program_run_with_m_keeps_its_own_directory(self):
         """The -m guard fired for ANY `python -m app` that imported cobblerpy,
         and took away the directory that app's own imports come from."""

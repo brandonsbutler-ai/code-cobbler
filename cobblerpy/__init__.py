@@ -57,7 +57,24 @@ def _drop_the_current_directory():
     sys.path[:] = [p for p in sys.path if os.path.abspath(p) != cwd]
 
 
-if sys.argv[:1] == ["-m"] and (_m_target() or "").split(".")[0] == "cobblerpy":
+# Our own programs, by the name they are started as: pip's console scripts
+# (`cobblerpy.exe` and `cobblerpy-script.py` on Windows) and the packaging
+# entries. An empty PYTHONPATH element -- PYTHONPATH=":" or "/x:" -- is the
+# current directory, and pip's `cobblerpy` then imported the project's ast.py.
+_PROGRAMS = {"cobblerpy", "cobble", "cobblerpy-gui",
+             "launcher_entry", "cli_entry", "app_entry"}
+
+
+def _program_name():
+    name = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else ""
+    for suffix in ("-script.pyw", "-script.py", ".exe", ".py"):
+        if name.endswith(suffix):
+            return name[:-len(suffix)]
+    return name
+
+
+if ((sys.argv[:1] == ["-m"] and (_m_target() or "").split(".")[0] == "cobblerpy")
+        or _program_name() in _PROGRAMS):
     _drop_the_current_directory()
 
 from .abandonment import analyse_project, summarise

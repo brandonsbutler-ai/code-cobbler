@@ -12,9 +12,22 @@ shelf -- which on a machine that has never run it says so, and says to drop a
 folder on it.
 """
 
-import shutil
-import subprocess
+import os
 import sys
+
+# Before ANY other import. os and sys are loaded by the interpreter itself;
+# shutil and subprocess below are not, and an empty PYTHONPATH element puts
+# the current directory -- usually the project being read -- ahead of them.
+# (cobblerpy/__init__.py does the same for every other way in.)
+try:
+    _here = os.getcwd()
+except OSError:
+    _here = None                          # deleted; nothing imports from it
+if _here:
+    sys.path[:] = [p for p in sys.path if os.path.abspath(p) != _here]
+
+import shutil                                            # noqa: E402
+import subprocess                                        # noqa: E402
 
 
 def _say(message):
