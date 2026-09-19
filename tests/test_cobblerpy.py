@@ -1016,6 +1016,49 @@ class TestEndToEnd(unittest.TestCase):
         self.assertIn("no Python files", r.stderr)
 
 
+class TestCommandLineEdges(unittest.TestCase):
+    """Small things the command line got wrong in front of a customer."""
+
+    def _cli(self, *args):
+        return subprocess.run([sys.executable, "-m", "cobblerpy", *args],
+                              capture_output=True, text=True, cwd=REPO, timeout=120)
+
+    def test_a_missing_path_is_called_missing(self):
+        r = self._cli(os.path.join(tempfile.gettempdir(), "no-such-project-xyz"),
+                      "--no-history")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("does not exist", r.stderr)
+
+    def test_a_file_surveys_the_project_it_is_in_as_cobble_does(self):
+        t = Tree({"pyproject.toml": "", "pkg/__init__.py": "",
+                  "pkg/a.py": "x = 1\n", "b.py": "import pkg.a\n"})
+        self.addCleanup(t.close)
+        r = self._cli(os.path.join(t.dir, "pkg", "a.py"), "--no-history")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("3 modules", r.stdout)
+
+    def test_an_empty_heading_is_not_printed(self):
+        t = Tree({"only.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        r = self._cli(t.dir, "--no-history")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("MOST DEPENDED UPON", r.stdout)
+
+    def test_long_text_is_shortened_at_a_word_not_through_one(self):
+        from cobblerpy.__main__ import _clip
+        text = "shares sign, signer, unsign, validate; both in src.itsdangerous"
+        self.assertEqual(_clip(text, 56), "shares sign, signer, unsign, validate; both in ...")
+        self.assertEqual(_clip("short", 56), "short")
+
+    def test_warnings_from_the_surveyed_code_stay_out_of_the_output(self):
+        """Parsing somebody's `"\\d"` raises THEIR SyntaxWarning, not ours."""
+        t = Tree({"m.py": 'PATTERN = "\\d+"\n# OTHER = "\\w"\n'})
+        self.addCleanup(t.close)
+        r = self._cli(t.dir, "--no-history")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Warning", r.stderr)
+
+
 class TestDeadEnds(unittest.TestCase):
     def test_a_called_stub_is_a_dead_end(self):
         from cobblerpy.deadends import find

@@ -12,6 +12,7 @@ note saying what would make the signal innocent.
 """
 
 import re
+import warnings
 
 from collections import defaultdict
 
@@ -112,7 +113,9 @@ def _empty_excepts(module):
         return []
     out = []
     try:
-        tree = ast.parse(module.source)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")   # the surveyed code's, not ours
+            tree = ast.parse(module.source)
     except SyntaxError:
         return []
     for node in ast.walk(tree):

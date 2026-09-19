@@ -16,6 +16,7 @@ import io
 import os
 import re
 import tokenize
+import warnings
 
 # Calls that tell you what a module reaches out and touches. Grouped by the
 # question a reader is actually asking: does this thing read my disk, talk to
@@ -394,7 +395,9 @@ def _looks_like_code(text):
     if body.split(":", 1)[0].strip().lower() in _PRAGMA_PREFIXES:
         return False                      # linter or type pragma
     try:
-        tree = ast.parse(body)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")   # the surveyed code's, not ours
+            tree = ast.parse(body)
     except (SyntaxError, ValueError, MemoryError, RecursionError):
         return False
     if not tree.body:
@@ -582,7 +585,11 @@ def scan_file(path, root):
         return module
 
     try:
-        tree = ast.parse(source, filename=path)
+        # A SyntaxWarning here is the surveyed code's -- an invalid escape in
+        # somebody's string -- and printed it reads as this tool's own.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            tree = ast.parse(source, filename=path)
     except SyntaxError as exc:
         # A file that does not parse is itself a finding: it is either for a
         # different Python version, or it was left mid-edit.

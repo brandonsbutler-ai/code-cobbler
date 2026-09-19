@@ -23,6 +23,13 @@ def _bar(value, top, width=22):
     return "#" * filled + "." * (width - filled)
 
 
+def _clip(text, width):
+    """Shorten at a word, never through one: "src.itsda" read as a name."""
+    if len(text) <= width:
+        return text
+    return text[:width - 4].rsplit(" ", 1)[0] + " ..."
+
+
 def h_available(s):
     return bool(s.history and s.history.get("available"))
 
@@ -80,9 +87,10 @@ def _print_summary(s, limit=12):
                   + ", ".join(sorted(layers[depth])[:6])
                   + (" ..." if len(layers[depth]) > 6 else ""))
 
-    print("\nMOST DEPENDED UPON")
-    for name, out_n, in_n in p.fan()[:6]:
-        if in_n:
+    depended = [(name, out_n, in_n) for name, out_n, in_n in p.fan()[:6] if in_n]
+    if depended:
+        print("\nMOST DEPENDED UPON")
+        for name, out_n, in_n in depended:
             print(f"  {name:<44} used by {in_n}, uses {out_n}")
 
     if p.cycles:
@@ -154,9 +162,9 @@ def _print_summary(s, limit=12):
         if s.history.get("shallow"):
             print("  (timed from a shallow clone -- see below)")
         for f in forks[:5]:
-            print(f"  {f['stopped']} stopped after \"{f['last_subject'][:44]}\"")
+            print(f"  {f['stopped']} stopped after \"{_clip(f['last_subject'], 44)}\"")
             for c in f["continued_as"][:2]:
-                print(f"      -> {c['module']:<38} {c['why'][:56]}")
+                print(f"      -> {c['module']:<38} {_clip(c['why'], 56)}")
 
     h = s.history
     if h.get("available"):
@@ -248,6 +256,15 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if not os.path.exists(args.directory):
+        print(f"cobblerpy: {args.directory}: does not exist", file=sys.stderr)
+        return 1
+    if os.path.isfile(args.directory):
+        # A file means the project it is in -- the rule `cobble` uses.
+        from .launch import project_for
+        args.directory = project_for(args.directory)
+        print(f"cobblerpy: surveying {args.directory}, the project that file is in",
+              file=sys.stderr)
     if not os.path.isdir(args.directory):
         print(f"cobblerpy: {args.directory}: not a directory", file=sys.stderr)
         return 1
