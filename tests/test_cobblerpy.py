@@ -1698,6 +1698,31 @@ class TestNeverRunsTheCodeItReads(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr[-400:])
         self.assertIn("modules mapped", r.stderr)
 
+    def test_a_failure_before_the_launcher_starts_still_reaches_the_user(self):
+        """A crash on import happens before launch.main and its notifications.
+
+        A harmless tokenize.py did exactly that: the traceback went to stderr,
+        and from a desktop icon stderr is nowhere. The packaged entry has to
+        say it itself.
+        """
+        broken = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, broken, True)
+        write(broken, "cobblerpy/__init__.py",
+              "raise RuntimeError('the package is broken')\n")
+        said = os.path.join(broken, "said.txt")
+        write(broken, "bin/notify-send",
+              f"#!/bin/sh\nprintf '%s\\n' \"$@\" >> {said!r}\n")
+        os.chmod(os.path.join(broken, "bin", "notify-send"), 0o755)
+        r = subprocess.run(
+            [sys.executable, os.path.join(REPO, "packaging", "launcher_entry.py"), "."],
+            cwd=self.tree.dir, capture_output=True, text=True, timeout=120,
+            env=self._env(PYTHONPATH=broken,
+                          PATH=os.path.join(broken, "bin") + ":/usr/bin:/bin"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(os.path.isfile(said), f"no notification; stderr {r.stderr[-300:]}")
+        with open(said, encoding="utf-8") as fh:
+            self.assertIn("the package is broken", fh.read())
+
 
 class TestShelf(unittest.TestCase):
     """The place a person goes to find the maps they already made.

@@ -12,9 +12,32 @@ shelf -- which on a machine that has never run it says so, and says to drop a
 folder on it.
 """
 
+import shutil
+import subprocess
 import sys
 
-from cobblerpy.launch import main
+
+def _say(message):
+    """launch._notify, for when the package that holds it could not load.
+
+    The `cobble` shim and the desktop icon start here, with no terminal: a
+    traceback on stderr is a failure nobody sees.
+    """
+    if shutil.which("notify-send"):
+        try:
+            subprocess.run(["notify-send", "CodeCobbler", message],
+                           capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            pass          # stderr still gets the traceback
+    print(message, file=sys.stderr)
+
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        from cobblerpy.launch import main
+        code = main()
+    except Exception as exc:                              # noqa: BLE001
+        _say(f"CodeCobbler failed before it could finish: "
+             f"{type(exc).__name__}: {exc}")
+        raise
+    sys.exit(code)
