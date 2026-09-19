@@ -589,9 +589,12 @@ document.querySelectorAll('#graph .node').forEach(g => {
   g.addEventListener('mouseleave', () =>
     document.querySelectorAll('#graph .node').forEach(
       o => o.classList.remove('dim')));
-  g.addEventListener('click', () => { openModule(name); enterTrace(name, true); });
+  // Enter and Space do what the click does. They used to open the panel and
+  // never the trace, so from a keyboard the flowchart was out of reach.
+  const activate = () => { openModule(name); enterTrace(name, true); };
+  g.addEventListener('click', activate);
   g.addEventListener('keydown', e => {
-    if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openModule(name); }
+    if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); activate(); }
   });
 });
 // Nothing selected: the panel shows the project. Pressing Escape returns to
@@ -856,14 +859,13 @@ function enterTrace(name, pin){
   sizeKey();
   traceSvg.querySelectorAll('.node').forEach(g => {
     const other = g.dataset.name;
-    g.addEventListener('click', () => {
+    const follow = () => {
       openModule(other);
       if(other !== tracing) enterTrace(other, true);   // follow the thread
-    });
+    };
+    g.addEventListener('click', follow);
     g.addEventListener('keydown', e => {
-      if(e.key === 'Enter' || e.key === ' '){
-        e.preventDefault(); openModule(other);
-      }
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); follow(); }
     });
   });
 }

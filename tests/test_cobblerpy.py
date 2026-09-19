@@ -2926,6 +2926,20 @@ console.log(JSON.stringify({
                         "clicking no longer opens the flowchart")
         self.assertEqual(seen["of"], "b")
 
+    def test_enter_on_a_focused_card_does_what_a_click_does(self):
+        """Enter opened the panel and never the trace, so from the keyboard
+        the flowchart could not be reached at all."""
+        seen = self._run("""
+const by = {};
+GRAPH_NODES.forEach(n => { by[n.dataset.name] = n; });
+by['b'].on.keydown({key: 'Enter', preventDefault(){}});
+console.log(JSON.stringify({
+  overviewGone: document.getElementById('graph').hidden,
+  of: document.getElementById('traceof').textContent}));
+""", graph_nodes=["a", "b", "c", "d", "island"])
+        self.assertTrue(seen["overviewGone"], "Enter did not open the flowchart")
+        self.assertEqual(seen["of"], "b")
+
     def test_the_flowchart_keeps_only_the_associated_modules(self):
         seen = self._run("""
 enterTrace('b', true);
