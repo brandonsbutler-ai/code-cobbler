@@ -676,6 +676,48 @@ def verify_hostile(workdir):
     check("a missing directory is reported, not a traceback",
           r.returncode == 1 and "Traceback" not in r.stderr, r.stderr[:160])
 
+    # "It never imports or executes the code it reads", run from INSIDE the
+    # project, which is where anybody runs it. Each file below shadows a module
+    # the tool imports, or one Python runs at startup, and leaves a marker if
+    # it is executed. `-m` and an empty PYTHONPATH entry both put the current
+    # directory on sys.path; both once ran every one of these.
+    markers = tempfile.mkdtemp()
+    names = ("ast", "tokenize", "json", "argparse", "textwrap", "html",
+             "subprocess", "webbrowser", "sitecustomize", "usercustomize")
+    inside = build({**{f"{n}.py": f"open({os.path.join(markers, n)!r}, 'w')"
+                                  f".write('ran')\n" for n in names},
+                    "app.py": "def run():\n    return 1\n"})
+    home = tempfile.mkdtemp()
+    env = {"HOME": home, "CODECOBBLER_HOME": home, "PATH": "/usr/bin:/bin",
+           "USER": os.environ.get("USER", "nobody")}
+    try:
+        # The `cobble` command exactly as the installer writes it, into a
+        # scratch HOME, run with no PYTHONPATH of its own.
+        subprocess.run(["sh", os.path.join(ROOT, "packaging", "install-launcher.sh")],
+                       env=env, capture_output=True, stdin=subprocess.DEVNULL,
+                       timeout=120)
+        for label, argv, extra in (
+                ("python -m cobblerpy", [sys.executable, "-m", "cobblerpy", ".",
+                                         "--no-history"], {"PYTHONPATH": ROOT}),
+                ("the installed cobble command",
+                 [os.path.join(home, ".local", "bin", "cobble"), "."], {})):
+            for n in os.listdir(markers):
+                os.unlink(os.path.join(markers, n))
+            r = subprocess.run(argv, cwd=inside, env={**env, **extra},
+                               capture_output=True, text=True, timeout=300)
+            ran = sorted(os.listdir(markers))
+            check(f"{label}, run inside a project, executes none of its code",
+                  r.returncode == 0 and not ran,
+                  f"rc {r.returncode}, executed {ran}: {r.stderr[-200:]}")
+    finally:
+        base = os.path.basename(inside)
+        for f in os.listdir(os.path.dirname(inside)):
+            if f.startswith(base + "-map-"):
+                os.unlink(os.path.join(os.path.dirname(inside), f))
+        shutil.rmtree(inside, ignore_errors=True)
+        shutil.rmtree(markers, ignore_errors=True)
+        shutil.rmtree(home, ignore_errors=True)
+
 
 def verify_no_dependencies():
     section("CLAIM: nothing outside the standard library, proven by AST walk")

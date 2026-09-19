@@ -29,9 +29,12 @@ cat > "$BIN/cobble" <<EOF
 # CodeCobbler launcher. All behaviour is in cobblerpy/launch.py; this only says
 # where the package is (the checkout is not pip-installed) and, if this machine
 # has a volume both OSes can see, where the shared shelf lives.
-PYTHONPATH="$REPO:\$PYTHONPATH" \\
+# PYTHONPATH is the checkout and nothing else, and the entry runs as a SCRIPT:
+# an inherited or empty PYTHONPATH entry, or -m, puts the current directory on
+# sys.path, and the current directory is usually the project being read.
+PYTHONPATH="$REPO" \\
 CODECOBBLER_HOME="\${CODECOBBLER_HOME:-$SHARED}" \\
-exec python3 -m cobblerpy.launch "\$@"
+exec python3 "$REPO/packaging/launcher_entry.py" "\$@"
 EOF
 chmod +x "$BIN/cobble"
 

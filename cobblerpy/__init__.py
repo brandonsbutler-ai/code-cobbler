@@ -16,6 +16,19 @@ getattr in ways no parser can follow.
 """
 
 import os
+import sys
+
+# `python -m cobblerpy` puts the CURRENT DIRECTORY first on sys.path, and the
+# obvious place to run this tool is inside the project it reads. A project
+# holding ast.py or tokenize.py was then imported in place of the standard
+# library -- the tool executing the code it came to read. While a package is
+# being located for -m, sys.argv is ["-m"]; only then is the directory dropped,
+# so `import cobblerpy` from somebody's program leaves their sys.path alone.
+# runpy has already imported what IT needs by now, so this narrows the -m form
+# rather than closing it; the README says which forms are safe inside a project.
+if sys.argv[:1] == ["-m"]:
+    _cwd = os.getcwd()
+    sys.path[:] = [p for p in sys.path if os.path.abspath(p) != _cwd]
 
 from .abandonment import analyse_project, summarise
 from .graph import Project

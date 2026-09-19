@@ -17,6 +17,13 @@ cobblerpy ./inherited-project --json survey.json # everything, machine-readable
 No third-party dependencies. It never imports or executes the code it reads, which matters:
 a codebase you are trying to understand is usually one you do not yet trust.
 
+That includes running it from inside the project, where a file named `ast.py` or
+`sitecustomize.py` would otherwise be imported in place of Python's own. `cobblerpy`,
+`cobble`, the desktop launchers and the single executable never put the current directory on
+the import path. `python3 -m` always does, and Python itself imports a few modules from there
+before any of this tool runs, so inside a project you do not trust, use `cobblerpy .`, or
+`python3 -P -m cobblerpy .` on Python 3.11 or newer, or run it from outside and name the folder.
+
 ## The problem it exists for
 
 A developer left halfway through. The comments are thin, the docstrings are missing, and the
@@ -295,8 +302,8 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 179 tests, no pytest required
-python3 verify_e2e.py                        # 109 end-to-end claim checks
+python3 -m unittest discover -s tests -v     # 181 tests, no pytest required
+python3 verify_e2e.py                        # 111 end-to-end claim checks
 ```
 
 `verify_e2e.py` checks the PRODUCT rather than its units. It builds a codebase whose every

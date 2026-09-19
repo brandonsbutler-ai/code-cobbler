@@ -1633,6 +1633,72 @@ class TestLaunch(unittest.TestCase):
         self.assertIn("pkg-map-", opened[0])
 
 
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Modules the tool imports after it starts, plus the two files Python runs at
+# startup from anything on sys.path. Each one, if EXECUTED, leaves a marker.
+SHADOWED = ("ast", "tokenize", "json", "argparse", "textwrap", "html",
+            "subprocess", "webbrowser", "sitecustomize", "usercustomize")
+
+
+class TestNeverRunsTheCodeItReads(unittest.TestCase):
+    """"It never imports or executes the code it reads" -- from INSIDE it.
+
+    The obvious place to run the tool is the project's own folder. `-m` puts
+    that folder first on sys.path, and the `cobble` shim appended an empty
+    PYTHONPATH entry, which means the same. A project holding ast.py or
+    sitecustomize.py was then imported in place of the standard library: its
+    code ran, and a harmless tokenize.py crashed the launcher outright.
+    """
+
+    def setUp(self):
+        self.markers = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.markers, True)
+        files = {f"{n}.py": f"open({os.path.join(self.markers, n)!r}, 'w')"
+                            f".write('ran')\n" for n in SHADOWED}
+        files["app.py"] = "def run():\n    return 1\n"
+        self.tree = Tree(files)
+        self.addCleanup(self.tree.close)
+        # Scratch HOME: the launcher writes a registry and a shelf, and they
+        # must never be the ones a person opens.
+        self.home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.home, True)
+        base = os.path.basename(self.tree.dir)
+        parent = os.path.dirname(self.tree.dir)
+        self.addCleanup(lambda: [_unlink_quietly(os.path.join(parent, f))
+                                 for f in os.listdir(parent)
+                                 if f.startswith(base + "-map-")])
+
+    def _env(self, **extra):
+        # No DISPLAY, no DBUS: nothing may open a browser or a notification.
+        env = {"HOME": self.home, "CODECOBBLER_HOME": self.home,
+               "PATH": "/usr/bin:/bin", "USER": os.environ.get("USER", "nobody")}
+        env.update(extra)
+        return env
+
+    def _ran(self):
+        return sorted(os.listdir(self.markers))
+
+    def test_python_m_from_inside_the_project_runs_none_of_it(self):
+        r = subprocess.run([sys.executable, "-m", "cobblerpy", ".", "--no-history"],
+                           cwd=self.tree.dir, env=self._env(PYTHONPATH=REPO),
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(self._ran(), [], "the project's own code was executed")
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+
+    def test_the_installed_cobble_command_runs_none_of_it(self):
+        """The shim the installer writes, run exactly as a terminal would."""
+        subprocess.run(["sh", os.path.join(REPO, "packaging", "install-launcher.sh")],
+                       env=self._env(), capture_output=True, text=True,
+                       timeout=120, check=True, stdin=subprocess.DEVNULL)
+        cobble = os.path.join(self.home, ".local", "bin", "cobble")
+        r = subprocess.run([cobble, "."], cwd=self.tree.dir, env=self._env(),
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(self._ran(), [], "the project's own code was executed")
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+        self.assertIn("modules mapped", r.stderr)
+
+
 class TestShelf(unittest.TestCase):
     """The place a person goes to find the maps they already made.
 

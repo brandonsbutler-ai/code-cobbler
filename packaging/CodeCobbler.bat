@@ -31,11 +31,14 @@ if not defined PY (
   exit /b 1
 )
 
-set "PYTHONPATH=%REPO%;%PYTHONPATH%"
+REM PYTHONPATH is the checkout and nothing else, and the entry runs as a SCRIPT.
+REM An inherited or empty PYTHONPATH entry, or -m, puts the current directory
+REM on sys.path, and the current directory is usually the project being read.
+set "PYTHONPATH=%REPO%"
 if "%~1"=="" (
-  %PY% -m cobblerpy.launch --shelf
+  %PY% "%REPO%\packaging\launcher_entry.py" --shelf
 ) else (
-  %PY% -m cobblerpy.launch %*
+  %PY% "%REPO%\packaging\launcher_entry.py" %*
 )
 if errorlevel 1 pause
 endlocal
