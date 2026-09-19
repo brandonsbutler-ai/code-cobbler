@@ -40,7 +40,7 @@ cobble = "cobblerpy.launch:main"
 cobblerpy-gui = "cobblerpy.gui.qt_app:main"
 
 [project.urls]
-Homepage = "https://github.com/brandonsbutler-ai/cobblerpy"
+Homepage = "https://github.com/brandonsbutler-ai/code-cobbler"
 
 [tool.setuptools]
 packages = ["cobblerpy", "cobblerpy.gui"]
