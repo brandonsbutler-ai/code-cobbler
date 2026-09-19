@@ -410,7 +410,6 @@ class TestTagMarkers(unittest.TestCase):
         ("# TODO: wire up the retry path", "TODO"),
         ("# FIXME(alice): off by one", "FIXME"),
         ("# XXX this cannot be right", "XXX"),
-        ("# NOTE the disclosure's open handler", "NOTE"),
         ("# todo: lower case, but labelled", "TODO"),
         ("# hack(bob): temporary shim", "HACK"),
         ("#TEMP: no space after the hash", "TEMP"),
@@ -427,6 +426,15 @@ class TestTagMarkers(unittest.TestCase):
         "# swipe left to dismiss",                     # s-wip-e
         "# contemporary style",                        # con-temp-orary
         "# forty TODOs in one file is one situation",  # todo-s, no boundary
+        "# see KNOWN_BUGS.md for the list",            # _bug-s, no boundary
+        # A NOTE records a decision. It is not work anybody left undone, and
+        # it was 56 of the larger corpus's 75 "TODO" findings.
+        "# NOTE: gated by `command -v zypper` in the shell",
+        "# NOTE the disclosure's open handler",
+        # Prose ABOUT a tag. The marker convention puts it first.
+        "# a TODO in otherwise complete code is a note, not a hole.",
+        "# 301 distinct FIX-XXX tickets and many feature additions",
+        "# THE TEMP FILE IS GONE. Nothing survived this handler.",
     ]
 
     def test_the_real_markers_are_found(self):
@@ -455,7 +463,7 @@ class TestTagMarkers(unittest.TestCase):
         # Rejected by the WORD BOUNDARY: they match without it and not with it.
         for text in ("# attempts at one job. Two is too loose",
                      "# only WARNING+ unless --debug",
-                     "# see DESIGN_NOTES.md for the table",
+                     "# see KNOWN_BUGS.md for the list",
                      "# swipe left to dismiss"):
             self.assertTrue(loose.search(text), text)
             self.assertIsNone(bounded.search(text),
@@ -463,10 +471,26 @@ class TestTagMarkers(unittest.TestCase):
                               "the word boundary, so it does not test it")
 
         # Rejected by the CAPITALS-or-colon clause: they survive the boundary.
-        for text in ("# a note about the line it sits on",
-                     "# bug wearing a different hat"):
+        for text in ("# bug wearing a different hat",):
             self.assertTrue(bounded.search(text),
                             f"{text!r} never gets as far as the second clause")
+
+        # Rejected by the FIRST-WORD clause: bounded, in capitals, and prose.
+        for text in ("# a TODO in otherwise complete code is a note, not a hole.",
+                     "# 301 distinct FIX-XXX tickets and many feature additions",
+                     "# THE TEMP FILE IS GONE. Nothing survived this handler."):
+            m = bounded.search(text)
+            self.assertTrue(m and m.group(1).isupper(),
+                            f"{text!r} never gets as far as the first-word clause")
+
+    def test_the_evidence_quotes_the_comment_as_written(self):
+        """It printed "TODO: TODO: wire up..." -- the tag, then the comment
+        that already begins with it -- for a line that says it once."""
+        t = Tree({"m.py": "x = 1\n# TODO(ann): wire up the retry path\n"})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual(analyse_module(m)["todo"],
+                         [("TODO(ann): wire up the retry path", 2)])
 
     def test_a_marker_in_source_is_reported_and_a_substring_is_not(self):
         """End to end, because the rule is only worth what the scan does."""

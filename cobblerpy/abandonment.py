@@ -169,8 +169,8 @@ def analyse_module(module, overridden=()):
             found["syntax_error"].append((module.error, 0))
         return dict(found)
 
-    for tag, text, lineno in module.todos:
-        found["todo"].append((f"{tag}: {text}", lineno))
+    for _tag, text, lineno in module.todos:
+        found["todo"].append((text, lineno))    # the comment begins with its tag
 
     for d in module.definitions:
         if d.kind == "class":

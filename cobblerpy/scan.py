@@ -281,7 +281,9 @@ def _base_name(node):
 
 
 # Tags that mark work the author knew was unfinished.
-_TODO_TAGS = ("TODO", "FIXME", "XXX", "HACK", "BUG", "NOTE", "WIP", "TEMP",
+# NOTE is not one: a note records a decision, not work left undone, and it was
+# 56 of the larger corpus's 75 findings.
+_TODO_TAGS = ("TODO", "FIXME", "XXX", "HACK", "BUG", "WIP", "TEMP",
               "REVISIT", "REFACTOR")
 
 # A tag is a MARKER, not a substring.
@@ -300,7 +302,10 @@ _TODO_TAGS = ("TODO", "FIXME", "XXX", "HACK", "BUG", "NOTE", "WIP", "TEMP",
 #   - it is immediately followed by ":" or "(", as in a lower-case
 #     tag with a colon, or a tag with an owner in brackets.
 #
-# A word boundary is required either way, which is what rejects "debug".
+# A word boundary is required either way, which is what rejects "debug". And
+# it is the comment's FIRST word, where the convention puts it: "a TODO in
+# otherwise complete code is a note" is prose about a tag, and so is
+# "301 distinct FIX-XXX tickets".
 _TAG_WORD = re.compile(r"\b(" + "|".join(_TODO_TAGS) + r")\b", re.IGNORECASE)
 
 
@@ -309,12 +314,15 @@ def _tag_of(text):
 
     Near-misses this must reject, each checked in the tests by removing the
     clause that rejects it: "attempted" and "attempts" (no boundary before
-    TEMP), "debug" (none before BUG), "DESIGN_NOTES" (none after NOTE),
-    "# bug wearing a different hat" (lower case, no colon).
+    TEMP), "debug" (none before BUG), "KNOWN_BUGS" (none before BUG),
+    "# bug wearing a different hat" (lower case, no colon), "# a TODO in
+    otherwise complete code" (not the first word).
     """
-    for found in _TAG_WORD.finditer(text or ""):
+    body = (text or "").lstrip("#").lstrip()
+    found = _TAG_WORD.match(body)
+    if found:
         word = found.group(1)
-        after = (text[found.end():] or "")[:1]
+        after = body[found.end():][:1]
         if word.isupper() or after in (":", "("):
             return word.upper()
     return None
