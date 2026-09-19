@@ -1050,6 +1050,14 @@ class TestCommandLineEdges(unittest.TestCase):
         self.assertEqual(_clip(text, 56), "shares sign, signer, unsign, validate; both in ...")
         self.assertEqual(_clip("short", 56), "short")
 
+    def test_what_pip_install_leaves_in_the_clone_is_ignored(self):
+        """`pip install .` writes build/ and cobblerpy.egg-info/ into the
+        checkout; the second showed up in git status."""
+        for leftover in ("build/lib/cobblerpy/__init__.py",
+                         "cobblerpy.egg-info/PKG-INFO"):
+            r = subprocess.run(["git", "-C", REPO, "check-ignore", "-q", leftover])
+            self.assertEqual(r.returncode, 0, f"{leftover} is not ignored")
+
     def test_warnings_from_the_surveyed_code_stay_out_of_the_output(self):
         """Parsing somebody's `"\\d"` raises THEIR SyntaxWarning, not ours."""
         t = Tree({"m.py": 'PATTERN = "\\d+"\n# OTHER = "\\w"\n'})
