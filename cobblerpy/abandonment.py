@@ -130,40 +130,94 @@ def _empty_excepts(module):
 # An empty body under these is a DECLARATION, not a gap: typed libraries write
 # `...` for every @overload signature and Protocol method, and an abstract
 # method is supposed to raise NotImplementedError. On itsdangerous they were 11
-# of its 11 "stub" signals and put two finished modules at the top.
+# of its 11 "stub" signals and put two finished modules at the top. An ABC is
+# NOT on this list: a method on one without @abstractmethod is a concrete
+# method, and its `pass` is as unfinished as anybody else's.
 _DECLARING_DECORATORS = {"overload", "abstractmethod", "abstractproperty",
                          "abstractclassmethod", "abstractstaticmethod"}
-_DECLARING_BASES = {"Protocol", "ABC"}
+_DECLARING_BASES = {"Protocol"}
 
 
 def _tail(name):
     return str(name).split("[", 1)[0].rsplit(".", 1)[-1]
 
 
-def overridden_methods(modules):
-    """(class, method) pairs that a subclass somewhere in the project defines
-    again. Matched by class NAME, as written -- a base raising
-    NotImplementedError that its subclasses all replace is abstract in all
-    but the decorator."""
-    out = set()
-    for module in modules:
+def _classes_in(module):
+    return {d.name for d in module.definitions
+            if d.kind == "class" and d.parent is None}
+
+
+def _class_named(project, module, written):
+    """(module, class) that a name written in `module` refers to, or None.
+
+    Resolved through the import graph's own resolver, so `Runner` in one
+    module and `Runner` in another are two classes -- matching bare names
+    exempted a stub because an unrelated class of the same name had a
+    subclass somewhere else.
+    """
+    written = str(written).split("[", 1)[0]
+    if "." not in written and written in _classes_in(module):
+        return module.dotted, written
+    prefix, _dot, name = written.rpartition(".")
+    for target, alias, _ln, level, imported in module.imports:
+        if not prefix and alias == written:            # from x import Name
+            found = project._resolve(module, target, level, alias, imported)
+            if found and imported in _classes_in(project.by_dotted[found]):
+                return found, imported
+        elif prefix and alias == prefix:               # import x; x.Name
+            found = project._resolve(module, target, level, alias, imported)
+            if found and name in _classes_in(project.by_dotted[found]):
+                return found, name
+    return None
+
+
+def replaced_methods(project):
+    """(module, class, method) for each base method that EVERY subclass the
+    project defines replaces, on a base nothing calls directly.
+
+    That is a method abstract in all but the decorator: no call can land on
+    it. One subclass that inherits it, or one `Base()` somewhere, and a call
+    can -- so it stays a stub.
+    """
+    subclasses, methods, called = {}, {}, set()
+    for module in project.modules:
         for d in module.definitions:
-            if d.kind == "method":
-                out.update((_tail(b), d.name) for b in d.bases)
+            if d.kind == "class" and d.parent is None:
+                mine = (module.dotted, d.name)
+                methods.setdefault(mine, set())
+                for base in d.bases:
+                    key = _class_named(project, module, base)
+                    if key:
+                        subclasses.setdefault(key, []).append(mine)
+            elif d.kind == "method":
+                methods.setdefault((module.dotted, d.parent), set()).add(d.name)
+        for name, _ln in module.calls:
+            for written in (name, name.rpartition(".")[0]):
+                key = written and _class_named(project, module, written)
+                if key:
+                    called.add(key)
+    out = set()
+    for base, subs in subclasses.items():
+        if base in called:
+            continue
+        for method in methods.get(base, ()):
+            if all(method in methods.get(sub, ()) for sub in subs):
+                out.add((base[0], base[1], method))
     return out
 
 
-def declares_a_shape(definition, overridden=()):
+def declares_a_shape(definition, module=None, replaced=()):
     """True when an empty body is the definition's whole job."""
     if any(_tail(x) in _DECLARING_DECORATORS for x in definition.decorators):
         return True
     if definition.kind != "method":
         return False
     return (any(_tail(b) in _DECLARING_BASES for b in definition.bases)
-            or (definition.parent, definition.name) in overridden)
+            or (getattr(module, "dotted", None), definition.parent,
+                definition.name) in replaced)
 
 
-def analyse_module(module, overridden=()):
+def analyse_module(module, replaced=()):
     """Every abandonment signal in one module, with line numbers."""
     found = defaultdict(list)
 
@@ -178,7 +232,7 @@ def analyse_module(module, overridden=()):
     for d in module.definitions:
         if d.kind == "class":
             continue
-        if d.body_kind != "code" and declares_a_shape(d, overridden):
+        if d.body_kind != "code" and declares_a_shape(d, module, replaced):
             pass                          # a declaration, not a gap
         elif d.body_kind == "pass":
             found["stub_pass"].append((d.qualname, d.lineno))
@@ -222,11 +276,11 @@ def analyse_project(project):
     that is the order in which an inheritor should look at the code.
     """
     entry_names = {name for name, _ in project.entry_points}
-    overridden = overridden_methods(project.modules)
+    replaced = replaced_methods(project)
     rows = []
     for module in project.modules:
         key = module.dotted or module.relpath
-        signals = analyse_module(module, overridden)
+        signals = analyse_module(module, replaced)
         if key in project.orphans:
             signals["orphan"] = [("nothing imports this module", 0)]
         elif key not in project.reachable and key not in entry_names:

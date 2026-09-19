@@ -4422,6 +4422,66 @@ class TestTypedLibraryDeclarations(unittest.TestCase):
         self.assertIn("Store.save", self.ends)
 
 
+class TestSubclassExemptionIsNarrow(unittest.TestCase):
+    """The reviewer's fixture. The first cut of "a subclass replaces it"
+    fired when ANY class ANYWHERE with the same NAME redefined the method, and
+    exempted every `pass` on an ABC: 4 real signals became 0."""
+
+    FIXTURE = {
+        "pkg/__init__.py": "",
+        "pkg/other.py": ("class Runner:\n    def run(self):\n        return 1\n"
+                         "class Fast(Runner):\n    def run(self):\n        return 2\n"),
+        "pkg/base.py": (
+            "from abc import ABC\n"
+            "class Exporter:\n    def export(self, data):\n        raise NotImplementedError\n"
+            "class Csv(Exporter):\n    def export(self, data):\n        return ','.join(data)\n"
+            "class Json(Exporter):\n    pass\n"
+            "class Xml(Exporter):\n    pass\n\n"
+            "class Plugin(ABC):\n    def setup(self):\n        pass\n"
+            "    def teardown(self):\n        pass\n\n"
+            "class Runner:\n    def run(self):\n        raise NotImplementedError\n"),
+        "pkg/use.py": ("from pkg.base import Json, Plugin, Runner\n"
+                       "def go():\n    Json().export([])\n    Plugin().setup()\n"
+                       "    Runner().run()\n"),
+        # Every subclass replaces it, and nothing calls the base itself.
+        "pkg/shapes.py": ("class Shape:\n    def area(self):\n        raise NotImplementedError\n"
+                          "class Sq(Shape):\n    def area(self):\n        return 1\n"),
+        "pkg/draw.py": ("from pkg import shapes\n"
+                        "class Circle(shapes.Shape):\n    def area(self):\n        return 3\n"
+                        "def total():\n    return shapes.Sq().area() + Circle().area()\n"),
+    }
+
+    def setUp(self):
+        t = Tree(self.FIXTURE)
+        self.addCleanup(t.close)
+        s = t.survey()
+        self.stubs = {(r["module"], name) for r in s.frontier
+                      for kind in ("stub_pass", "stub_ellipsis", "not_implemented")
+                      for name, _ln in r["signals"].get(kind, [])}
+
+    def test_the_real_stubs_are_kept(self):
+        self.assertEqual(self.stubs - {("pkg.shapes", "Shape.area")},
+                         {("pkg.base", "Exporter.export"), ("pkg.base", "Plugin.setup"),
+                          ("pkg.base", "Plugin.teardown"), ("pkg.base", "Runner.run")})
+
+    def test_a_generic_or_abc_class_is_still_a_real_class_for_dead_ends(self):
+        """`Generic` only became visible once `Generic[T]` resolved to its
+        name, and it exempted every method of every generic class."""
+        from cobblerpy.deadends import find
+        t = Tree({"main.py": "import box\nif __name__ == '__main__':\n"
+                             "    box.Box().put(1)\n    box.Hook().fire()\n",
+                  "box.py": "import typing as t\nfrom abc import ABC\nT = t.TypeVar('T')\n"
+                            "class Box(t.Generic[T]):\n    def put(self, x):\n        pass\n"
+                            "class Hook(ABC):\n    def fire(self):\n        pass\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        ends = {d["qualname"] for d in find(s.project, s.modules_by_key, s.origins)}
+        self.assertEqual(ends, {"Box.put", "Hook.fire"})
+
+    def test_a_base_every_subclass_replaces_is_still_exempt(self):
+        self.assertNotIn(("pkg.shapes", "Shape.area"), self.stubs)
+
+
 class TestEvidenceCompleteness(unittest.TestCase):
 
     def _render_panel(self, page_html, module):

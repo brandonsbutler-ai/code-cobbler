@@ -22,7 +22,7 @@ SUPPOSED to raise NotImplementedError.
 
 from collections import defaultdict
 
-from .abandonment import overridden_methods
+from .abandonment import replaced_methods
 
 _STUB_KINDS = {"pass": "body is only `pass`",
                "ellipsis": "body is only `...`",
@@ -38,8 +38,13 @@ _EXPECTED_EMPTY = ("Error", "Exception", "Warning", "Base", "Abstract",
 # the thing that makes it idiomatic is the class it sits in. On one real
 # project that put six Protocol methods above every actual stub, at the top of
 # a list whose whole purpose is to say where to start reading.
-_DECLARATIVE_BASES = ("Protocol", "ABC", "ABCMeta", "Interface",
-                      "TypedDict", "NamedTuple", "Generic")
+#
+# Not ABC and not Generic. A method on an ABC without @abstractmethod is
+# concrete (the decorator check below covers the abstract ones), and a generic
+# class is an ordinary class with a type parameter -- `Generic` only became
+# visible once `Generic[T]` resolved to its name, and it then exempted every
+# method of every generic class.
+_DECLARATIVE_BASES = ("Protocol", "Interface", "TypedDict", "NamedTuple")
 
 
 def _is_test_module(key):
@@ -55,15 +60,15 @@ def _is_test_module(key):
                or p.endswith("_test") or p == "conftest" for p in parts)
 
 
-def _is_expected_empty(definition, module, overridden=()):
+def _is_expected_empty(definition, module, replaced=()):
     """True when this definition is empty for a normal reason."""
     if definition.kind == "class":
         return True                       # an empty class body is idiomatic
-    if (definition.parent, definition.name) in overridden:
+    if (module.dotted, definition.parent, definition.name) in replaced:
         return True                       # every call dispatches past it
     if any(definition.name.endswith(s) for s in _EXPECTED_EMPTY):
         return True
-    # A method of a Protocol, an ABC or a TypedDict is declaring a shape, not
+    # A method of a Protocol or a TypedDict is declaring a shape, not
     # leaving a gap. The base names are taken as written, so an alias or a
     # generic subscript (Protocol[T] resolves to Protocol) still matches, and
     # an unrecognised base is treated as a real class -- erring towards
@@ -123,7 +128,7 @@ def find(project, modules_by_key, origins=None):
     """Every dead-end in the project, most-called first."""
     origins = origins or {}
 
-    overridden = overridden_methods(modules_by_key.values())
+    replaced = replaced_methods(project)
     stubs = {}
     for key, module in modules_by_key.items():
         if origins.get(key, {}).get("origin") == "vendored":
@@ -133,7 +138,7 @@ def find(project, modules_by_key, origins=None):
         for definition in module.definitions:
             if definition.body_kind not in _STUB_KINDS:
                 continue
-            if _is_expected_empty(definition, module, overridden):
+            if _is_expected_empty(definition, module, replaced):
                 continue
             stubs.setdefault(definition.name, []).append((key, module, definition))
 
