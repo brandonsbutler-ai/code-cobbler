@@ -183,7 +183,7 @@ echo "  $BIN/cobble"
 echo "  $APPS/codecobbler.desktop      (app menu + drag a folder onto it)"
 echo "  $SCRIPTS/Map with CodeCobbler  (right-click in the file manager)"
 echo "  $ICONS/codecobbler.svg"
-if [ -d "$SHELF" ]; then echo "  shelf: $SHELF"
+if [ -d "$SHELF" ] || [ "$SHELF" = "$DEFAULT_SHELF" ]; then echo "  shelf: $SHELF"
 else echo "  shelf: $DEFAULT_SHELF, until $SHELF exists"; fi
 [ -d "$DESK" ] && echo "  $DESK/CodeCobbler.desktop   (if GNOME shows it greyed: right-click -> Allow Launching)"
 echo
