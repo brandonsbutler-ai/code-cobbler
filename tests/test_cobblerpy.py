@@ -2628,6 +2628,45 @@ class TestShelf(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(d)), ["kept.html", "maps.json"],
                          "the temporary file was left behind")
 
+    def test_the_register_keeps_its_permissions(self):
+        """mkstemp creates 0600, so every write narrowed the register."""
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        m = os.path.join(d, "m.html")
+        open(m, "w", encoding="utf-8").close()
+        reg = os.path.join(d, "maps.json")
+        launch.record_map(reg, "p", m, 1, folder="/w/p")
+        mask = os.umask(0)
+        os.umask(mask)
+        self.assertEqual(os.stat(reg).st_mode & 0o777, 0o666 & ~mask)
+        os.chmod(reg, 0o640)
+        launch.record_map(reg, "q", m, 1, folder="/w/q")
+        self.assertEqual(os.stat(reg).st_mode & 0o777, 0o640)
+
+    def test_a_register_that_cannot_be_replaced_is_reported_not_raised(self):
+        """On Windows os.replace fails while another program holds the file.
+        The map is already written; the run says the shelf was not updated."""
+        from unittest import mock
+        from cobblerpy import launch
+        t = Tree({"only.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        said, opened = [], []
+        with mock.patch.object(launch.os, "replace",
+                               side_effect=PermissionError(13, "held open")):
+            code = launch.main([t.dir], notify=said.append,
+                               open_url=lambda u: opened.append(u) or True,
+                               registry=os.path.join(t.dir, "maps.json"),
+                               shelf=os.path.join(t.dir, "shelf.html"))
+        for u in opened:
+            self.addCleanup(_unlink_quietly, u.replace("file://", ""))
+        joined = " ".join(said)
+        self.assertEqual(code, 0, joined)
+        self.assertEqual(len(opened), 1, "the map was not opened")
+        self.assertIn("shelf", joined)
+        self.assertIn("held open", joined)
+        self.assertEqual([f for f in os.listdir(t.dir) if f.endswith(".tmp")], [])
+
     def test_a_legacy_row_for_another_folder_survives_the_first_keyed_write(self):
         """Rows written before folders were recorded have only a name. The
         first write for b/src dropped the old row for a/src."""

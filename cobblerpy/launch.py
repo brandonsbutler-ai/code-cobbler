@@ -107,11 +107,25 @@ def record_map(registry, project, map_path, modules, folder=None):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(rows, fh, indent=1)
+        # mkstemp makes 0600; keep the register's own mode, or the one a plain
+        # open() would have given a new file. No lock: two runs at the same
+        # moment can still lose one row, which comes back on its next map.
+        try:
+            mode = os.stat(registry).st_mode & 0o777
+        except OSError:
+            mode = 0o666 & ~_umask()
+        os.chmod(temporary, mode)
         os.replace(temporary, registry)
     except BaseException:
         os.unlink(temporary)
         raise
     return rows
+
+
+def _umask():
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
 
 
 def _same_project(row, project, folder):
@@ -336,9 +350,16 @@ def main(argv=None, notify=None, open_url=None, registry=None, shelf=None):
               destination, origins=surveyed.origins,
               modules_by_key=surveyed.modules_by_key)
     count = len(surveyed.project.modules)
-    record_map(registry, os.path.basename(target.rstrip(os.sep)) or target,
-               destination, count, folder=target)
-    write_shelf(registry, shelf)
+    # The map is written. A register another program holds open (os.replace
+    # on Windows) or a read-only shelf loses the SHELF, not the map, so it is
+    # said and the run carries on.
+    try:
+        record_map(registry, os.path.basename(target.rstrip(os.sep)) or target,
+                   destination, count, folder=target)
+        write_shelf(registry, shelf)
+    except OSError as exc:
+        notify(f"The map is written, but the shelf could not be updated: "
+               f"{exc.strerror or exc} ({registry})")
     # Try FIRST, then say what happened. webbrowser.open returns False rather
     # than raising when it cannot find a browser -- headless, over ssh, inside a
     # container -- and announcing "opening the map" before checking left
