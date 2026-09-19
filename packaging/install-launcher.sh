@@ -190,9 +190,10 @@ EOF
 chmod +x "$APPS/codecobbler.desktop"
 update-desktop-database "$APPS" 2>/dev/null || true
 
-# A copy ON the desktop, which is where he asked for it. GNOME will not launch
-# a .desktop from ~/Desktop until it is marked trusted; gio is not installed
-# here, so the fallback is the one right-click ("Allow Launching") named below.
+# A copy ON the desktop, where a person looks for it. GNOME will not launch a
+# .desktop from ~/Desktop until it is marked trusted; gio may not be
+# installed, so the fallback is the one right-click ("Allow Launching") named
+# below.
 if [ -d "$DESK" ]; then
   cp "$APPS/codecobbler.desktop" "$DESK/CodeCobbler.desktop"
   chmod +x "$DESK/CodeCobbler.desktop"

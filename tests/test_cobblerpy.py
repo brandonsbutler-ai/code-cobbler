@@ -1058,7 +1058,7 @@ class TestEndToEnd(unittest.TestCase):
 
 
 class TestCommandLineEdges(unittest.TestCase):
-    """Small things the command line got wrong in front of a customer."""
+    """Small things the command line got wrong when it was used for real."""
 
     def _cli(self, *args):
         return subprocess.run([sys.executable, "-m", "cobblerpy", *args],
@@ -1100,6 +1100,22 @@ class TestCommandLineEdges(unittest.TestCase):
             bat = fh.read()
         self.assertEqual(re.findall(r"\b[A-Za-z]:\\\S+", bat), [])
         self.assertIn("%~dp0", bat)
+
+    def test_the_code_states_rules_not_who_made_them(self):
+        """A public repository: a rule is written as the rule. The design
+        notes attribute decisions on purpose and are not checked here."""
+        name, asked = "Bran" + "don", "he " + "asked"
+        found = []
+        for d in ("cobblerpy", "packaging", "tests"):
+            for dirpath, dirs, files in os.walk(os.path.join(REPO, d)):
+                dirs[:] = [x for x in dirs if x != "__pycache__"]
+                for f in files:
+                    if f.endswith((".py", ".sh", ".bat")):
+                        with open(os.path.join(dirpath, f), encoding="utf-8") as fh:
+                            for n, line in enumerate(fh, 1):
+                                if name in line or asked in line:
+                                    found.append(f"{f}:{n}")
+        self.assertEqual(found, [])
 
     def test_what_pip_install_leaves_in_the_clone_is_ignored(self):
         """`pip install .` writes build/ and cobblerpy.egg-info/ into the
@@ -2232,7 +2248,7 @@ class TestInstaller(unittest.TestCase):
     """packaging/install-launcher.sh, run into a scratch HOME.
 
     It used to put the shelf on the first writable mount it found without a
-    word. Brandon's call: it ASKS, offering ~/.local/share/codecobbler (the
+    word. The rule now: it ASKS, offering ~/.local/share/codecobbler (the
     default) and every writable shared mount; with no terminal it takes the
     default and says so; CODECOBBLER_HOME already set skips the question.
     """
