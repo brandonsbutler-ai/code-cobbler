@@ -1600,6 +1600,66 @@ class TestFolderOverview(unittest.TestCase):
         return not (a["x"] + a["w"] <= b["x"] or b["x"] + b["w"] <= a["x"]
                     or a["y"] + a["h"] <= b["y"] or b["y"] + b["h"] <= a["y"])
 
+    def test_the_untracked_badge_does_not_sit_on_the_size_line(self):
+        """Measured in Chromium: on 18 of atlas's 55 cards the "untracked"
+        badge was drawn over "624 lines · no history". This is the markup
+        half of that check, with the widths Chromium measured per character
+        (6.0px for the 11px line, 7.0px for the 8.5px spaced badge)."""
+        t = Tree({"run.py": 'if __name__ == "__main__":\n    pass\n'}, git=True)
+        self.addCleanup(t.close)
+        write(t.dir, "a_module_nobody_committed.py", "x = 1\n" * 600)
+        # Two uncommitted attempts at one job: the one that stops carries the
+        # continuation mark in the same corner as its badge.
+        write(t.dir, "ingest.py", "def parse_record(r):\n    return r\n\n\n"
+              "def validate_record(r):\n    pass\n\n\ndef store_record(r):\n    pass\n")
+        write(t.dir, "ingest_v2.py", "def parse_record(r):\n    return dict(r)\n\n\n"
+              "def validate_record(r):\n    return True\n\n\n"
+              "def store_record(r):\n    return r\n")
+        s = t.survey(with_history=True)
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+
+        class Cards(HTMLParser):
+            def __init__(self):
+                super().__init__(convert_charrefs=True)
+                self.cards, self._text = [], None
+
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                if tag == "g" and a.get("class") == "node":
+                    self.cards.append({})
+                elif tag == "text" and self.cards:
+                    self._text = a
+                    self.cards[-1][a.get("class")] = [a, ""]
+
+            def handle_endtag(self, tag):
+                if tag == "text":
+                    self._text = None
+
+            def handle_data(self, data):
+                if self._text is not None and self.cards:
+                    self.cards[-1][self._text.get("class")][1] += data
+
+        with open(out, encoding="utf-8") as fh:
+            parsed = Cards()
+            parsed.feed(fh.read())
+        badged = [c for c in parsed.cards if "badge" in c]
+        self.assertTrue(badged, "the fixture drew no badge, so this proves nothing")
+        for card in badged:
+            (owner, text), (badge, word) = card["meta owner"], card["badge"]
+            right_of_text = float(owner["x"]) + 6.0 * len(text)
+            left_of_badge = float(badge["x"]) - 7.0 * len(word)
+            self.assertLessEqual(right_of_text, left_of_badge,
+                                 f"{text!r} runs under {word!r}")
+        both = [c for c in badged if "continues-mark" in c]
+        self.assertTrue(both, "no card has a badge AND a continuation mark")
+        for card in both:
+            badge, mark = card["badge"][0], card["continues-mark"][0]
+            self.assertLessEqual(float(badge["x"]), float(mark["x"]) - 20,
+                                 "the badge is drawn under the continuation mark")
+
     def test_no_two_cards_overlap(self):
         """Packing is the whole layout, so an overlap is the whole bug."""
         from cobblerpy.layout import compute_folders

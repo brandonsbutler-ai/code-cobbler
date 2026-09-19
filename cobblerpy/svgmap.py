@@ -33,6 +33,15 @@ def state_for(node, name, project, deadends_by_module):
                     deadend=bool(deadends_by_module.get(name)))
 
 
+def _meta_line(size, owner, w, badge, continues):
+    """The size-and-owner row, fitted to what the right-hand marks leave."""
+    # Chromium's widths: the 8.5px spaced badge is 7px a character, the
+    # continuation arrow about 20px; the 11px row is 6.2px a character.
+    reserve = (7 * len(badge) + 8 if badge else 0) + (22 if continues else 0)
+    text = size if badge else size + "  \u00b7  " + owner
+    return _fit(text, int((w - 18 - reserve) / 6.2))
+
+
 def _fit(text, chars, keep_end=0):
     """Truncate to fit a card. The full value is on hover and in the panel.
 
@@ -385,9 +394,13 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             f'<text class="meta" x="{x + 9}" y="{y + 38}">'
             f'{_e(_fit(location, int((w - 18) / 6.2)))}</text>'
             # Size and owner share a line: two facts, one row, and the card
-            # loses a quarter of its height.
+            # loses a quarter of its height. A badge or a continuation mark
+            # sits at the right-hand end of this same row, so the text stops
+            # short of it -- measured in Chromium, "untracked" was drawn over
+            # "624 lines · no his…" on 18 of 55 cards. With a badge the line
+            # is the size alone; the owner is still in the hover.
             f'<text class="meta owner" x="{x + 9}" y="{y + 53}">'
-            f'{_e(_fit(size + "  \u00b7  " + owner, int((w - 18) / 6.2)))}</text>'
+            f'{_e(_meta_line(size, owner, w, badge_origin, carries_on))}</text>'
             # How long the module is, as a length rather than as a shape.
             # Every bar starts at the same x on every card, so a column of
             # them reads like a chart. Sizing each card individually encoded
@@ -398,8 +411,8 @@ def render(graph, project, frontier_by_module, snippets_by_module,
             + (f'<rect class="bar" x="{x + 9}" y="{y + h - 12}" '
                f'width="{max(2, round((w - 18) * share)):.0f}" '
                f'height="{BAR_H}" rx="1.5" fill="{stroke}"/>' if share else "")
-            + (f'<text class="badge" x="{x + w - 9}" y="{y + h - 18}" '
-               f'text-anchor="end">{badge_origin}</text>'
+            + (f'<text class="badge" x="{x + w - 9 - (22 if carries_on else 0)}" '
+               f'y="{y + h - 18}" text-anchor="end">{badge_origin}</text>'
                if badge_origin else "")
             + (f'<text class="marks" x="{x + w - 9}" '
                f'y="{y + 19}" text-anchor="end">{marks}</text>'
