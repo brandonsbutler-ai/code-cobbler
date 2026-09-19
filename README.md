@@ -299,7 +299,7 @@ projects it read except by writing a map beside them.
 | Installed with | What it left | How to remove it |
 |---|---|---|
 | `pip install` | the package and the `cobblerpy`, `cobble` and `cobblerpy-gui` commands; in the clone, `build/` and `cobblerpy.egg-info/` | `pip uninstall cobblerpy`, then delete those two folders from the clone. With `[gui]`, also `pip uninstall PySide6-Essentials shiboken6` |
-| `packaging/install-launcher.sh` | `~/.local/bin/cobble`, `~/.local/share/applications/codecobbler.desktop`, `~/.local/share/icons/codecobbler.svg`, `~/.local/share/nautilus/scripts/Map with CodeCobbler`, and `CodeCobbler.desktop` on the desktop | `sh packaging/install-launcher.sh --uninstall` removes exactly those and rebuilds the desktop database's `mimeinfo.cache` |
+| `packaging/install-launcher.sh` | `~/.local/bin/cobble`, `~/.local/share/applications/codecobbler.desktop`, `~/.local/share/icons/codecobbler.svg`, `~/.local/share/nautilus/scripts/Map with CodeCobbler`, and `CodeCobbler.desktop` on the desktop | `sh packaging/install-launcher.sh --uninstall` removes those it wrote, each of which carries an `X-CodeCobbler-Installer` mark, and rebuilds the desktop database's `mimeinfo.cache`. A file at one of those paths without the mark, such as the `cobble` that `pip install --user` puts in `~/.local/bin`, is left alone and named |
 | the single executable | the file you extracted | delete it |
 
 What `cobble`, the desktop icon and the window write is your work, so no
@@ -347,7 +347,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 216 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 217 tests, no pytest required
 python3 verify_e2e.py                        # 115 end-to-end claim checks
 ```
 

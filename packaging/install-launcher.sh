@@ -17,18 +17,25 @@ ICONS="$HOME/.local/share/icons"
 SCRIPTS="$HOME/.local/share/nautilus/scripts"
 DESK=$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")
 
+# Every file the install below writes carries this mark, and uninstall removes
+# only files that do. Removing by PATH deleted `pip install --user`'s own
+# ~/.local/bin/cobble, which lives at exactly the same place.
+MARK=X-CodeCobbler-Installer
+
 # Exactly the files the install below writes, and nothing else. The shelf, its
 # register and the maps are the person's work, not the launcher's, so they
 # stay; where they are is said instead.
 if [ "${1:-}" = "--uninstall" ]; then
   KEPT="$HOME/.local/share/codecobbler"
-  if [ -f "$BIN/cobble" ]; then
+  if [ -f "$BIN/cobble" ] && grep -q "$MARK" "$BIN/cobble"; then
     RECORDED=$(sed -n 's/^CODECOBBLER_HOME="\${CODECOBBLER_HOME:-\(.*\)}" \\$/\1/p' "$BIN/cobble")
     [ -n "$RECORDED" ] && KEPT="$RECORDED"
   fi
   for f in "$BIN/cobble" "$APPS/codecobbler.desktop" "$ICONS/codecobbler.svg" \
            "$SCRIPTS/Map with CodeCobbler" "$DESK/CodeCobbler.desktop"; do
-    if [ -e "$f" ]; then rm -f "$f" && echo "removed $f"; fi
+    [ -e "$f" ] || continue
+    if grep -q "$MARK" "$f"; then rm -f "$f" && echo "removed $f"
+    else echo "left alone: not ours: $f"; fi
   done
   update-desktop-database "$APPS" 2>/dev/null || true
   echo "kept: the shelf and its register in $KEPT, and every"
@@ -83,6 +90,7 @@ SHARED="$SHELF"
 
 cat > "$BIN/cobble" <<EOF
 #!/bin/sh
+# $MARK
 # CodeCobbler launcher. All behaviour is in cobblerpy/launch.py; this only says
 # where the package is (the checkout is not pip-installed) and, if this machine
 # has a volume both OSes can see, where the shared shelf lives.
@@ -97,6 +105,7 @@ chmod +x "$BIN/cobble"
 
 cat > "$ICONS/codecobbler.svg" <<'EOF'
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- X-CodeCobbler-Installer -->
   <rect x="2" y="2" width="60" height="60" rx="14" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/>
   <text x="32" y="41" font-family="DejaVu Sans, sans-serif" font-size="26"
         font-weight="bold" text-anchor="middle" fill="#ffffff">C<tspan fill="#58a6ff">C</tspan></text>
@@ -105,6 +114,7 @@ EOF
 
 cat > "$SCRIPTS/Map with CodeCobbler" <<'EOF'
 #!/bin/sh
+# X-CodeCobbler-Installer
 # Right-click a folder -> Scripts -> Map with CodeCobbler.
 # Nautilus passes the selection in NAUTILUS_SCRIPT_SELECTED_FILE_PATHS, one
 # path per line; the argument list is the fallback.
@@ -130,6 +140,7 @@ Terminal=false
 Categories=Development;
 MimeType=inode/directory;
 StartupNotify=true
+$MARK=1
 EOF
 chmod +x "$APPS/codecobbler.desktop"
 update-desktop-database "$APPS" 2>/dev/null || true

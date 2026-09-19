@@ -2165,6 +2165,28 @@ class TestInstaller(unittest.TestCase):
         self.assertIn(".local/share/codecobbler", r.stdout,
                       "it did not say where the kept maps are")
 
+    def test_uninstall_leaves_alone_files_it_did_not_write(self):
+        """`pip install --user` puts its own `cobble` at ~/.local/bin/cobble,
+        and uninstall deleted it by path. Only files carrying the installer's
+        mark are the installer's."""
+        os.makedirs(os.path.join(self.home, "Desktop"))
+        foreign = {
+            ".local/bin/cobble": "#!/usr/bin/python3\nfrom cobblerpy.launch import main\n",
+            "Desktop/CodeCobbler.desktop": "[Desktop Entry]\nName=Someone else's\n",
+            ".local/share/applications/codecobbler.desktop": "[Desktop Entry]\n",
+            ".local/share/icons/codecobbler.svg": "<svg/>\n",
+            ".local/share/nautilus/scripts/Map with CodeCobbler": "#!/bin/sh\n",
+        }
+        for rel, text in foreign.items():
+            write(self.home, rel, text)
+        before = self._files()
+        r = subprocess.run(["sh", self.SCRIPT, "--uninstall"], env=self.env,
+                           stdin=subprocess.DEVNULL, capture_output=True,
+                           text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._files(), before, r.stdout)
+        self.assertEqual(r.stdout.count("left alone: not ours"), len(foreign), r.stdout)
+
     def test_a_shared_mount_it_offers_is_recorded_when_chosen(self):
         import re
         out = self._interactive("")
