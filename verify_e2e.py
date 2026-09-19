@@ -945,14 +945,17 @@ def verify_documentation():
           and _cfg.get("tool", {}).get("setuptools", {}).get("dynamic", {})
                   .get("version") == {"attr": "cobblerpy.__version__"},
           _cfg["project"].get("version"))
-    # The Homepage named a repository that does not exist (a 404). It must be
-    # the one this checkout pushes to.
-    _origin = subprocess.run(["git", "-C", ROOT, "remote", "get-url", "origin"],
-                             capture_output=True, text=True).stdout.strip()
+    # The Homepage named a repository that does not exist (a 404), while the
+    # README sends people to the real one for the binary. Both name the same
+    # repository or one of them is wrong. (Not the git remote: a fork's
+    # checkout has its own, and would fail here for being a fork.)
+    with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as _fh:
+        _linked = set(re.findall(r"https://github\.com/[\w.-]+/[\w.-]+",
+                                 _fh.read()))
     _home = _cfg["project"].get("urls", {}).get("Homepage", "")
-    check("the pyproject Homepage is the repository this pushes to",
-          bool(_origin) and _home == re.sub(r"\.git$", "", _origin),
-          f"Homepage {_home}, origin {_origin}")
+    check("the pyproject Homepage is the repository the README links to",
+          bool(_linked) and _linked == {_home},
+          f"Homepage {_home}, README links {sorted(_linked)}")
     _tags = subprocess.run(["git", "-C", ROOT, "tag", "--list", "v*"],
                            capture_output=True, text=True).stdout.split()
     _released = max((tuple(int(x) for x in t[1:].split(".")) for t in _tags
