@@ -2438,6 +2438,24 @@ class TestInstaller(unittest.TestCase):
         with open(os.path.join(self.home, ".local/bin/cobble"), encoding="utf-8") as fh:
             self.assertIn("X-CodeCobbler-Installer", fh.read())
 
+    def test_every_argument_is_read_and_an_unknown_one_refused(self):
+        """Only $1 was read: `--force --uninstall` force-INSTALLED, and a
+        misspelt option installed with exit 0."""
+        run = lambda *a: subprocess.run(["sh", self.SCRIPT, *a], env=self.env,
+                                        stdin=subprocess.DEVNULL, capture_output=True,
+                                        text=True, timeout=60)
+        before = self._files()
+        for args in (["--bogus"], ["--force", "--uninstall"], ["--uninstall", "--force"],
+                     ["--force", "extra"]):
+            r = run(*args)
+            self.assertEqual(r.returncode, 2, f"{args}: {r.stdout}{r.stderr}")
+            self.assertIn("usage:", r.stderr)
+            self.assertEqual(self._files(), before, f"{args} changed files")
+        r = run("--help")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("usage:", r.stdout)
+        self.assertEqual(self._files(), before)
+
     def test_an_answer_that_is_not_a_choice_is_asked_again(self):
         """"0" made the shelf "$0" -- the installer's own path -- and a
         twenty-digit number reached the shell's arithmetic."""

@@ -11,6 +11,29 @@
 #   sh packaging/install-launcher.sh --force      # replaces files it did not write
 #
 set -eu
+
+# Every argument is read. Only $1 used to be, so `--force --uninstall` did a
+# forced INSTALL and a misspelt option installed and exited 0.
+USAGE="usage: sh packaging/install-launcher.sh [--force | --uninstall | --help]"
+FORCE=0
+UNINSTALL=0
+for arg in "$@"; do
+  case "$arg" in
+    --force) FORCE=1 ;;
+    --uninstall) UNINSTALL=1 ;;
+    -h|--help) echo "$USAGE"; exit 0 ;;
+    *) echo "unknown argument: $arg" >&2; echo "$USAGE" >&2; exit 2 ;;
+  esac
+done
+# Refused rather than read as "remove everything": uninstall never removes a
+# file it did not write, and pip's own `cobble` is exactly such a file.
+if [ "$FORCE" = 1 ] && [ "$UNINSTALL" = 1 ]; then
+  echo "--force and --uninstall together are refused: uninstall only ever" >&2
+  echo "removes files this installer wrote; remove anything else yourself." >&2
+  echo "$USAGE" >&2
+  exit 2
+fi
+
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 BIN="$HOME/.local/bin"
 APPS="$HOME/.local/share/applications"
@@ -37,7 +60,7 @@ dq_exec() { printf '"%s"' "$(printf '%s' "$1" | sed -e 's/[\\"`$]/\\&/g' -e 's/\
 # Exactly the files the install below writes, and nothing else. The shelf, its
 # register and the maps are the person's work, not the launcher's, so they
 # stay; where they are is said instead.
-if [ "${1:-}" = "--uninstall" ]; then
+if [ "$UNINSTALL" = 1 ]; then
   KEPT="$HOME/.local/share/codecobbler"
   if [ -f "$BIN/cobble" ] && grep -q "$MARK" "$BIN/cobble"; then
     # The shim's own single-quoted assignment, read back by the shell.
@@ -60,7 +83,7 @@ fi
 # own `cobble` lives at exactly ~/.local/bin/cobble. Overwriting it marked it
 # as ours, and uninstall then deleted it. Nothing is written until every path
 # is either free or already ours.
-if [ "${1:-}" != "--force" ]; then
+if [ "$FORCE" != 1 ]; then
   THEIRS=""
   for f in "$BIN/cobble" "$APPS/codecobbler.desktop" "$ICONS/codecobbler.svg" \
            "$SCRIPTS/Map with CodeCobbler" "$DESK/CodeCobbler.desktop"; do

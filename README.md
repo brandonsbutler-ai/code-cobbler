@@ -189,7 +189,9 @@ greyed out, right-click it once and choose Allow Launching.)
 It will not overwrite a file at one of those paths that it did not write --
 `pip install --user` puts its own `cobble` in `~/.local/bin` -- and says which;
 remove it, or run it again with `--force` to replace it. An install made before
-the installer marked its files needs `--force` once.
+the installer marked its files needs `--force` once. `--force` and `--uninstall`
+together are refused: uninstall only ever removes files the installer wrote. Any
+other argument is refused with the usage line.
 
 It asks where the shelf of maps should live: `~/.local/share/codecobbler`, the
 default, or any writable shared volume it finds under `/media`, `/run/media` or
@@ -369,7 +371,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 240 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 241 tests, no pytest required
 python3 verify_e2e.py                        # 115 end-to-end claim checks
 ```
 
