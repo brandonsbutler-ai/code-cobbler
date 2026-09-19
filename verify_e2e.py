@@ -969,10 +969,16 @@ def verify_documentation():
                            capture_output=True, text=True).stdout.split()
     _released = max((tuple(int(x) for x in t[1:].split(".")) for t in _tags
                      if re.fullmatch(r"v\d+(\.\d+)*", t)), default=())
-    check(f"the version is not behind the newest release tag "
-          f"(v{'.'.join(map(str, _released))})",
-          tuple(int(x) for x in __version__.split(".")) >= _released,
-          f"package says {__version__}")
+    # Equal is only right ON the tagged commit. Past it, the source behaves
+    # differently from the released binary -- --help, the shelf, the guards --
+    # and the same number on both says they are the same thing.
+    _on_tag = subprocess.run(["git", "-C", ROOT, "describe", "--tags",
+                              "--exact-match"], capture_output=True).returncode == 0
+    _mine = tuple(int(x) for x in __version__.split("."))
+    check(f"the version is past the newest release tag "
+          f"(v{'.'.join(map(str, _released))}) unless this is that commit",
+          _mine >= _released if _on_tag else _mine > _released,
+          f"package says {__version__}, on a tag: {_on_tag}")
 
     for name in ("README.md", "DESIGN_NOTES.md", "LICENSE", "pyproject.toml"):
         check(f"{name} is present", os.path.isfile(os.path.join(ROOT, name)))

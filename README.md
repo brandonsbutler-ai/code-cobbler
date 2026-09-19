@@ -262,9 +262,10 @@ tar xzf CodeCobbler-linux-x86_64.tar.gz
 ./CodeCobbler --help                # also --version
 ```
 
-`--help` and `--version` are newer than the v0.1.1 build, which treats both as
-"map the current folder"; they arrive with the next release. To build it
-yourself from this source:
+This source is 0.1.2. The v0.1.1 release binary predates `--help` and
+`--version`, which it treats as "map the current folder", and the guards that
+keep a project's own code from running; build 0.1.2 from this source, as
+below, until a v0.1.2 release is published:
 
 ```bash
 python3 -m pip install pyinstaller
