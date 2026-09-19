@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cobblerpy"
-version = "0.1.0"
+# The version lives in ONE place, cobblerpy/__init__.py, and is read from there.
+dynamic = ["version"]
 description = "Make sense of a Python codebase somebody else left behind"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -43,3 +44,6 @@ Homepage = "https://github.com/brandonsbutler-ai/cobblerpy"
 
 [tool.setuptools]
 packages = ["cobblerpy", "cobblerpy.gui"]
+
+[tool.setuptools.dynamic]
+version = { attr = "cobblerpy.__version__" }

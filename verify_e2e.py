@@ -933,12 +933,26 @@ def verify_documentation():
             detail = "toolkit absent; main is bound at module scope"
         check(f"packaging/{entry} exposes a callable main", has_main, detail)
 
+    # ONE version, in the package; pyproject reads it from there. Two copies
+    # agreed with each other at 0.1.0 while the release was tagged v0.1.1.
     import tomllib
     with open(os.path.join(ROOT, "pyproject.toml"), "rb") as fh:
-        version = tomllib.load(fh)["project"]["version"]
+        _cfg = tomllib.load(fh)
     from cobblerpy import __version__
-    check("version agrees between package and pyproject", version == __version__,
-          f"{version} vs {__version__}")
+    check("the version is written once, in the package, and pyproject reads it",
+          "version" not in _cfg["project"]
+          and "version" in _cfg["project"].get("dynamic", [])
+          and _cfg.get("tool", {}).get("setuptools", {}).get("dynamic", {})
+                  .get("version") == {"attr": "cobblerpy.__version__"},
+          _cfg["project"].get("version"))
+    _tags = subprocess.run(["git", "-C", ROOT, "tag", "--list", "v*"],
+                           capture_output=True, text=True).stdout.split()
+    _released = max((tuple(int(x) for x in t[1:].split(".")) for t in _tags
+                     if re.fullmatch(r"v\d+(\.\d+)*", t)), default=())
+    check(f"the version is not behind the newest release tag "
+          f"(v{'.'.join(map(str, _released))})",
+          tuple(int(x) for x in __version__.split(".")) >= _released,
+          f"package says {__version__}")
 
     for name in ("README.md", "DESIGN_NOTES.md", "LICENSE", "pyproject.toml"):
         check(f"{name} is present", os.path.isfile(os.path.join(ROOT, name)))
