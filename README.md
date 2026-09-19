@@ -32,8 +32,9 @@ Two things happen before any line of this tool runs, and no package can stop the
   `reprlib`; on 3.9 and 3.10, `runpy` as well. On 3.9 the tool also cannot tell its own
   `-m` run from another program's, so it leaves the path alone there.
 - An empty element in your own `PYTHONPATH` (`PYTHONPATH=:` or `/x:`) also means the
-  current directory, and Python imports `sitecustomize.py` and `usercustomize.py` from it
-  at startup; pip's `cobblerpy` wrapper then imports `re`.
+  current directory, and Python imports `encodings`, `sitecustomize.py` and
+  `usercustomize.py` from it at startup (an `encodings.py` there runs, then the
+  interpreter fails); pip's `cobblerpy` wrapper then imports `re`.
 
 So inside a project you do not trust, use `cobblerpy .` or `cobble` with no empty
 `PYTHONPATH` element, or `python3 -P -m cobblerpy .` on Python 3.11 or newer, or run it
