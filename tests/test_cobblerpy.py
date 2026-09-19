@@ -188,6 +188,22 @@ class TestScan(unittest.TestCase):
         s = survey(t.dir)
         self.assertIn("ok", {d.name for d in s.project.by_dotted["fine"].definitions})
 
+    def test_a_file_python_will_not_decode_is_a_file_that_will_not_parse(self):
+        """Not UTF-8 and no coding line: Python refuses to compile it, and
+        the scanner quietly decoded it as cp1252 and reported no error."""
+        t = Tree({})
+        self.addCleanup(t.close)
+        with open(os.path.join(t.dir, "raw.py"), "wb") as fh:
+            fh.write(b'x = 1\nNAME = "caf\xe9"\n')
+        with open(os.path.join(t.dir, "declared.py"), "wb") as fh:
+            fh.write(b'# -*- coding: latin-1 -*-\nNAME = "caf\xe9"\n')
+        raw = scan_file(os.path.join(t.dir, "raw.py"), t.dir)
+        self.assertTrue(raw.error and raw.error.startswith("syntax error at line 2"),
+                        raw.error)
+        self.assertIn("encoding", raw.error)
+        declared = scan_file(os.path.join(t.dir, "declared.py"), t.dir)
+        self.assertIsNone(declared.error)
+
     def test_body_kinds_are_distinguished(self):
         t = Tree({"m.py": '''
             def a(): pass

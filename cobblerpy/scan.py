@@ -525,6 +525,20 @@ def _has_main_guard(tree):
     return False
 
 
+def _python_refuses(raw):
+    """(line, reason) when Python would refuse to decode this source, else None."""
+    try:
+        encoding, _lines = tokenize.detect_encoding(io.BytesIO(raw).readline)
+    except SyntaxError as exc:            # an unknown or contradictory declaration
+        return getattr(exc, "lineno", None) or 1, str(exc)
+    try:
+        raw.decode(encoding)
+    except UnicodeDecodeError as exc:
+        return (raw.count(b"\n", 0, exc.start) + 1,
+                f"not valid {encoding}, the encoding Python reads it as")
+    return None
+
+
 def scan_file(path, root):
     """Parse one file into a Module. A syntax error is recorded, never raised."""
     module = Module(path, root)
@@ -548,6 +562,16 @@ def scan_file(path, root):
     lines = source.splitlines()
     module.loc = len(lines)
     module.blank = sum(1 for line in lines if not line.strip())
+
+    # The decoding above is generous so the source can still be SHOWN. Python
+    # is not: UTF-8 unless the file declares otherwise (PEP 263), and a file it
+    # cannot decode is one it will not compile -- which the generous decode
+    # used to hide, reporting no error at all.
+    refused = _python_refuses(raw)
+    if refused:
+        module.error = "syntax error at line {}: {}".format(*refused)
+        _read_comments(module, source)
+        return module
 
     try:
         tree = ast.parse(source, filename=path)
