@@ -151,6 +151,8 @@ def _print_summary(s, limit=12):
     if forks:
         print("\nWHERE THE EFFORT WENT INSTEAD")
         print("  (a hypothesis from similarity and timing, not a fact)")
+        if s.history.get("shallow"):
+            print("  (timed from a shallow clone -- see below)")
         for f in forks[:5]:
             print(f"  {f['stopped']} stopped after \"{f['last_subject'][:44]}\"")
             for c in f["continued_as"][:2]:
@@ -159,6 +161,9 @@ def _print_summary(s, limit=12):
     h = s.history
     if h.get("available"):
         print("\nWHAT THE HISTORY SAYS")
+        if h.get("shallow"):
+            from .history import SHALLOW_NOTE
+            print(f"  {SHALLOW_NOTE}")
         note = s.history_coverage
         if note:
             print(f"  {note}")

@@ -213,6 +213,19 @@ def stalled(history, quiet_days=60):
     return sorted(out, key=lambda r: -r["days_quiet"])
 
 
+# Said wherever a date from the history is. A shallow clone holds only the
+# newest commits, so "first seen", "built between" and "left alone" describe
+# what was fetched -- and nothing in the output said so.
+SHALLOW_NOTE = ("This is a shallow clone: git holds only the most recent "
+                "commits, so every date and 'first seen' below describes what was "
+                "fetched, not the project's real history. `git fetch --unshallow` "
+                "gets the rest.")
+
+
+def is_shallow(root):
+    return (_git(root, "rev-parse", "--is-shallow-repository") or "").strip() == "true"
+
+
 def summary(root, relpaths):
     """Everything the history layer can offer, or an empty shell without git."""
     if not is_repo(root):
@@ -229,4 +242,5 @@ def summary(root, relpaths):
         "co_change": co_change(root, relpaths)[:40],
         "stalled": stalled(history),
         "authors": sorted({a for r in history.values() for a in r["authors"]}),
+        "shallow": is_shallow(root),
     }

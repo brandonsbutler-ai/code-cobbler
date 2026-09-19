@@ -751,6 +751,54 @@ class TestAbandonment(unittest.TestCase):
         self.assertEqual(score(analyse_module(m)), 0)
 
 
+class TestShallowHistory(unittest.TestCase):
+    """A shallow clone holds only the newest commits, so every date the
+    history layer states -- first seen, the range it was built between, what
+    went quiet -- is about what was fetched, not the project. It said so
+    nowhere."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.full = Tree({"app.py": "x = 1\n", "run.py": "import app\n"}, git=True)
+        for n, date in enumerate(("2025-02-01T12:00:00", "2026-03-01T12:00:00")):
+            write(cls.full.dir, "app.py", f"x = {n + 2}\n")
+            env = dict(os.environ, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+            subprocess.run(["git", "-C", cls.full.dir, "commit", "-qam", f"c{n}"],
+                           env=env, capture_output=True, check=True)
+        cls.clone = tempfile.mkdtemp()
+        subprocess.run(["git", "clone", "-q", "--depth", "1",
+                        "file://" + cls.full.dir, cls.clone],
+                       capture_output=True, check=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.full.close()
+        shutil.rmtree(cls.clone, ignore_errors=True)
+
+    def test_a_shallow_clone_is_detected_and_a_full_one_is_not(self):
+        self.assertTrue(history.summary(self.clone, ["app.py", "run.py"])["shallow"])
+        self.assertFalse(history.summary(self.full.dir, ["app.py", "run.py"])["shallow"])
+
+    def test_the_summary_says_the_dates_come_from_a_shallow_clone(self):
+        r = subprocess.run([sys.executable, "-m", "cobblerpy", self.clone],
+                           capture_output=True, text=True, cwd=REPO)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("shallow clone", r.stdout)
+        r = subprocess.run([sys.executable, "-m", "cobblerpy", self.full.dir],
+                           capture_output=True, text=True, cwd=REPO)
+        self.assertNotIn("shallow clone", r.stdout)
+
+    def test_the_map_says_so_too(self):
+        from cobblerpy.report import write_map
+        s = survey(self.clone)
+        out = os.path.join(tempfile.mkdtemp(), "m.html")
+        self.addCleanup(shutil.rmtree, os.path.dirname(out), True)
+        write_map(s.project, s.frontier, s.history, out, origins=s.origins,
+                  modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            self.assertIn("shallow clone", Page(fh.read()).text)
+
+
 class TestOrigin(unittest.TestCase):
     def test_untracked_files_are_named_as_such(self):
         t = Tree({"tracked.py": "x = 1\n"}, git=True)

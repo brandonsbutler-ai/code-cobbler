@@ -1376,7 +1376,13 @@ abandoned code does not get started again.</p>
         left_html = ('<p class="empty">Every module is reached from a start '
                      'point or loaded by a tool. Nothing was left behind.</p>')
 
+    # Before everything the history dates: what was left behind, and the
+    # history section itself.
+    from .history import SHALLOW_NOTE
+    _shallow = (f'<p class="lede">{_e(SHALLOW_NOTE)}</p>'
+                if history.get("shallow") else "")
     summary_html = (
+        f'{_shallow}'
         f'<h4>what this project is made of</h4><div class="tallies">{_bars}</div>'
         f'<h4>the same job, started over</h4>{attempts_html}'
         f'<h4>what was left behind</h4>{left_html}'
