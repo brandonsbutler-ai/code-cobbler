@@ -233,7 +233,7 @@ def _ribbon_svg(ribbons, folders):
             f'data-src="{_e(ribbon["src"])}" data-dst="{_e(ribbon["dst"])}" '
             f'data-count="{ribbon["count"]}" '
             f'd="M{sx:.1f},{sy:.1f} Q{mx:.1f},{my:.1f} {ex:.1f},{ey:.1f}" '
-            f'marker-end="url(#arrow)"><title>{_e(ribbon["src"])} imports '
+            f'marker-end="url(#rarrow)"><title>{_e(ribbon["src"])} imports '
             f'{_e(ribbon["dst"])} &#183; {ribbon["count"]} '
             f'time{"s" if ribbon["count"] != 1 else ""}</title></path>')
     return paths, defs
@@ -477,6 +477,10 @@ def render(graph, project, frontier_by_module, snippets_by_module,
   <defs>
     <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7"
             markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z"/></marker>
+    <!-- A marker is scaled by the stroke it ends, and a ribbon's stroke is
+         its weight: #arrow on a 4px ribbon was 28px across. -->
+    <marker id="rarrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="2.6"
+            markerHeight="2.6" orient="auto"><path d="M0,0 L8,4 L0,8 z"/></marker>
     <marker id="stub" viewBox="0 0 8 8" refX="5" refY="4" markerWidth="8"
             markerHeight="8" orient="auto"><path d="M1,0 L1,8 M4,0 L4,8"
             stroke-width="1.6" fill="none"/></marker>
@@ -576,9 +580,15 @@ def render(graph, project, frontier_by_module, snippets_by_module,
 #
 # Built from _PALETTE. A key written next to a palette goes stale the first
 # time a colour moves, and this project has already shipped one that did.
+#
+# A swatch is the EDGE colour, which is what a card carries -- the palette's
+# fill is near-black and drew a row of black squares in the light theme. The
+# continuation is a mark on the map, not a state a card is in, so its swatch
+# is the mark itself: had it the dead end's box, the two read as one thing.
 _LINK_CHIP = (
     '<span class="chip static">'
-    '<i style="background:#2a1220;border-color:#ff6ec7;color:#ff6ec7">'
+    '<i style="background:transparent;border-color:transparent;color:#ff6ec7;'
+    'font-weight:700;line-height:11px;text-align:center">'
     '&#8594;</i>continuation'
     '<span class="def">&mdash; a card marked &#8594;&#8230; stopped, and '
     'another file is doing the same work; click it for the name (inferred '
@@ -587,7 +597,7 @@ _LINK_CHIP = (
 KEYBAR = _LINK_CHIP + "".join(
     f'<button type="button" class="chip" data-state="{state}" '
     f'aria-pressed="false">'
-    f'<i style="background:{fill};border-color:{stroke}"></i>'
+    f'<i style="background:{stroke};border-color:{stroke}"></i>'
     f'{html.escape(state)}'
     f'<span class="def">&mdash; {html.escape(desc)}</span></button>'
-    for state, (stroke, fill, desc) in _PALETTE.items())
+    for state, (stroke, _fill, desc) in _PALETTE.items())

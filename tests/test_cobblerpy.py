@@ -1294,6 +1294,26 @@ class TestMap(unittest.TestCase):
         # survives a twelve-thousand-pixel scroll.
         self.assertIn(".keybar{position:sticky", doc.replace("\n", ""))
 
+    def test_each_key_swatch_is_the_colour_its_cards_carry(self):
+        """The swatches were the palette's near-black FILL with a 1px edge --
+        in the light theme a row of black squares -- while the cards carry
+        their state in the edge colour. And the continuation chip used the
+        dead end's exact fill and edge, so the two read as one thing."""
+        from cobblerpy import svgmap
+        page = Page(svgmap.KEYBAR)
+        swatches = {}
+        chip = None
+        for tag, attrs in page.elements:
+            if tag in ("button", "span") and "chip" in attrs.get("class", ""):
+                chip = attrs.get("data-state", "continuation")
+            elif tag == "i" and chip:
+                swatches[chip] = attrs.get("style", "")
+        for state, (stroke, _fill, _desc) in svgmap._PALETTE.items():
+            self.assertIn(f"background:{stroke}", swatches[state].replace(" ", ""),
+                          f"{state}: {swatches[state]}")
+        self.assertNotEqual(swatches["continuation"], swatches["deadend"],
+                            "continuation and dead end have the same swatch")
+
     def test_picking_a_colour_steps_the_other_modules_back(self):
         """Run the map's own script and check which nodes it turns off.
 
@@ -2490,6 +2510,28 @@ class TestFolderRibbons(unittest.TestCase):
         if states is None:
             states = {name: "live" for name in s.project.by_dotted}
         return folder_ribbons(s.project, folders, states), s, folders
+
+    def test_a_ribbon_arrowhead_is_in_proportion_to_the_ribbon(self):
+        """A marker in strokeWidth units is scaled by the ribbon's own width,
+        so a 7-unit arrowhead on a 4px ribbon was drawn 28px across."""
+        t = Tree(self.FIXTURE)
+        self.addCleanup(t.close)
+        s = t.survey()
+        out = os.path.join(t.dir, "map.html")
+        from cobblerpy.report import write_map
+        write_map(s.project, s.frontier, s.history, out,
+                  origins=s.origins, modules_by_key=s.modules_by_key)
+        with open(out, encoding="utf-8") as fh:
+            page = Page(fh.read())
+        markers = {a["id"]: a for a in page.find("marker")}
+        ribbons = page.find("path", **{"class": "ribbon"})
+        self.assertTrue(ribbons, "no ribbons drawn, so nothing is measured")
+        for r in ribbons:
+            m = markers[r["marker-end"][5:-1]]
+            self.assertEqual(m.get("markerunits", "strokeWidth"), "strokeWidth")
+            head = float(m["markerwidth"]) * float(r["stroke-width"])
+            self.assertLessEqual(head, 3 * float(r["stroke-width"]),
+                                 f"{head:.0f}px head on a {r['stroke-width']}px ribbon")
 
     def test_a_ribbon_carries_the_condition_at_each_of_its_ends(self):
         """The colour describes the EDGE, not the folder.
