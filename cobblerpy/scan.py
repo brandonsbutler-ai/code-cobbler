@@ -309,12 +309,16 @@ _TODO_TAGS = ("TODO", "FIXME", "XXX", "HACK", "BUG", "WIP", "TEMP",
 # "301 distinct FIX-XXX tickets".
 _TAG_WORD = re.compile(r"\b(" + "|".join(_TODO_TAGS) + r")\b", re.IGNORECASE)
 
-# Brandon's rule (2026-09-19): the first word, OR the tag written as a label
-# anywhere -- in capitals with a colon straight after it, or after an owner in
-# brackets -- which is how "Fix later -- " followed by a labelled tag, or a
-# tag after a `noqa`, are written. "a TODO in the docstring" is neither, and
-# stays prose. (Said without writing a label here, or this line would be one.)
-_TAG_LABEL = re.compile(r"\b(" + "|".join(_TODO_TAGS) + r")(?:\([^)]*\))?:")
+# A tag is also a LABEL -- capitals with a colon straight after it, or after
+# an owner in brackets -- where a comment can carry a second note: after a
+# `--` separator ("Fix later --" then the label) or after a pragma (`noqa` with
+# its codes, `type: ignore`). Anywhere else a label is being talked ABOUT: "a
+# marker line is 'TODO: <text>'", or after "WARNING:". (Said without writing a
+# label here, or this comment would be one.)
+_TAG_LABEL = re.compile(
+    r"(?:--|\bnoqa(?::\s*[A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)?"
+    r"|\btype:\s*ignore(?:\[[^\]]*\])?)\s+"
+    r"(" + "|".join(_TODO_TAGS) + r")(?:\([^)]*\))?:")
 
 # What may come before a first-word tag without making it prose: space, a
 # list number ("1."), a bracket, a dash or the colon of a Sphinx `#:`.

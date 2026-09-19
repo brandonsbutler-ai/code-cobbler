@@ -413,11 +413,11 @@ class TestTagMarkers(unittest.TestCase):
         ("# todo: lower case, but labelled", "TODO"),
         ("# hack(bob): temporary shim", "HACK"),
         ("#TEMP: no space after the hash", "TEMP"),
-        # Brandon's rule: the first word, OR `TAG:` anywhere in capitals.
+        # A label (capitals and a colon) after a `--` separator or a pragma.
         ("# Fix later -- TODO: handle unicode", "TODO"),
         ("# -- TODO: wire the retry", "TODO"),
         ("# noqa: E501  TODO: drop when py3.8 gone", "TODO"),
-        ("# see FIXME(ann): the offset", "FIXME"),
+        ("# type: ignore[attr-defined]  FIXME(ann): real stubs", "FIXME"),
         # A list number, a bracket or a Sphinx `#:` before it is not prose.
         ("# 1. TODO finish parsing", "TODO"),
         ("# (TODO) remove this shim", "TODO"),
@@ -444,7 +444,13 @@ class TestTagMarkers(unittest.TestCase):
         "# a TODO in otherwise complete code is a note, not a hole.",
         "# 301 distinct FIX-XXX tickets and many feature additions",
         "# THE TEMP FILE IS GONE. Nothing survived this handler.",
-        # Anywhere needs the capitals AND the colon.
+        # Prose that MENTIONS a label: a label counts only where a comment
+        # starts, after `--`, or after a pragma.
+        "# WARNING: TODO: comments are counted by the linter",
+        "# Format of a marker line is 'TODO: <text>'",
+        "# The HACK: prefix is reserved for the build",
+        "# see FIX-XXX: ticket 301",
+        "# see FIXME(ann): the offset",
         "# a TODO in the docstring says so",
         "# the todo: list lives elsewhere",
         "# see the NOTE: above",
