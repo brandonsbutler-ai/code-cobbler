@@ -880,6 +880,43 @@ class TestEndToEnd(unittest.TestCase):
         # own code, which could itself contain the word.
         self.assertIn("Proven", page.text)
 
+    def test_json_carries_the_restarts_dead_ends_and_forks_the_map_shows(self):
+        """--json is "everything, machine-readable", and it had none of the
+        three findings the map and the summary lead with."""
+        import json
+        from cobblerpy.attempts import find as find_attempts
+        from cobblerpy.deadends import find as find_deadends
+        from cobblerpy.diversion import find as find_forks
+        t = Tree({
+            "main.py": "import svc\n\nif __name__ == '__main__':\n    svc.caller(1)\n",
+            "svc.py": "def remediate(f):\n    pass\n\n\ndef report(f):\n"
+                      "    return str(f)\n\n\ndef caller(f):\n    return remediate(f)\n",
+            "ingest.py": "def parse_record(r):\n    return r\n\n\n"
+                         "def validate_record(r):\n    pass\n\n\n"
+                         "def store_record(r):\n    pass\n",
+            "ingest_v2.py": "def parse_record(r):\n    return dict(r)\n\n\n"
+                            "def validate_record(r):\n    return True\n\n\n"
+                            "def store_record(r):\n    pass\n",
+        }, git=True)
+        self.addCleanup(t.close)
+        out = os.path.join(t.dir, "s.json")
+        r = subprocess.run([sys.executable, "-m", "cobblerpy", t.dir, "--json", out],
+                           capture_output=True, text=True, cwd=REPO)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(out, encoding="utf-8") as fh:
+            data = json.load(fh)
+        s = t.survey(with_history=True)
+        expect = {
+            "attempts": find_attempts(s.project, s.modules_by_key, s.origins),
+            "deadends": find_deadends(s.project, s.modules_by_key, s.origins),
+            "forks": find_forks(s.project, s.modules_by_key, s.history, s.frontier),
+        }
+        self.assertTrue(expect["attempts"] and expect["deadends"],
+                        "the fixture no longer has the findings it is for")
+        for key, value in expect.items():
+            self.assertEqual(data.get(key), json.loads(json.dumps(value, default=str)),
+                             key)
+
     def test_an_empty_directory_fails_clearly(self):
         t = Tree({"notes.txt": "no python here\n"})
         self.addCleanup(t.close)

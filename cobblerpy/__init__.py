@@ -81,7 +81,20 @@ class Survey:
         return summarise(self.frontier)
 
     def as_dict(self):
+        # The three findings the map and the summary lead with, from the same
+        # functions they call -- "everything" without them was not.
+        from .attempts import find as find_attempts
+        from .deadends import find as find_deadends
+        from .diversion import find as find_forks
+        forks = (find_forks(self.project, self.modules_by_key, self.history,
+                            self.frontier)
+                 if self.history.get("available") else [])
         return {
+            "attempts": find_attempts(self.project, self.modules_by_key,
+                                      self.origins),
+            "deadends": find_deadends(self.project, self.modules_by_key,
+                                      self.origins),
+            "forks": forks,
             "root": self.root,
             "modules": [m.as_dict() for m in self.project.modules],
             "entry_points": self.project.entry_points,

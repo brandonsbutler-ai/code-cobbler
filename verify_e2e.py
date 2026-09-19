@@ -346,6 +346,24 @@ def verify_map_and_exports(root, workdir):
     check("the CLI exits 0", r.returncode == 0, r.stderr[-300:])
     check("the map was written", os.path.isfile(out))
 
+    # "--json: everything, machine-readable". It had none of the three findings
+    # the summary and the map lead with.
+    import json as _jsonmod
+    js = os.path.join(workdir, "survey.json")
+    cli(root, "--json", js)
+    try:
+        with open(js, encoding="utf-8") as fh:
+            data = _jsonmod.load(fh)
+    except (OSError, ValueError):
+        data = {}
+    groups = [{a["module"] for a in g["attempts"]} for g in data.get("attempts", [])]
+    check("--json carries the restarts, the dead ends and the forks",
+          {"app.ingest", "app.ingest_v2"} in groups
+          and "remediate" in {d["name"] for d in data.get("deadends", [])}
+          and isinstance(data.get("forks"), list),
+          f"attempts {groups}, deadends {[d['name'] for d in data.get('deadends', [])]}, "
+          f"forks {type(data.get('forks')).__name__}")
+
     with open(out, encoding="utf-8") as fh:
         doc = fh.read()
     # Parsed, not matched. The map embeds the project's own source, so a
