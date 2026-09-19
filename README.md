@@ -98,7 +98,7 @@ top-down gives you an order to look at the code in:
 | Signal | Why it matters |
 |---|---|
 | unused imports | the strongest tell: someone pulled in a library, started wiring it up, stopped |
-| `pass` / `...` bodies, `NotImplementedError` | a stub that was never filled in |
+| `pass` / `...` bodies, `NotImplementedError` | a stub that was never filled in. Not counted where the empty body is the point: `@overload` signatures, `Protocol` and `ABC` methods, `@abstractmethod`, and a base-class method every subclass replaces |
 | `TODO` / `FIXME` / `XXX` | what the author knew they had to come back to |
 | commented-out code | a decision that was never finished |
 | `except: pass` | an error somebody deferred |
@@ -321,7 +321,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 189 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 194 tests, no pytest required
 python3 verify_e2e.py                        # 111 end-to-end claim checks
 ```
 

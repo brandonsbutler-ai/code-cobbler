@@ -22,6 +22,8 @@ SUPPOSED to raise NotImplementedError.
 
 from collections import defaultdict
 
+from .abandonment import overridden_methods
+
 _STUB_KINDS = {"pass": "body is only `pass`",
                "ellipsis": "body is only `...`",
                "raise": "raises NotImplementedError"}
@@ -53,10 +55,12 @@ def _is_test_module(key):
                or p.endswith("_test") or p == "conftest" for p in parts)
 
 
-def _is_expected_empty(definition, module):
+def _is_expected_empty(definition, module, overridden=()):
     """True when this definition is empty for a normal reason."""
     if definition.kind == "class":
         return True                       # an empty class body is idiomatic
+    if (definition.parent, definition.name) in overridden:
+        return True                       # every call dispatches past it
     if any(definition.name.endswith(s) for s in _EXPECTED_EMPTY):
         return True
     # A method of a Protocol, an ABC or a TypedDict is declaring a shape, not
@@ -119,6 +123,7 @@ def find(project, modules_by_key, origins=None):
     """Every dead-end in the project, most-called first."""
     origins = origins or {}
 
+    overridden = overridden_methods(modules_by_key.values())
     stubs = {}
     for key, module in modules_by_key.items():
         if origins.get(key, {}).get("origin") == "vendored":
@@ -128,7 +133,7 @@ def find(project, modules_by_key, origins=None):
         for definition in module.definitions:
             if definition.body_kind not in _STUB_KINDS:
                 continue
-            if _is_expected_empty(definition, module):
+            if _is_expected_empty(definition, module, overridden):
                 continue
             stubs.setdefault(definition.name, []).append((key, module, definition))
 

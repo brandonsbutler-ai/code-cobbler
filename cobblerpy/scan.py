@@ -220,7 +220,7 @@ class _Visitor(ast.NodeVisitor):
             # For a class, its own bases. For a method, the bases of the class
             # that contains it -- which is what decides whether an empty body
             # is idiomatic.
-            bases=([_name_of(b) for b in node.bases]
+            bases=([_base_name(b) for b in node.bases]
                    if isinstance(node, ast.ClassDef)
                    else (self._base_stack[-1] if self._base_stack else [])),
             body_kind=self._body_kind(node),
@@ -238,7 +238,7 @@ class _Visitor(ast.NodeVisitor):
     def visit_ClassDef(self, node):
         self._record_def(node, "class")
         self._class_stack.append(node.name)
-        self._base_stack.append([_name_of(b) for b in node.bases])
+        self._base_stack.append([_base_name(b) for b in node.bases])
         self.generic_visit(node)
         self._base_stack.pop()
         self._class_stack.pop()
@@ -269,6 +269,15 @@ def _name_of(node):
     if isinstance(node, ast.Call):
         return _name_of(node.func)
     return ""
+
+
+def _base_name(node):
+    """A base class as written, less any generic subscript.
+
+    `t.Protocol[T]` is a Subscript, which _name_of reads as "" -- so every
+    generic Protocol lost the base that makes its empty methods declarations.
+    """
+    return _name_of(node.value if isinstance(node, ast.Subscript) else node)
 
 
 # Tags that mark work the author knew was unfinished.

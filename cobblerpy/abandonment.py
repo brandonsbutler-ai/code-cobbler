@@ -124,7 +124,43 @@ def _empty_excepts(module):
     return out
 
 
-def analyse_module(module):
+# An empty body under these is a DECLARATION, not a gap: typed libraries write
+# `...` for every @overload signature and Protocol method, and an abstract
+# method is supposed to raise NotImplementedError. On itsdangerous they were 11
+# of its 11 "stub" signals and put two finished modules at the top.
+_DECLARING_DECORATORS = {"overload", "abstractmethod", "abstractproperty",
+                         "abstractclassmethod", "abstractstaticmethod"}
+_DECLARING_BASES = {"Protocol", "ABC"}
+
+
+def _tail(name):
+    return str(name).split("[", 1)[0].rsplit(".", 1)[-1]
+
+
+def overridden_methods(modules):
+    """(class, method) pairs that a subclass somewhere in the project defines
+    again. Matched by class NAME, as written -- a base raising
+    NotImplementedError that its subclasses all replace is abstract in all
+    but the decorator."""
+    out = set()
+    for module in modules:
+        for d in module.definitions:
+            if d.kind == "method":
+                out.update((_tail(b), d.name) for b in d.bases)
+    return out
+
+
+def declares_a_shape(definition, overridden=()):
+    """True when an empty body is the definition's whole job."""
+    if any(_tail(x) in _DECLARING_DECORATORS for x in definition.decorators):
+        return True
+    if definition.kind != "method":
+        return False
+    return (any(_tail(b) in _DECLARING_BASES for b in definition.bases)
+            or (definition.parent, definition.name) in overridden)
+
+
+def analyse_module(module, overridden=()):
     """Every abandonment signal in one module, with line numbers."""
     found = defaultdict(list)
 
@@ -139,7 +175,9 @@ def analyse_module(module):
     for d in module.definitions:
         if d.kind == "class":
             continue
-        if d.body_kind == "pass":
+        if d.body_kind != "code" and declares_a_shape(d, overridden):
+            pass                          # a declaration, not a gap
+        elif d.body_kind == "pass":
             found["stub_pass"].append((d.qualname, d.lineno))
         elif d.body_kind == "ellipsis":
             found["stub_ellipsis"].append((d.qualname, d.lineno))
@@ -181,10 +219,11 @@ def analyse_project(project):
     that is the order in which an inheritor should look at the code.
     """
     entry_names = {name for name, _ in project.entry_points}
+    overridden = overridden_methods(project.modules)
     rows = []
     for module in project.modules:
         key = module.dotted or module.relpath
-        signals = analyse_module(module)
+        signals = analyse_module(module, overridden)
         if key in project.orphans:
             signals["orphan"] = [("nothing imports this module", 0)]
         elif key not in project.reachable and key not in entry_names:

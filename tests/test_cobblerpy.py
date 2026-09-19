@@ -3835,6 +3835,76 @@ class TestDeadEndNoise(unittest.TestCase):
         self.assertIn("remediate", found)
 
 
+class TestTypedLibraryDeclarations(unittest.TestCase):
+    """Empty bodies a typed library writes on purpose, measured on itsdangerous.
+
+    Its @overload signatures and a `t.Protocol[T]` class topped the frontier as
+    "stub ellipsis", and painted two finished modules as dead ends. A base
+    class whose NotImplementedError every subclass replaces painted a third.
+    """
+
+    LIB = {
+        "main.py": ("import lib\nimport impl\n\nif __name__ == '__main__':\n"
+                    "    lib.P().dumps(1)\n    impl.Algo().sign(b'')\n"
+                    "    lib.Base().run()\n"),
+        "lib.py": (
+            "import typing as t\nimport abc\nfrom abc import ABC, abstractmethod\n"
+            "from typing import overload\n\n"
+            "T = t.TypeVar('T')\n\n\n"
+            "class P(t.Protocol[T]):\n"
+            "    def dumps(self, obj: T) -> str: ...\n\n\n"
+            "@overload\ndef coerce(x: int) -> int: ...\n"
+            "@t.overload\ndef coerce(x: str) -> str: ...\n"
+            "def coerce(x):\n    return x\n\n\n"
+            "class Base(ABC):\n"
+            "    @abstractmethod\n"
+            "    def run(self):\n        raise NotImplementedError\n\n"
+            "    @abc.abstractmethod\n"
+            "    def stop(self): ...\n\n\n"
+            "class Algorithm:\n"
+            "    def sign(self, key):\n        raise NotImplementedError()\n\n\n"
+            "def unfinished(x):\n    ...\n\n\n"
+            "class Store:\n"
+            "    def save(self, row):\n        raise NotImplementedError\n"),
+        "impl.py": ("from lib import Algorithm, unfinished, Store\n\n\n"
+                    "class Algo(Algorithm):\n"
+                    "    def sign(self, key):\n        return unfinished(key)\n\n\n"
+                    "def keep(row):\n    return Store().save(row)\n"),
+    }
+
+    def setUp(self):
+        from cobblerpy.deadends import find
+        t = Tree(self.LIB)
+        self.addCleanup(t.close)
+        self.s = t.survey()
+        row = [r for r in self.s.frontier if r["module"] == "lib"][0]
+        self.stubs = {name for kind in ("stub_ellipsis", "stub_pass",
+                                        "not_implemented")
+                      for name, _ln in row["signals"].get(kind, [])}
+        self.ends = {d["qualname"] for d in
+                     find(self.s.project, self.s.modules_by_key, self.s.origins)}
+
+    def test_a_subscripted_protocol_method_is_a_declaration(self):
+        self.assertNotIn("P.dumps", self.stubs)
+        self.assertNotIn("P.dumps", self.ends)
+
+    def test_overload_signatures_are_declarations(self):
+        self.assertNotIn("coerce", self.stubs)
+
+    def test_abstract_methods_are_declarations(self):
+        self.assertNotIn("Base.run", self.stubs)
+        self.assertNotIn("Base.stop", self.stubs)
+
+    def test_a_not_implemented_that_a_subclass_replaces_is_a_declaration(self):
+        self.assertNotIn("Algorithm.sign", self.stubs)
+        self.assertNotIn("Algorithm.sign", self.ends)
+
+    def test_real_stubs_are_still_reported(self):
+        self.assertIn("unfinished", self.stubs)
+        self.assertIn("Store.save", self.stubs)
+        self.assertIn("Store.save", self.ends)
+
+
 class TestEvidenceCompleteness(unittest.TestCase):
 
     def _render_panel(self, page_html, module):
