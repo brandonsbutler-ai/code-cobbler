@@ -413,6 +413,15 @@ class TestTagMarkers(unittest.TestCase):
         ("# todo: lower case, but labelled", "TODO"),
         ("# hack(bob): temporary shim", "HACK"),
         ("#TEMP: no space after the hash", "TEMP"),
+        # Brandon's rule: the first word, OR `TAG:` anywhere in capitals.
+        ("# Fix later -- TODO: handle unicode", "TODO"),
+        ("# -- TODO: wire the retry", "TODO"),
+        ("# noqa: E501  TODO: drop when py3.8 gone", "TODO"),
+        ("# see FIXME(ann): the offset", "FIXME"),
+        # A list number, a bracket or a Sphinx `#:` before it is not prose.
+        ("# 1. TODO finish parsing", "TODO"),
+        ("# (TODO) remove this shim", "TODO"),
+        ("#: TODO document", "TODO"),
     ]
 
     # Each of these contains a tag as a SUBSTRING and is not a marker.
@@ -435,6 +444,11 @@ class TestTagMarkers(unittest.TestCase):
         "# a TODO in otherwise complete code is a note, not a hole.",
         "# 301 distinct FIX-XXX tickets and many feature additions",
         "# THE TEMP FILE IS GONE. Nothing survived this handler.",
+        # Anywhere needs the capitals AND the colon.
+        "# a TODO in the docstring says so",
+        "# the todo: list lives elsewhere",
+        "# see the NOTE: above",
+        "# ── 7. BUG FIX SUMMARY ──",
     ]
 
     def test_the_real_markers_are_found(self):

@@ -309,6 +309,17 @@ _TODO_TAGS = ("TODO", "FIXME", "XXX", "HACK", "BUG", "WIP", "TEMP",
 # "301 distinct FIX-XXX tickets".
 _TAG_WORD = re.compile(r"\b(" + "|".join(_TODO_TAGS) + r")\b", re.IGNORECASE)
 
+# Brandon's rule (2026-09-19): the first word, OR the tag written as a label
+# anywhere -- in capitals with a colon straight after it, or after an owner in
+# brackets -- which is how "Fix later -- " followed by a labelled tag, or a
+# tag after a `noqa`, are written. "a TODO in the docstring" is neither, and
+# stays prose. (Said without writing a label here, or this line would be one.)
+_TAG_LABEL = re.compile(r"\b(" + "|".join(_TODO_TAGS) + r")(?:\([^)]*\))?:")
+
+# What may come before a first-word tag without making it prose: space, a
+# list number ("1."), a bracket, a dash or the colon of a Sphinx `#:`.
+_LEAD = re.compile(r"^(?:[\s\-*:(\[]|\d+[.)])*")
+
 
 def _tag_of(text):
     """The marker tag in this comment, uppercased, or None.
@@ -319,14 +330,15 @@ def _tag_of(text):
     "# bug wearing a different hat" (lower case, no colon), "# a TODO in
     otherwise complete code" (not the first word).
     """
-    body = (text or "").lstrip("#").lstrip()
+    body = _LEAD.sub("", (text or "").lstrip("#"), count=1)
     found = _TAG_WORD.match(body)
     if found:
         word = found.group(1)
         after = body[found.end():][:1]
         if word.isupper() or after in (":", "("):
             return word.upper()
-    return None
+    labelled = _TAG_LABEL.search(text or "")
+    return labelled.group(1) if labelled else None
 
 # Deciding whether a comment is disabled CODE or ordinary prose.
 #
