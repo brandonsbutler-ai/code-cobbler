@@ -956,6 +956,15 @@ def verify_documentation():
     check("the pyproject Homepage is the repository the README links to",
           bool(_linked) and _linked == {_home},
           f"Homepage {_home}, README links {sorted(_linked)}")
+    # cobblerpy is not on PyPI, so `pip install cobblerpy[gui]` fails for
+    # anybody who types it. Every install of THIS package must name a place
+    # it can be installed from: the checkout, or the repository.
+    with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as _fh:
+        _installs = re.findall(r"pip install\s+([^\n`#]+)", _fh.read())
+    _nowhere = [a for a in _installs
+                if re.match(r"[\"']?cobblerpy\b", a) and "@" not in a]
+    check("no install instruction sends people to a package index it is not on",
+          not _nowhere, _nowhere)
     _tags = subprocess.run(["git", "-C", ROOT, "tag", "--list", "v*"],
                            capture_output=True, text=True).stdout.split()
     _released = max((tuple(int(x) for x in t[1:].split(".")) for t in _tags

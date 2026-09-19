@@ -196,9 +196,13 @@ where it is on PATH. Everything after `-m cobblerpy` is identical on both.
 
 ### Installed
 
+cobblerpy is not on PyPI. Install it from a clone, or straight from the
+repository:
+
 ```bash
-python3 -m pip install .            # Linux, macOS
-py -m pip install .                 # Windows
+python3 -m pip install .            # from a clone, Linux, macOS
+py -m pip install .                 # from a clone, Windows
+python3 -m pip install "cobblerpy @ git+https://github.com/brandonsbutler-ai/code-cobbler"
 ```
 
 That puts `cobblerpy` on PATH, so the command is just `cobblerpy <folder>`.
@@ -285,7 +289,7 @@ imports it at the top level for exactly that reason, and that import is marked
 ## The desktop application
 
 ```bash
-pip install cobblerpy[gui]
+pip install ".[gui]"          # from a clone
 cobblerpy-gui
 ```
 
@@ -298,7 +302,7 @@ interactive map is a button away.
 Built to sit beside an editor, because that is where you already are.
 
 **The window is the only part of this project with a dependency.**
-`pip install cobblerpy` installs a library and a command line that import
+Installed without `[gui]`, it is a library and a command line that import
 nothing outside the standard library, and the verifier asserts both halves of
 that separately on every run — so a stray import in the library cannot hide
 behind the window's exemption.
@@ -322,7 +326,7 @@ Every option the command accepts. `--help` prints the same list.
 
 ```bash
 python3 -m unittest discover -s tests -v     # 195 tests, no pytest required
-python3 verify_e2e.py                        # 114 end-to-end claim checks
+python3 verify_e2e.py                        # 115 end-to-end claim checks
 ```
 
 `verify_e2e.py` checks the PRODUCT rather than its units. It builds a codebase whose every
