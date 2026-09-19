@@ -2091,14 +2091,16 @@ class TestInstaller(unittest.TestCase):
         return m.group(1)
 
     def _interactive(self, answer):
-        """Run it on a pseudo-terminal, as a person at a shell would."""
+        """Run it on a pseudo-terminal, as a person at a shell would. A list
+        answers each prompt in turn."""
+        answers = list(answer) if isinstance(answer, list) else [answer]
         import pty
         import select
         master, slave = pty.openpty()
         p = subprocess.Popen(["sh", self.SCRIPT], stdin=slave, stdout=slave,
                              stderr=slave, env=self.env, close_fds=True)
         os.close(slave)
-        out, sent = b"", False
+        out, sent = b"", 0
         while True:
             ready, _w, _x = select.select([master], [], [], 30)
             if not ready:
@@ -2111,9 +2113,9 @@ class TestInstaller(unittest.TestCase):
             if not chunk:
                 break
             out += chunk
-            if not sent and b"Choose" in out:
-                os.write(master, answer.encode() + b"\n")
-                sent = True
+            if sent < len(answers) and out.count(b"Choose") > sent:
+                os.write(master, answers[sent].encode() + b"\n")
+                sent += 1
         p.wait(timeout=30)
         os.close(master)
         self.assertEqual(p.returncode, 0, out.decode()[-400:])
@@ -2186,6 +2188,14 @@ class TestInstaller(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._files(), before, r.stdout)
         self.assertEqual(r.stdout.count("left alone: not ours"), len(foreign), r.stdout)
+
+    def test_an_answer_that_is_not_a_choice_is_asked_again(self):
+        """"0" made the shelf "$0" -- the installer's own path -- and a
+        twenty-digit number reached the shell's arithmetic."""
+        out = self._interactive(["0", "00", "99999999999999999999", "x", "-1", ""])
+        self.assertEqual(out.count("not one of the choices"), 5, out[-600:])
+        self.assertNotIn("Illegal number", out)
+        self.assertEqual(self._shim_default(), "")
 
     def test_a_shared_mount_it_offers_is_recorded_when_chosen(self):
         import re

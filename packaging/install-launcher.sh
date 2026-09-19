@@ -72,9 +72,12 @@ else
     while :; do
       printf 'Choose 1-%s [1]: ' "$#"
       read -r answer || answer=""
+      # Digits only, no leading zero, at most four of them, 1..count: "0" was
+      # read as $0 -- this script's own path -- and a twenty-digit number
+      # reached the shell's arithmetic.
       case "$answer" in
         ""|1) break ;;
-        *[!0-9]*) ;;
+        *[!0-9]*|0*|?????*) ;;
         *) if [ "$answer" -le "$#" ]; then eval "SHELF=\${$answer}"; break; fi ;;
       esac
       echo "  not one of the choices"
