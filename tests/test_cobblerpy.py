@@ -1098,6 +1098,9 @@ class TestCommandLineEdges(unittest.TestCase):
     def test_what_pip_install_leaves_in_the_clone_is_ignored(self):
         """`pip install .` writes build/ and cobblerpy.egg-info/ into the
         checkout; the second showed up in git status."""
+        if subprocess.run(["git", "-C", REPO, "rev-parse", "--git-dir"],
+                          capture_output=True).returncode != 0:
+            self.skipTest("not a git checkout (a source tarball has no .gitignore to ask)")
         for leftover in ("build/lib/cobblerpy/__init__.py",
                          "cobblerpy.egg-info/PKG-INFO"):
             r = subprocess.run(["git", "-C", REPO, "check-ignore", "-q", leftover])
@@ -2370,6 +2373,26 @@ class TestInstaller(unittest.TestCase):
                 home, ".local/share/applications/codecobbler.desktop")],
                 capture_output=True, text=True)
             self.assertEqual(v.returncode, 0, v.stdout + v.stderr)
+
+    def test_uninstall_names_the_maps_as_they_are_really_named(self):
+        import re
+        from cobblerpy import launch
+        real = os.path.basename(launch.map_destination("/x/proj", stamp="20260919-120000"))
+        self.assertRegex(real, r"^proj-map-\d{8}-\d{6}\.html$")
+        r = subprocess.run(["sh", self.SCRIPT, "--uninstall"], env=self.env,
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                           timeout=60)
+        self.assertIn("<project>-map-YYYYMMDD-HHMMSS.html", r.stdout)
+
+    def test_a_preset_shelf_that_does_not_exist_is_said_to_be_missing(self):
+        """launch.py skips a CODECOBBLER_HOME that is not a folder, so echoing
+        it as "the shelf" promised a place no map would go."""
+        self.env["CODECOBBLER_HOME"] = os.path.join(self.home, "not-there")
+        r = subprocess.run(["sh", self.SCRIPT], env=self.env, stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("does not exist", r.stdout)
+        self.assertNotIn("(CODECOBBLER_HOME was already set)", r.stdout)
 
     def test_a_shared_mount_it_offers_is_recorded_when_chosen(self):
         import re

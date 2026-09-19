@@ -50,7 +50,7 @@ if [ "${1:-}" = "--uninstall" ]; then
   done
   update-desktop-database "$APPS" 2>/dev/null || true
   echo "kept: the shelf and its register in $KEPT, and every"
-  echo "      <project>-map-<date>.html beside the projects you mapped"
+  echo "      <project>-map-YYYYMMDD-HHMMSS.html beside the projects you mapped"
   exit 0
 fi
 
@@ -66,7 +66,14 @@ mkdir -p "$BIN" "$APPS" "$ICONS" "$SCRIPTS"
 DEFAULT_SHELF="$HOME/.local/share/codecobbler"
 if [ -n "${CODECOBBLER_HOME:-}" ]; then
   SHELF="$CODECOBBLER_HOME"
-  echo "shelf: $SHELF  (CODECOBBLER_HOME was already set)"
+  if [ -d "$SHELF" ]; then
+    echo "shelf: $SHELF  (CODECOBBLER_HOME was already set)"
+  else
+    # launch.py passes over a CODECOBBLER_HOME that is not a folder, so this is
+    # recorded but no map goes there until it exists.
+    echo "CODECOBBLER_HOME is $SHELF, which does not exist; the shelf goes in"
+    echo "  $DEFAULT_SHELF until it does"
+  fi
 else
   set -- "$DEFAULT_SHELF"
   for c in /media/"${USER:-}"/* /run/media/"${USER:-}"/* /mnt/*; do
@@ -176,7 +183,8 @@ echo "  $BIN/cobble"
 echo "  $APPS/codecobbler.desktop      (app menu + drag a folder onto it)"
 echo "  $SCRIPTS/Map with CodeCobbler  (right-click in the file manager)"
 echo "  $ICONS/codecobbler.svg"
-echo "  shelf: $SHELF"
+if [ -d "$SHELF" ]; then echo "  shelf: $SHELF"
+else echo "  shelf: $DEFAULT_SHELF, until $SHELF exists"; fi
 [ -d "$DESK" ] && echo "  $DESK/CodeCobbler.desktop   (if GNOME shows it greyed: right-click -> Allow Launching)"
 echo
 echo "\$HOME/.local/bin must be on your PATH. Try:  cobble --help"

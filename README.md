@@ -319,7 +319,7 @@ projects it read except by writing a map beside them.
 | the single executable | the file you extracted | delete it |
 
 What `cobble`, the desktop icon and the window write is your work, so no
-uninstall removes it: a `<project>-map-<date>-<time>.html` beside every project
+uninstall removes it: a `<project>-map-YYYYMMDD-HHMMSS.html` beside every project
 mapped, and the shelf, `CodeCobbler.html` plus its register -- `maps.json` in
 `~/.local/share/codecobbler`, or `CodeCobbler.maps.json` on the shared volume
 you chose. `cobblerpy` itself writes only the files its options name.
@@ -363,7 +363,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 229 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 231 tests, no pytest required
 python3 verify_e2e.py                        # 115 end-to-end claim checks
 ```
 
