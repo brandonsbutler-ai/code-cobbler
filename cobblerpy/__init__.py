@@ -21,14 +21,44 @@ import sys
 # `python -m cobblerpy` puts the CURRENT DIRECTORY first on sys.path, and the
 # obvious place to run this tool is inside the project it reads. A project
 # holding ast.py or tokenize.py was then imported in place of the standard
-# library -- the tool executing the code it came to read. While a package is
-# being located for -m, sys.argv is ["-m"]; only then is the directory dropped,
-# so `import cobblerpy` from somebody's program leaves their sys.path alone.
-# runpy has already imported what IT needs by now, so this narrows the -m form
-# rather than closing it; the README says which forms are safe inside a project.
-if sys.argv[:1] == ["-m"]:
-    _cwd = os.getcwd()
-    sys.path[:] = [p for p in sys.path if os.path.abspath(p) != _cwd]
+# library -- the tool executing the code it came to read. So when the program
+# being run is THIS one, the directory is dropped before anything else is
+# imported; `import cobblerpy` from somebody else's program, including one run
+# with -m, leaves their sys.path alone. runpy has already imported what IT
+# needs by now, so this narrows the -m form rather than closing it; the README
+# says which forms are safe inside a project.
+
+
+def _m_target():
+    """The module `python -m` was asked to run, or None.
+
+    sys.argv is ["-m"] while ANY -m program is being located, so it cannot say
+    which; sys.orig_argv can, from 3.10. On 3.9 this answers None and the guard
+    stands down rather than guessing.
+    """
+    args = iter(getattr(sys, "orig_argv", [])[1:])
+    for arg in args:
+        if arg == "-m":
+            return next(args, None)
+        if arg.startswith("-m"):
+            return arg[2:]
+        if arg in ("-W", "-X"):
+            next(args, None)              # these take a value
+        elif arg == "-c" or not arg.startswith("-"):
+            return None
+    return None
+
+
+def _drop_the_current_directory():
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        return              # deleted: nothing can be imported from it anyway
+    sys.path[:] = [p for p in sys.path if os.path.abspath(p) != cwd]
+
+
+if sys.argv[:1] == ["-m"] and (_m_target() or "").split(".")[0] == "cobblerpy":
+    _drop_the_current_directory()
 
 from .abandonment import analyse_project, summarise
 from .graph import Project

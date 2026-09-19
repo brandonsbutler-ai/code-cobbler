@@ -2037,6 +2037,30 @@ class TestNeverRunsTheCodeItReads(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr[-400:])
         self.assertIn("modules mapped", r.stderr)
 
+    def test_another_program_run_with_m_keeps_its_own_directory(self):
+        """The -m guard fired for ANY `python -m app` that imported cobblerpy,
+        and took away the directory that app's own imports come from."""
+        # Imported while -m is still LOCATING the package, which is when
+        # sys.argv is ["-m"] for every program, not just this one.
+        app = Tree({"someapp/__init__.py": "import cobblerpy\n",
+                    "someapp/__main__.py": "import helper\nprint(helper.VALUE)\n",
+                    "helper.py": "VALUE = 'found'\n"})
+        self.addCleanup(app.close)
+        r = subprocess.run([sys.executable, "-m", "someapp"], cwd=app.dir,
+                           env=self._env(PYTHONPATH=REPO), capture_output=True,
+                           text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+        self.assertIn("found", r.stdout)
+
+    def test_a_deleted_working_directory_does_not_crash_it(self):
+        gone = tempfile.mkdtemp()
+        r = subprocess.run(["sh", "-c", f"cd '{gone}' && rmdir '{gone}' && "
+                            f"exec '{sys.executable}' -m cobblerpy --version"],
+                           env=self._env(PYTHONPATH=REPO), capture_output=True,
+                           text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+        self.assertIn("cobblerpy", r.stdout)
+
     def test_a_failure_before_the_launcher_starts_still_reaches_the_user(self):
         """A crash on import happens before launch.main and its notifications.
 
