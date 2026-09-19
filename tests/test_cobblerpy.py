@@ -1733,6 +1733,21 @@ class TestLaunch(unittest.TestCase):
         self.assertEqual(code, 0, said)
         self.assertIn(t.dir + "-map-", opened[0])
 
+    def test_two_maps_in_the_same_second_do_not_overwrite_each_other(self):
+        """The stamp is to the second; the second run silently replaced the
+        first map, which the shelf may still be pointing at."""
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        project = os.path.join(d, "proj")
+        os.makedirs(project)
+        first = launch.map_destination(project, stamp="20260919-120000")
+        open(first, "w", encoding="utf-8").close()
+        second = launch.map_destination(project, stamp="20260919-120000")
+        self.assertNotEqual(first, second)
+        self.assertFalse(os.path.exists(second))
+        self.assertEqual(os.path.dirname(second), d)
+
     def _printed(self, argv):
         import contextlib
         import io

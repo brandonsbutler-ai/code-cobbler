@@ -229,7 +229,14 @@ def map_destination(folder, stamp=None):
     parent = os.path.dirname(folder) or "."
     base = os.path.basename(folder) or "project"
     stamp = stamp or time.strftime("%Y%m%d-%H%M%S")
-    return os.path.join(parent, f"{base}-map-{stamp}.html")
+    path = os.path.join(parent, f"{base}-map-{stamp}.html")
+    # The stamp is to the second, and two runs inside one second otherwise
+    # share a name -- the second silently replacing the first.
+    n = 2
+    while os.path.exists(path):
+        path = os.path.join(parent, f"{base}-map-{stamp}-{n}.html")
+        n += 1
+    return path
 
 
 def main(argv=None, notify=None, open_url=None, registry=None, shelf=None):
