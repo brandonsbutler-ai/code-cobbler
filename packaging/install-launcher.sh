@@ -95,4 +95,4 @@ echo "  $ICONS/codecobbler.svg"
 [ -n "$SHARED" ] && echo "  shelf on the shared volume: $SHARED/CodeCobbler.html"
 [ -d "$DESK" ] && echo "  $DESK/CodeCobbler.desktop   (if GNOME shows it greyed: right-click -> Allow Launching)"
 echo
-echo "\$HOME/.local/bin must be on your PATH. Try:  cobble --help-ish  (any folder)"
+echo "\$HOME/.local/bin must be on your PATH. Try:  cobble --help"

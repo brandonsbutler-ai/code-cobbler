@@ -1632,8 +1632,52 @@ class TestLaunch(unittest.TestCase):
         self.assertEqual(len(opened), 1, said)
         self.assertIn("pkg-map-", opened[0])
 
+    def _printed(self, argv):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code, said, opened, _t = self._run(argv)
+        return code, out.getvalue(), said, opened
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    def test_help_prints_usage_and_surveys_nothing(self):
+        """The binary is this launcher; `CodeCobbler --help` surveyed the
+        current folder, because every argument starting with '-' was dropped."""
+        code, out, said, opened = self._printed(["--help"])
+        self.assertEqual(code, 0, said)
+        self.assertEqual(opened, [], "--help surveyed a folder")
+        self.assertIn("--shelf", out)
+
+    def test_version_prints_the_version_and_surveys_nothing(self):
+        from cobblerpy import __version__
+        code, out, said, opened = self._printed(["--version"])
+        self.assertEqual(code, 0, said)
+        self.assertEqual(opened, [], "--version surveyed a folder")
+        self.assertIn(__version__, out)
+
+    def test_an_unknown_option_is_refused_not_dropped(self):
+        code, _out, said, opened = self._printed(["--frobnicate", "<TREE>"])
+        self.assertEqual(code, 2)
+        self.assertEqual(opened, [])
+        self.assertIn("--frobnicate", " ".join(said))
+
+    def test_the_single_executable_opens_the_shelf_when_given_nothing(self):
+        """Double-clicking the binary opens the shelf, as the README says.
+
+        A bare `cobble` in a terminal still means "here"; the binary is the
+        thing people double-click, from an arbitrary working directory.
+        """
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_launcher_entry", os.path.join(REPO, "packaging", "launcher_entry.py"))
+        entry = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(entry)
+        self.assertEqual(entry.argv_for([], frozen=True), ["--shelf"])
+        self.assertEqual(entry.argv_for([], frozen=False), [])
+        self.assertEqual(entry.argv_for(["x"], frozen=True), ["x"])
+
+
+REPO =os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Modules the tool imports after it starts, plus the two files Python runs at
 # startup from anything on sys.path. Each one, if EXECUTED, leaves a marker.

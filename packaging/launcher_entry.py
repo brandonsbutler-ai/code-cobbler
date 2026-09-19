@@ -32,10 +32,21 @@ def _say(message):
     print(message, file=sys.stderr)
 
 
+def argv_for(argv, frozen):
+    """What the launcher is asked to do.
+
+    The single executable is double-clicked, from whatever working directory
+    the desktop hands it, so given nothing it opens the shelf -- which is what
+    the README promises. The `cobble` shim also starts here, and a bare `cobble`
+    typed in a terminal still means "here".
+    """
+    return argv if argv or not frozen else ["--shelf"]
+
+
 if __name__ == "__main__":
     try:
         from cobblerpy.launch import main
-        code = main()
+        code = main(argv_for(sys.argv[1:], getattr(sys, "frozen", False)))
     except Exception as exc:                              # noqa: BLE001
         _say(f"CodeCobbler failed before it could finish: "
              f"{type(exc).__name__}: {exc}")

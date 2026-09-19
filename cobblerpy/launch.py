@@ -21,8 +21,18 @@ import sys
 import time
 import webbrowser
 
-from . import survey
+from . import __version__, survey
 from .report import write_map
+
+USAGE = """usage: cobble [FOLDER | FILE.py] | --shelf | --help | --version
+
+  cobble               survey the current folder, write its map beside it, open it
+  cobble FOLDER        the same for FOLDER; a .py file means its project
+  cobble --shelf       open the shelf: every map already made, newest first
+  cobble --version     print the version
+
+The map is written beside the folder, never inside it. The single executable
+opens the shelf when it is given nothing, because it is double-clicked."""
 
 
 # The shelf, and the register behind it. Maps are written BESIDE the projects
@@ -188,6 +198,20 @@ def main(argv=None, notify=None, open_url=None, registry=None, shelf=None):
     open_url = open_url or webbrowser.open
     registry = registry or registry_path()
     shelf = shelf or shelf_path()
+
+    # The single executable IS this launcher, so these are its only way to
+    # answer --help or --version; dropped, they surveyed the current folder.
+    if "--help" in argv or "-h" in argv:
+        print(USAGE)
+        return 0
+    if "--version" in argv:
+        print(f"cobblerpy {__version__}")
+        return 0
+    unknown = [a for a in argv if a.startswith("-") and a != "--shelf"]
+    if unknown:
+        notify(f"unknown option {', '.join(unknown)} -- `cobble --help` lists "
+               f"what this takes")
+        return 2
 
     paths = [a for a in argv if not a.startswith("-")]
 

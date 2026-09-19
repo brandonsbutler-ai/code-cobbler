@@ -149,6 +149,8 @@ nothing to pin.
 cobble                      # the current directory
 cobble ../some-project      # any folder
 cobble path/to/module.py    # a file resolves to the folder holding it
+cobble --shelf              # the maps you have already made
+cobble --help               # also --version
 ```
 
 Surveys, writes the map **beside** the project rather than inside it, and opens
@@ -222,6 +224,21 @@ Geared for a 1920-wide window. Narrower than about 1180 and the detail panel
 moves below the chart rather than beside it.
 
 ### A single executable, for a machine with no Python
+
+Download `CodeCobbler-linux-x86_64.tar.gz` from the
+[Releases page](https://github.com/brandonsbutler-ai/code-cobbler/releases)
+(Linux x86-64 only), then:
+
+```bash
+tar xzf CodeCobbler-linux-x86_64.tar.gz
+./CodeCobbler                       # the shelf of maps you have made
+./CodeCobbler /path/to/project      # map that folder and open the map
+./CodeCobbler --help                # also --version
+```
+
+`--help` and `--version` are newer than the v0.1.1 build, which treats both as
+"map the current folder"; they arrive with the next release. To build it
+yourself from this source:
 
 ```bash
 python3 -m pip install pyinstaller
@@ -302,7 +319,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 182 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 186 tests, no pytest required
 python3 verify_e2e.py                        # 111 end-to-end claim checks
 ```
 
