@@ -10,11 +10,14 @@ REM
 REM All behaviour lives in cobblerpy\launch.py; this only locates Python and
 REM the checkout, because the package is not pip-installed on this machine.
 setlocal
-set "REPO=C:\path\to\cobblerpy"
+REM The checkout is the folder above this file's own (%~dp0 is packaging\).
+REM It named one machine's drive and folders, which worked nowhere else. A
+REM shortcut to this file keeps that answer; a COPY moved elsewhere does not.
+for %%I in ("%~dp0..") do set "REPO=%%~fI"
 
 if not exist "%REPO%\cobblerpy\launch.py" (
   echo CodeCobbler: cannot find the checkout at %REPO%
-  echo Edit REPO at the top of this file to point at it.
+  echo Run this file from packaging\ in the checkout, or a shortcut to it.
   pause
   exit /b 1
 )

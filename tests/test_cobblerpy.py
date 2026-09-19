@@ -1085,6 +1085,16 @@ class TestCommandLineEdges(unittest.TestCase):
         self.assertEqual(_clip(text, 56), "shares sign, signer, unsign, validate; both in ...")
         self.assertEqual(_clip("short", 56), "short")
 
+    def test_the_windows_launcher_finds_its_checkout_from_where_it_is(self):
+        """It named one machine's W:\\...\\cobblerpy. Read, not run: there
+        is no cmd.exe here, so this is the only instrument available."""
+        import re
+        with open(os.path.join(REPO, "packaging", "CodeCobbler.bat"),
+                  encoding="utf-8") as fh:
+            bat = fh.read()
+        self.assertEqual(re.findall(r"\b[A-Za-z]:\\\S+", bat), [])
+        self.assertIn("%~dp0", bat)
+
     def test_what_pip_install_leaves_in_the_clone_is_ignored(self):
         """`pip install .` writes build/ and cobblerpy.egg-info/ into the
         checkout; the second showed up in git status."""
