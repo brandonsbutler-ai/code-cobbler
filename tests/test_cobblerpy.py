@@ -1908,6 +1908,29 @@ class TestInstaller(unittest.TestCase):
                       out)
         self.assertEqual(self._shim_default(), "")
 
+    def _files(self):
+        return sorted(os.path.relpath(os.path.join(d, f), self.home)
+                      for d, _dirs, files in os.walk(self.home) for f in files
+                      # the desktop database's cache, rebuilt by both halves
+                      if f != "mimeinfo.cache")
+
+    def test_uninstall_removes_what_install_wrote_and_keeps_the_maps(self):
+        os.makedirs(os.path.join(self.home, "Desktop"))
+        write(self.home, ".local/bin/someone-elses-tool", "#!/bin/sh\n")
+        write(self.home, ".local/share/codecobbler/maps.json", "[]\n")
+        before = self._files()
+        run = lambda *a: subprocess.run(["sh", self.SCRIPT, *a], env=self.env,
+                                        stdin=subprocess.DEVNULL, capture_output=True,
+                                        text=True, timeout=60)
+        r = run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertGreater(len(self._files()), len(before), "nothing was installed")
+        r = run("--uninstall")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self._files(), before)
+        self.assertIn(".local/share/codecobbler", r.stdout,
+                      "it did not say where the kept maps are")
+
     def test_a_shared_mount_it_offers_is_recorded_when_chosen(self):
         import re
         out = self._interactive("")

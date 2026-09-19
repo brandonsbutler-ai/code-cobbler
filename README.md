@@ -291,6 +291,23 @@ works out what to bundle by reading the imports. `packaging/app_entry.py`
 imports it at the top level for exactly that reason, and that import is marked
 `# noqa: F401` because it is deliberate.
 
+### Uninstalling
+
+Each way in leaves different things behind, and none of them touches the
+projects it read except by writing a map beside them.
+
+| Installed with | What it left | How to remove it |
+|---|---|---|
+| `pip install` | the package and the `cobblerpy`, `cobble` and `cobblerpy-gui` commands; in the clone, `build/` and `cobblerpy.egg-info/` | `pip uninstall cobblerpy`, then delete those two folders from the clone. With `[gui]`, also `pip uninstall PySide6-Essentials shiboken6` |
+| `packaging/install-launcher.sh` | `~/.local/bin/cobble`, `~/.local/share/applications/codecobbler.desktop`, `~/.local/share/icons/codecobbler.svg`, `~/.local/share/nautilus/scripts/Map with CodeCobbler`, and `CodeCobbler.desktop` on the desktop | `sh packaging/install-launcher.sh --uninstall` removes exactly those and rebuilds the desktop database's `mimeinfo.cache` |
+| the single executable | the file you extracted | delete it |
+
+What `cobble`, the desktop icon and the window write is your work, so no
+uninstall removes it: a `<project>-map-<date>-<time>.html` beside every project
+mapped, and the shelf, `CodeCobbler.html` plus its register -- `maps.json` in
+`~/.local/share/codecobbler`, or `CodeCobbler.maps.json` on the shared volume
+you chose. `cobblerpy` itself writes only the files its options name.
+
 ## The desktop application
 
 ```bash
@@ -330,7 +347,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 199 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 200 tests, no pytest required
 python3 verify_e2e.py                        # 115 end-to-end claim checks
 ```
 

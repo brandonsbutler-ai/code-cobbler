@@ -6,7 +6,8 @@
 # lives in cobblerpy/launch.py. These are the three ways of reaching it without
 # typing an incantation. Re-running is safe; it overwrites its own files.
 #
-#   sh packaging/install-launcher.sh          # uses this checkout
+#   sh packaging/install-launcher.sh              # uses this checkout
+#   sh packaging/install-launcher.sh --uninstall  # removes what it installed
 #
 set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -14,6 +15,27 @@ BIN="$HOME/.local/bin"
 APPS="$HOME/.local/share/applications"
 ICONS="$HOME/.local/share/icons"
 SCRIPTS="$HOME/.local/share/nautilus/scripts"
+DESK=$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")
+
+# Exactly the files the install below writes, and nothing else. The shelf, its
+# register and the maps are the person's work, not the launcher's, so they
+# stay; where they are is said instead.
+if [ "${1:-}" = "--uninstall" ]; then
+  KEPT="$HOME/.local/share/codecobbler"
+  if [ -f "$BIN/cobble" ]; then
+    RECORDED=$(sed -n 's/^CODECOBBLER_HOME="\${CODECOBBLER_HOME:-\(.*\)}" \\$/\1/p' "$BIN/cobble")
+    [ -n "$RECORDED" ] && KEPT="$RECORDED"
+  fi
+  for f in "$BIN/cobble" "$APPS/codecobbler.desktop" "$ICONS/codecobbler.svg" \
+           "$SCRIPTS/Map with CodeCobbler" "$DESK/CodeCobbler.desktop"; do
+    if [ -e "$f" ]; then rm -f "$f" && echo "removed $f"; fi
+  done
+  update-desktop-database "$APPS" 2>/dev/null || true
+  echo "kept: the shelf and its register in $KEPT, and every"
+  echo "      <project>-map-<date>.html beside the projects you mapped"
+  exit 0
+fi
+
 mkdir -p "$BIN" "$APPS" "$ICONS" "$SCRIPTS"
 
 # Where the shelf and its register live. ASKED, not guessed: this used to take
@@ -115,7 +137,6 @@ update-desktop-database "$APPS" 2>/dev/null || true
 # A copy ON the desktop, which is where he asked for it. GNOME will not launch
 # a .desktop from ~/Desktop until it is marked trusted; gio is not installed
 # here, so the fallback is the one right-click ("Allow Launching") named below.
-DESK=$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")
 if [ -d "$DESK" ]; then
   cp "$APPS/codecobbler.desktop" "$DESK/CodeCobbler.desktop"
   chmod +x "$DESK/CodeCobbler.desktop"
