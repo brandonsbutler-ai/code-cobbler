@@ -30,8 +30,9 @@ MARK=X-CodeCobbler-Installer
 sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 # The Desktop Entry spec's quoting for Exec: inside double quotes, \ " ` $ take
 # a backslash, and then every backslash is doubled again because the value is
-# itself an escaped string. Unquoted, a space in $HOME split the command.
-dq_exec() { printf '"%s"' "$(printf '%s' "$1" | sed -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g')"; }
+# itself an escaped string. Unquoted, a space in $HOME split the command. A
+# literal % is %%, or it reads as a field code.
+dq_exec() { printf '"%s"' "$(printf '%s' "$1" | sed -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g' -e 's/%/%%/g')"; }
 
 # Exactly the files the install below writes, and nothing else. The shelf, its
 # register and the maps are the person's work, not the launcher's, so they

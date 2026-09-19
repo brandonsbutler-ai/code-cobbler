@@ -2404,7 +2404,7 @@ class TestInstaller(unittest.TestCase):
         """A volume label is somebody else's text. The shim wrote the shelf
         path and the checkout inside double quotes, so `$(...)` in either ran
         on every `cobble`; the .desktop Exec broke on a space."""
-        nasty = 'a b $(touch PWN1) "q" `touch PWN2`'
+        nasty = 'a b $(touch PWN1) "q" `touch PWN2` 100%'
         top = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, top, True)
         checkout = os.path.join(top, "checkout " + nasty)
@@ -2415,7 +2415,7 @@ class TestInstaller(unittest.TestCase):
         # HOME gets a space and quotes but no $( ) or backtick: xdg-user-dir,
         # which the installer asks for the desktop folder, evals $HOME itself.
         # That is the system tool's, and a HOME like that has worse problems.
-        home = os.path.join(top, 'home a b "q"')
+        home = os.path.join(top, 'home a b "q" 100%')
         shelf = os.path.join(top, "shelf " + nasty)
         os.makedirs(os.path.join(home, "Desktop"))
         os.makedirs(shelf)
@@ -2442,6 +2442,9 @@ class TestInstaller(unittest.TestCase):
         while value[i] != '"':
             if value[i] == "\\":
                 i += 1
+            elif value[i] == "%":         # a literal percent is written %%
+                i += 1
+                self.assertEqual(value[i], "%", f"a lone % in Exec: {value}")
             arg += value[i]
             i += 1
         self.assertEqual(arg, os.path.join(home, ".local", "bin", "cobble"))
