@@ -2354,6 +2354,28 @@ class TestInstaller(unittest.TestCase):
         self.assertEqual(self._files(), before, r.stdout)
         self.assertEqual(r.stdout.count("left alone: not ours"), len(foreign), r.stdout)
 
+    def test_install_refuses_to_overwrite_a_file_it_did_not_write(self):
+        """It overwrote pip's own ~/.local/bin/cobble, marked it as its own,
+        and then uninstall deleted it."""
+        pips = "#!/usr/bin/python3\nfrom cobblerpy.launch import main\n"
+        write(self.home, ".local/bin/cobble", pips)
+        run = lambda *a: subprocess.run(["sh", self.SCRIPT, *a], env=self.env,
+                                        stdin=subprocess.DEVNULL, capture_output=True,
+                                        text=True, timeout=60)
+        before = self._files()
+        r = run()
+        self.assertNotEqual(r.returncode, 0, "it installed over a file it did not write")
+        self.assertIn(".local/bin/cobble", r.stdout + r.stderr)
+        self.assertIn("--force", r.stdout + r.stderr)
+        self.assertEqual(self._files(), before, "it wrote something before refusing")
+        run("--uninstall")
+        with open(os.path.join(self.home, ".local/bin/cobble"), encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), pips)
+        r = run("--force")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(os.path.join(self.home, ".local/bin/cobble"), encoding="utf-8") as fh:
+            self.assertIn("X-CodeCobbler-Installer", fh.read())
+
     def test_an_answer_that_is_not_a_choice_is_asked_again(self):
         """"0" made the shelf "$0" -- the installer's own path -- and a
         twenty-digit number reached the shell's arithmetic."""

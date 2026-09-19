@@ -185,6 +185,11 @@ command, an application entry, a desktop icon and a file-manager right-click. It
 adds no dependency and is safe to re-run. (If GNOME shows the desktop icon
 greyed out, right-click it once and choose Allow Launching.)
 
+It will not overwrite a file at one of those paths that it did not write --
+`pip install --user` puts its own `cobble` in `~/.local/bin` -- and says which;
+remove it, or run it again with `--force` to replace it. An install made before
+the installer marked its files needs `--force` once.
+
 It asks where the shelf of maps should live: `~/.local/share/codecobbler`, the
 default, or any writable shared volume it finds under `/media`, `/run/media` or
 `/mnt`. With `CODECOBBLER_HOME` already set it uses that and does not ask; run
@@ -363,7 +368,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 234 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 235 tests, no pytest required
 python3 verify_e2e.py                        # 115 end-to-end claim checks
 ```
 

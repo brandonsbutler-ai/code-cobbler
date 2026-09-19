@@ -8,6 +8,7 @@
 #
 #   sh packaging/install-launcher.sh              # uses this checkout
 #   sh packaging/install-launcher.sh --uninstall  # removes what it installed
+#   sh packaging/install-launcher.sh --force      # replaces files it did not write
 #
 set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -52,6 +53,26 @@ if [ "${1:-}" = "--uninstall" ]; then
   echo "kept: the shelf and its register in $KEPT, and every"
   echo "      <project>-map-YYYYMMDD-HHMMSS.html beside the projects you mapped"
   exit 0
+fi
+
+# A file at one of these paths without the mark is somebody else's -- pip's
+# own `cobble` lives at exactly ~/.local/bin/cobble. Overwriting it marked it
+# as ours, and uninstall then deleted it. Nothing is written until every path
+# is either free or already ours.
+if [ "${1:-}" != "--force" ]; then
+  THEIRS=""
+  for f in "$BIN/cobble" "$APPS/codecobbler.desktop" "$ICONS/codecobbler.svg" \
+           "$SCRIPTS/Map with CodeCobbler" "$DESK/CodeCobbler.desktop"; do
+    if [ -e "$f" ] && ! grep -q "$MARK" "$f"; then
+      THEIRS="$THEIRS
+  $f"
+    fi
+  done
+  if [ -n "$THEIRS" ]; then
+    echo "not installed: these are already there and were not written by this installer:$THEIRS"
+    echo "Remove them yourself, or run again with --force to replace them."
+    exit 1
+  fi
 fi
 
 mkdir -p "$BIN" "$APPS" "$ICONS" "$SCRIPTS"
