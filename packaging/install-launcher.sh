@@ -22,13 +22,24 @@ DESK=$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")
 # ~/.local/bin/cobble, which lives at exactly the same place.
 MARK=X-CodeCobbler-Installer
 
+# A path written into a generated file is DATA. The shelf's path can be a
+# volume label, which is somebody else's text: written inside double quotes, a
+# label with $(...) in it ran on every `cobble`. Single quotes are the one
+# quoting nothing inside can escape, once each ' is written as '\''.
+sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+# The Desktop Entry spec's quoting for Exec: inside double quotes, \ " ` $ take
+# a backslash, and then every backslash is doubled again because the value is
+# itself an escaped string. Unquoted, a space in $HOME split the command.
+dq_exec() { printf '"%s"' "$(printf '%s' "$1" | sed -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g')"; }
+
 # Exactly the files the install below writes, and nothing else. The shelf, its
 # register and the maps are the person's work, not the launcher's, so they
 # stay; where they are is said instead.
 if [ "${1:-}" = "--uninstall" ]; then
   KEPT="$HOME/.local/share/codecobbler"
   if [ -f "$BIN/cobble" ] && grep -q "$MARK" "$BIN/cobble"; then
-    RECORDED=$(sed -n 's/^CODECOBBLER_HOME="\${CODECOBBLER_HOME:-\(.*\)}" \\$/\1/p' "$BIN/cobble")
+    # The shim's own single-quoted assignment, read back by the shell.
+    RECORDED=$(eval "$(grep '^SHELF=' "$BIN/cobble")"; printf '%s' "${SHELF:-}")
     [ -n "$RECORDED" ] && KEPT="$RECORDED"
   fi
   for f in "$BIN/cobble" "$APPS/codecobbler.desktop" "$ICONS/codecobbler.svg" \
@@ -100,9 +111,12 @@ cat > "$BIN/cobble" <<EOF
 # PYTHONPATH is the checkout and nothing else, and the entry runs as a SCRIPT:
 # an inherited or empty PYTHONPATH entry, or -m, puts the current directory on
 # sys.path, and the current directory is usually the project being read.
-PYTHONPATH="$REPO" \\
-CODECOBBLER_HOME="\${CODECOBBLER_HOME:-$SHARED}" \\
-exec python3 "$REPO/packaging/launcher_entry.py" "\$@"
+# Both paths are single-quoted data; nothing below re-reads them as code.
+REPO=$(sq "$REPO")
+SHELF=$(sq "$SHARED")
+PYTHONPATH="\$REPO" \\
+CODECOBBLER_HOME="\${CODECOBBLER_HOME:-\$SHELF}" \\
+exec python3 "\$REPO/packaging/launcher_entry.py" "\$@"
 EOF
 chmod +x "$BIN/cobble"
 
@@ -137,8 +151,8 @@ Type=Application
 Name=CodeCobbler
 GenericName=Codebase map
 Comment=Map a Python codebase somebody else left behind
-Exec=$BIN/cobble --shelf %F
-Icon=$ICONS/codecobbler.svg
+Exec=$(dq_exec "$BIN/cobble") --shelf %F
+Icon=$(printf '%s' "$ICONS/codecobbler.svg" | sed 's/\\/\\\\/g')
 Terminal=false
 Categories=Development;
 MimeType=inode/directory;

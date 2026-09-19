@@ -2159,15 +2159,15 @@ class TestInstaller(unittest.TestCase):
         self.env = {"HOME": self.home, "PATH": "/usr/bin:/bin",
                     "USER": os.environ.get("USER", "nobody")}
 
-    def _shim_default(self):
-        """What the installed `cobble` falls back to for CODECOBBLER_HOME."""
-        import re
-        with open(os.path.join(self.home, ".local", "bin", "cobble"),
-                  encoding="utf-8") as fh:
-            m = re.search(r'CODECOBBLER_HOME="\$\{CODECOBBLER_HOME:-([^}]*)\}"',
-                          fh.read())
-        self.assertIsNotNone(m, "the shim does not set CODECOBBLER_HOME")
-        return m.group(1)
+    def _shim_default(self, home=None):
+        """What the installed `cobble` falls back to for CODECOBBLER_HOME --
+        asked of the shell, which is what will read it."""
+        shim = os.path.join(home or self.home, ".local", "bin", "cobble")
+        r = subprocess.run(["sh", "-c", 'eval "$(grep "^SHELF=" "$1")" && '
+                            'printf %s "$SHELF"', "sh", shim],
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, f"the shim has no SHELF line: {r.stderr}")
+        return r.stdout
 
     def _interactive(self, answer):
         """Run it on a pseudo-terminal, as a person at a shell would. A list
@@ -2275,6 +2275,57 @@ class TestInstaller(unittest.TestCase):
         self.assertEqual(out.count("not one of the choices"), 5, out[-600:])
         self.assertNotIn("Illegal number", out)
         self.assertEqual(self._shim_default(), "")
+
+    def test_paths_are_written_as_data_never_as_code(self):
+        """A volume label is somebody else's text. The shim wrote the shelf
+        path and the checkout inside double quotes, so `$(...)` in either ran
+        on every `cobble`; the .desktop Exec broke on a space."""
+        nasty = 'a b $(touch PWN1) "q" `touch PWN2`'
+        top = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, top, True)
+        checkout = os.path.join(top, "checkout " + nasty)
+        shutil.copytree(os.path.join(REPO, "cobblerpy"), os.path.join(checkout, "cobblerpy"),
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(os.path.join(REPO, "packaging"), os.path.join(checkout, "packaging"),
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        # HOME gets a space and quotes but no $( ) or backtick: xdg-user-dir,
+        # which the installer asks for the desktop folder, evals $HOME itself.
+        # That is the system tool's, and a HOME like that has worse problems.
+        home = os.path.join(top, 'home a b "q"')
+        shelf = os.path.join(top, "shelf " + nasty)
+        os.makedirs(os.path.join(home, "Desktop"))
+        os.makedirs(shelf)
+        env = dict(self.env, HOME=home, CODECOBBLER_HOME=shelf)
+        r = subprocess.run(["sh", os.path.join(checkout, "packaging", "install-launcher.sh")],
+                           env=env, cwd=top, stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        run_env = {"HOME": home, "PATH": "/usr/bin:/bin"}
+        r = subprocess.run([os.path.join(home, ".local", "bin", "cobble"), "--version"],
+                           env=run_env, cwd=top, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("cobblerpy", r.stdout)
+        self.assertEqual(self._shim_default(home), shelf)
+        pwned = [f for d, _s, fs in os.walk(top) for f in fs if f.startswith("PWN")]
+        self.assertEqual(pwned, [], "a path was executed as a command")
+        # The desktop entry's Exec, read back by the spec's own rules.
+        with open(os.path.join(home, ".local/share/applications/codecobbler.desktop"),
+                  encoding="utf-8") as fh:
+            value = [l for l in fh.read().splitlines() if l.startswith("Exec=")][0][5:]
+        value = value.replace("\\\\", "\\")          # string-level escapes
+        self.assertTrue(value.startswith('"'), value)
+        arg, i = "", 1
+        while value[i] != '"':
+            if value[i] == "\\":
+                i += 1
+            arg += value[i]
+            i += 1
+        self.assertEqual(arg, os.path.join(home, ".local", "bin", "cobble"))
+        if shutil.which("desktop-file-validate"):
+            v = subprocess.run(["desktop-file-validate", os.path.join(
+                home, ".local/share/applications/codecobbler.desktop")],
+                capture_output=True, text=True)
+            self.assertEqual(v.returncode, 0, v.stdout + v.stderr)
 
     def test_a_shared_mount_it_offers_is_recorded_when_chosen(self):
         import re
