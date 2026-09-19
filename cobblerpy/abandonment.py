@@ -190,7 +190,14 @@ def replaced_methods(project):
                     if key:
                         subclasses.setdefault(key, []).append(mine)
             elif d.kind == "method":
-                methods.setdefault((module.dotted, d.parent), set()).add(d.name)
+                # A redefinition that hands the call up with super() still
+                # lands on the base, so it does not count as replacing it.
+                up = any(name == f"super.{d.name}"
+                         and d.lineno <= line <= d.end_lineno
+                         for name, line in module.calls)
+                mine = methods.setdefault((module.dotted, d.parent), set())
+                if not up:
+                    mine.add(d.name)
         for name, _ln in module.calls:
             for written in (name, name.rpartition(".")[0]):
                 key = written and _class_named(project, module, written)

@@ -4659,6 +4659,25 @@ class TestSubclassExemptionIsNarrow(unittest.TestCase):
         ends = {d["qualname"] for d in find(s.project, s.modules_by_key, s.origins)}
         self.assertEqual(ends, {"Box.put", "Hook.fire"})
 
+    def test_a_subclass_that_calls_super_does_not_replace_the_base(self):
+        """`return super().handle(x)` redefines the method and still lands
+        on the base, which raises. That is not a replacement."""
+        from cobblerpy.deadends import find
+        t = Tree({"main.py": "import h\nif __name__ == '__main__':\n    h.A().handle(1)\n",
+                  "h.py": ("class Handler:\n    def handle(self, x):\n"
+                           "        raise NotImplementedError\n"
+                           "class A(Handler):\n    def handle(self, x):\n"
+                           "        return super().handle(x)\n"
+                           "class B(Handler):\n    def handle(self, x):\n"
+                           "        return super(B, self).handle(x)\n")})
+        self.addCleanup(t.close)
+        s = t.survey()
+        row = [r for r in s.frontier if r["module"] == "h"][0]
+        self.assertIn("Handler.handle",
+                      {n for n, _l in row["signals"].get("not_implemented", [])})
+        self.assertIn("Handler.handle", {d["qualname"] for d in
+                      find(s.project, s.modules_by_key, s.origins)})
+
     def test_a_base_every_subclass_replaces_is_still_exempt(self):
         self.assertNotIn(("pkg.shapes", "Shape.area"), self.stubs)
 
