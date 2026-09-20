@@ -57,6 +57,10 @@ SIGNALS = {
 _RETURN_SECTION = re.compile(r"^\s*(returns?|:returns?|:rtype)\b[:\s]",
                              re.IGNORECASE | re.MULTILINE)
 
+# Whole identifiers inside a collected string, so a name is matched as a
+# name and never as a fragment of a longer one.
+_IDENTIFIERS = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
 
 def _promises_a_return(docstring):
     """True when the docstring says THIS function returns something.
@@ -90,9 +94,12 @@ def _unused_imports(module):
         head = alias.split(".")[0]
         if head in module.names_used:
             continue
-        # A module imported for its side effects, or used only in a string
-        # (type annotations under `from __future__ import annotations`).
-        if any(head in s for s in module.strings):
+        # Named in a string that names symbols: an `__all__` entry, or a
+        # forward-reference annotation. The scan collects only those two
+        # positions, and the name must be a WHOLE identifier inside one --
+        # `ratio_helper` is not a use of `io`, and `Position` is not a use
+        # of `os`. A substring test hid a real dead import in pygments.
+        if any(head in _IDENTIFIERS.findall(s) for s in module.strings):
             continue
         if head in ("annotations", "__future__"):
             continue

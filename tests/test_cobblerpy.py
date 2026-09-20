@@ -578,6 +578,82 @@ class TestDeliberateImports(unittest.TestCase):
             self._unused("import zlib  # noqa: F401\nimport gzip\nx = 1\n"),
             ["gzip (from gzip)"])
 
+    def test_a_name_re_exported_through_dunder_all_is_used(self):
+        """`__all__` is the export list, and it names its exports in strings.
+
+        Removing one of these breaks every importer with an ImportError, so
+        reporting it as abandoned work is worse than saying nothing.
+        """
+        self.assertEqual(
+            self._unused('from zlib import compress\n'
+                         '__all__ = ["compress"]\n'), [])
+
+    def test_a_name_used_only_in_a_string_annotation_is_used(self):
+        """The forward-reference form: the annotation is a string constant,
+        so the name never appears as a Name node."""
+        self.assertEqual(
+            self._unused('from zlib import compress\n'
+                         'def f(c: "compress"):\n'
+                         '    return c\n'), [])
+
+    def test_prose_that_merely_mentions_the_name_does_not_excuse_it(self):
+        """Only a string that IS a reference counts -- `__all__` and
+        annotations. A docstring talking about the module is not a use, and
+        treating it as one silently drops a real finding."""
+        self.assertEqual(
+            self._unused('"""We used to use zlib here."""\n'
+                         'import zlib\nx = 1\n'),
+            ["zlib (from zlib)"])
+        self.assertEqual(
+            self._unused('import zlib\nmsg = "zlib is great"\nx = 1\n'),
+            ["zlib (from zlib)"])
+
+    def test_a_name_that_is_merely_a_substring_of_prose_is_not_a_use(self):
+        """`io` occurs inside `ratio`. An unanchored substring test over every
+        string in the file exempts an import on an unrelated word."""
+        self.assertEqual(
+            self._unused('import io\nmsg = "the ratio was high"\nx = 1\n'),
+            ["io (from io)"])
+
+    def test_dunder_all_extended_after_the_import_still_exports(self):
+        """`__all__ += [...]` is how the stdlib does a conditional re-export.
+
+        Measured on Python 3.12: missing this reports 15 real re-exports as
+        abandoned work -- 12 in subprocess.py alone.
+        """
+        self.assertEqual(
+            self._unused("__all__ = ['md5']\n"
+                         "from zlib import compress\n"
+                         "__all__ += ['compress']\n"), [])
+        self.assertEqual(
+            self._unused("__all__ = ['md5']\n"
+                         "from zlib import compress\n"
+                         "__all__.extend(['compress'])\n"), [])
+        self.assertEqual(
+            self._unused("__all__ = ['md5']\n"
+                         "from zlib import compress\n"
+                         "__all__.append('compress')\n"), [])
+
+    def test_an_annotated_dunder_all_still_exports(self):
+        """A type annotation on `__all__` must not switch the export off."""
+        self.assertEqual(
+            self._unused('from zlib import compress\n'
+                         '__all__: list = ["compress"]\n'), [])
+
+    def test_a_collected_string_only_excuses_a_whole_name(self):
+        """The strings we collect name symbols, so the match is on the whole
+        identifier. `ratio_helper` is not a use of `io`, and `Position` is
+        not a use of `os`."""
+        self.assertEqual(
+            self._unused('import io\n'
+                         'def ratio_helper():\n    pass\n'
+                         '__all__ = ["ratio_helper"]\n'),
+            ["io (from io)"])
+        self.assertEqual(
+            self._unused('import os\n'
+                         'def f(p: "Position"):\n    return p\n'),
+            ["os (from os)"])
+
 
 class TestTruncation(unittest.TestCase):
     """A survey that did not read every file must say so in the artifact."""

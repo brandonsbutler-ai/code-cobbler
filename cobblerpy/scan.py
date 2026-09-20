@@ -230,10 +230,12 @@ class _Visitor(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node):
         self._record_def(node, "function")
+        self._record_annotations(node)
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node):
         self._record_def(node, "function", is_async=True)
+        self._record_annotations(node)
         self.generic_visit(node)
 
     def visit_ClassDef(self, node):
@@ -249,6 +251,9 @@ class _Visitor(ast.NodeVisitor):
         name = _name_of(node.func)
         if name:
             self.m.calls.append((name, node.lineno))
+        if name in ("__all__.extend", "__all__.append"):
+            for arg in node.args:
+                self._record_symbol_text(arg)
         self.generic_visit(node)
 
     def visit_Name(self, node):
@@ -257,6 +262,57 @@ class _Visitor(ast.NodeVisitor):
 
     def visit_Attribute(self, node):
         self.m.names_used.add(node.attr)
+        self.generic_visit(node)
+
+    # -- names that appear only as text -----------------------------------
+    #
+    # A name can be used without ever appearing as a Name node: `__all__`
+    # lists its exports as strings, and a forward reference writes the
+    # annotation as one. The unused-import signal reads these to tell a
+    # deliberate re-export from an import somebody abandoned.
+    #
+    # Only these two positions are collected, never every string in the
+    # file. A docstring that mentions zlib is not a use of zlib, and an
+    # unanchored search of all text would also exempt `import io` on the
+    # word "ratio" -- trading one wrong finding for three missed ones.
+
+    def _record_symbol_text(self, node):
+        """Strings inside an expression whose text names symbols."""
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                self.m.strings.append(sub.value)
+
+    def _record_annotations(self, node):
+        args = node.args
+        for arg in (list(args.posonlyargs) + list(args.args)
+                    + list(args.kwonlyargs) + [args.vararg, args.kwarg]):
+            if arg is not None and arg.annotation is not None:
+                self._record_symbol_text(arg.annotation)
+        if node.returns is not None:
+            self._record_symbol_text(node.returns)
+
+    @staticmethod
+    def _is_dunder_all(node):
+        return isinstance(node, ast.Name) and node.id == "__all__"
+
+    def visit_AnnAssign(self, node):
+        if node.annotation is not None:
+            self._record_symbol_text(node.annotation)
+        if self._is_dunder_all(node.target) and node.value is not None:
+            self._record_symbol_text(node.value)
+        self.generic_visit(node)
+
+    def visit_Assign(self, node):
+        if any(self._is_dunder_all(t) for t in node.targets):
+            self._record_symbol_text(node.value)
+        self.generic_visit(node)
+
+    def visit_AugAssign(self, node):
+        # `__all__ += [...]` after a conditional import is how the standard
+        # library re-exports. Missing it reported 15 real re-exports in
+        # Python 3.12 as abandoned work, 12 of them in subprocess.py.
+        if self._is_dunder_all(node.target):
+            self._record_symbol_text(node.value)
         self.generic_visit(node)
 
 
