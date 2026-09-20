@@ -499,8 +499,8 @@ def verify_map_and_exports(root, workdir):
               f'id="{_id}"' in _svg, _id)
     # Scoped to the map's OWN script. The page embeds the surveyed project's
     # source, so a project containing JavaScript has its getElementById calls
-    # in here too -- a large private codebase contributed eleven ids from its own front end,
-    # every one of them reported as dangling by a whole-page scan.
+    # in here too -- one surveyed project contributed eleven ids from its own
+    # front end, every one reported as dangling by a whole-page scan.
     _own = "".join(re.findall(r"<script>(.*?)</script>", _svg, re.S)[-1:])
     _reached = set(re.findall(r"getElementById\('([^']+)'\)", _own))
     _declared = set(re.findall(r'id="([^"]+)"', _svg))

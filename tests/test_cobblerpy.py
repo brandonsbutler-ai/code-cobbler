@@ -1795,7 +1795,7 @@ class TestFolderOverview(unittest.TestCase):
                     or a["y"] + a["h"] <= b["y"] or b["y"] + b["h"] <= a["y"])
 
     def test_the_untracked_badge_does_not_sit_on_the_size_line(self):
-        """Measured in Chromium: on 18 of atlas's 55 cards the "untracked"
+        """Measured in Chromium: on 18 of a 55-module project's cards the "untracked"
         badge was drawn over "624 lines · no history". This is the markup
         half of that check, with the widths Chromium measured per character
         (6.0px for the 11px line, 7.0px for the 8.5px spaced badge)."""
@@ -2692,12 +2692,12 @@ class TestShelf(unittest.TestCase):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         reg = os.path.join(d, "maps.json")
-        m = os.path.join(d, "atlas-map-1.html")
+        m = os.path.join(d, "ledger-map-1.html")
         open(m, "w", encoding="utf-8").close()
-        launch.record_map(reg, "atlas", m, 55)
+        launch.record_map(reg, "ledger", m, 55)
         entries = launch.shelf_entries(reg)
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]["project"], "atlas")
+        self.assertEqual(entries[0]["project"], "ledger")
         self.assertEqual(entries[0]["modules"], 55)
         self.assertIn("when", entries[0])
 
@@ -2752,12 +2752,12 @@ class TestShelf(unittest.TestCase):
         a, b, c = (os.path.join(d, n) for n in ("a.html", "b.html", "c.html"))
         for f in (a, b, c):
             open(f, "w", encoding="utf-8").close()
-        launch.record_map(reg, "atlas", a, 55)
-        launch.record_map(reg, "atlas", b, 57)
-        launch.record_map(reg, "ledger", c, 977)
+        launch.record_map(reg, "ledger", a, 55)
+        launch.record_map(reg, "ledger", b, 57)
+        launch.record_map(reg, "atlas", c, 977)
         entries = launch.shelf_entries(reg)
         self.assertEqual(len(entries), 2, entries)
-        fed = [e for e in entries if e["project"] == "atlas"][0]
+        fed = [e for e in entries if e["project"] == "ledger"][0]
         self.assertEqual(fed["modules"], 57)
         self.assertEqual(fed["map"], b)
 
@@ -2865,19 +2865,18 @@ class TestShelf(unittest.TestCase):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         reg = os.path.join(d, "maps.json")
-        for n, mods in (("fed.html", 55), ("fide.html", 977)):
+        for n, mods in (("ledger.html", 55), ("atlas.html", 977)):
             f = os.path.join(d, n)
             open(f, "w", encoding="utf-8").close()
-            launch.record_map(reg, n.split(".")[0].replace("fed", "atlas")
-                              .replace("fide", "ledger"), f, mods)
+            launch.record_map(reg, n.split(".")[0], f, mods)
         out = os.path.join(d, "shelf.html")
         launch.write_shelf(reg, out)
         page = Page(open(out, encoding="utf-8").read())
         hrefs = page.attr_values("href")
-        self.assertTrue(any("fed.html" in h for h in hrefs), hrefs)
-        self.assertTrue(any("fide.html" in h for h in hrefs), hrefs)
+        self.assertTrue(any("ledger.html" in h for h in hrefs), hrefs)
+        self.assertTrue(any("atlas.html" in h for h in hrefs), hrefs)
         text = open(out, encoding="utf-8").read()
-        self.assertIn("atlas", text)
+        self.assertIn("ledger", text)
         self.assertIn("977", text)
 
     def test_the_shelf_path_says_where_it_is_when_it_cannot_be_opened(self):
@@ -4732,7 +4731,7 @@ class TestDiversionNoise(unittest.TestCase):
     # deleted. A vacuous test is worse than none, so it is gone.
     #
     # The evidence for the filter is a measurement on real repositories, in the
-    # commit that added it: on a second private project the findings went from 20 to 7 and every
+    # commit that added it: on a second corpus the findings went 20 to 7 and every
     # one of the removed entries had a test module as its abandoned side.
 
     def test_the_test_filter_recognises_the_shapes_it_must(self):

@@ -338,8 +338,8 @@ def _base_name(node):
 
 
 # Tags that mark work the author knew was unfinished.
-# NOTE is not one: a note records a decision, not work left undone, and it was
-# 56 of the larger corpus's 75 findings.
+# NOTE is not one: a note records a decision, not work left undone, and on the
+# larger of the two corpora it was 56 of the 75 findings.
 _TODO_TAGS = ("TODO", "FIXME", "XXX", "HACK", "BUG", "WIP", "TEMP",
               "REVISIT", "REFACTOR")
 

@@ -338,12 +338,13 @@ The abandoned side needed a gate too. Test modules were already barred as destin
 as sources, so on one project the top of the list was tests that had gone quiet -- which is what
 a passing test does.
 
-Measured effect: ledger 438 to 132, a second private project 72 to 6, this repository 3 to 3. The survivors are
-the first ones that read like forks rather than like popularity:
+Measured effect: the 975-module project 438 to 132, a second private project 72 to 6, this
+repository 3 to 3. The survivors are the first ones that read like forks rather than like
+popularity -- described rather than named, because that code is not ours to publish:
 
-    build_lab_test_report_pdf  ->  build_api_reference_pdf     shares pdf, section, subsection
-    capture_screenshots        ->  e2e_screenshot_walkthrough  shares api, capture, wait
-    windows_estate             ->  agent_config                same package, 4 unused imports
+    a report builder         ->  a second report builder    shares pdf, section, subsection
+    a screenshot capture     ->  an end-to-end walkthrough  shares api, capture, wait
+    a host-inventory module  ->  a config module            same package, 4 unused imports
 
 **Still not validated against a known positive.** Every change so far has been tuned against
 absence -- making wrong answers go away -- and that is not the same as being shown to find a
