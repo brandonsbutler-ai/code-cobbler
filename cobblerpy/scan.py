@@ -55,10 +55,12 @@ class Definition:
     """A function or class defined in a module."""
 
     __slots__ = ("name", "kind", "lineno", "end_lineno", "args", "docstring",
-                 "decorators", "is_async", "parent", "body_kind", "returns", "bases")
+                 "decorators", "is_async", "parent", "body_kind", "returns",
+                 "bases", "nested")
 
     def __init__(self, name, kind, lineno, end_lineno, args, docstring,
-                 decorators, is_async, parent, body_kind, returns, bases=()):
+                 decorators, is_async, parent, body_kind, returns, bases=(),
+                 nested=False):
         self.name = name
         self.kind = kind                  # "function" | "method" | "class"
         self.lineno = lineno
@@ -75,6 +77,11 @@ class Definition:
         # idiomatic, and without this the dead-end report put six Protocol
         # methods above every real stub in the project.
         self.bases = tuple(bases)
+        # Defined inside a FUNCTION body -- a closure or a local helper.
+        # `parent` records the enclosing class and says nothing about this,
+        # so without it a `def replace(match)` inside a documented function
+        # is indistinguishable from module-level API.
+        self.nested = nested
 
     @property
     def qualname(self):
@@ -156,6 +163,7 @@ class _Visitor(ast.NodeVisitor):
         self.m = module
         self._class_stack = []
         self._base_stack = []
+        self._function_depth = 0
 
     # -- imports ---------------------------------------------------------
     def visit_Import(self, node):
@@ -226,17 +234,22 @@ class _Visitor(ast.NodeVisitor):
                    else (self._base_stack[-1] if self._base_stack else [])),
             body_kind=self._body_kind(node),
             returns=returns,
+            nested=self._function_depth > 0,
         ))
 
     def visit_FunctionDef(self, node):
         self._record_def(node, "function")
         self._record_annotations(node)
+        self._function_depth += 1
         self.generic_visit(node)
+        self._function_depth -= 1
 
     def visit_AsyncFunctionDef(self, node):
         self._record_def(node, "function", is_async=True)
         self._record_annotations(node)
+        self._function_depth += 1
         self.generic_visit(node)
+        self._function_depth -= 1
 
     def visit_ClassDef(self, node):
         self._record_def(node, "class")
@@ -449,13 +462,37 @@ _KEEPS_IMPORT = re.compile(r"#\s*noqa(?::\s*(?P<codes>[A-Z]+\d+(?:\s*,\s*[A-Z]+\
                            re.IGNORECASE)
 
 
+# The same waiver in the other linter's dialect. `# pylint: disable=unused-import`
+# says exactly what `# noqa: F401` says -- by message name, or by pylint's own
+# code for it, W0611 -- and one disable may carry a list of messages. Reading
+# one spelling and not the other makes the exemption a fact about which linter
+# the author happened to run, which is not a fact about the code. The larger
+# corpus carries 13 of these comments and 6 of them were reported anyway.
+#
+# `enable=` is the opposite instruction, and `disable-next=` waives the line
+# BELOW the comment rather than the one it sits on. Neither matches, because
+# the pattern demands the word `disable` followed by its own `=`.
+_KEEPS_IMPORT_PYLINT = re.compile(
+    r"#\s*pylint\s*:\s*disable\s*=\s*(?P<messages>[\w-]+(?:\s*,\s*[\w-]+)*)",
+    re.IGNORECASE)
+
+_PYLINT_UNUSED_IMPORT = frozenset(("unused-import", "w0611"))
+
+
 def _keeps_import(text):
     """True when this comment marks an unused import as deliberate."""
-    found = _KEEPS_IMPORT.search(text or "")
-    if not found:
-        return False
-    codes = found.group("codes")
-    return not codes or "F401" in codes.upper()
+    text = text or ""
+    found = _KEEPS_IMPORT.search(text)
+    if found:
+        codes = found.group("codes")
+        if not codes or "F401" in codes.upper():
+            return True
+    found = _KEEPS_IMPORT_PYLINT.search(text)
+    if found:
+        messages = {m.strip().lower() for m in found.group("messages").split(",")}
+        if messages & _PYLINT_UNUSED_IMPORT:
+            return True
+    return False
 
 
 def _looks_like_code(text):

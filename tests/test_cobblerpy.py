@@ -682,6 +682,47 @@ class TestDeliberateImports(unittest.TestCase):
                          'def f(p: "Position"):\n    return p\n'),
             ["os (from os)"])
 
+    def test_the_pylint_spelling_of_the_same_waiver_counts(self):
+        """`# pylint: disable=unused-import` says exactly what `# noqa: F401`
+        says, in the other linter's dialect.
+
+        Honouring one and not the other makes the exemption a fact about
+        which linter the author happened to run, which is not a fact about
+        the code. The larger corpus carries 13 of these comments, and 6 of
+        them were reported as abandoned work anyway.
+        """
+        self.assertEqual(
+            self._unused("import zlib  # pylint: disable=unused-import\nx = 1\n"), [])
+        self.assertEqual(
+            self._unused("from PySide6 import QtCore, QtGui  "
+                         "# pylint: disable=unused-import\nx = 1\n"),
+            [], "the real shape: a bundler import, marked")
+        self.assertEqual(
+            self._unused("import zlib  "
+                         "# pylint: disable=line-too-long,unused-import\nx = 1\n"),
+            [], "one disable comment may carry several messages")
+
+    def test_a_different_pylint_message_does_not_silence_it(self):
+        """The near-miss, and the clause that rejects it.
+
+        `disable=line-too-long` is a line-length waiver, the same near-miss
+        as `# noqa: E501`. If the message list were not read, it would
+        silence the import too -- and the test above would stay green.
+        """
+        self.assertEqual(
+            self._unused("import zlib  # pylint: disable=line-too-long\nx = 1\n"),
+            ["zlib (from zlib)"])
+        from cobblerpy.scan import _keeps_import
+        self.assertTrue(_keeps_import("# pylint: disable=unused-import"))
+        self.assertTrue(_keeps_import("# pylint: disable=W0611"),
+                        "pylint's own code for unused-import")
+        self.assertTrue(_keeps_import("# pylint:disable=line-too-long, unused-import"))
+        self.assertFalse(_keeps_import("# pylint: disable=line-too-long"))
+        self.assertFalse(_keeps_import("# pylint: enable=unused-import"),
+                         "enable is the opposite instruction")
+        self.assertFalse(_keeps_import("# we should run pylint on this"),
+                         "prose that happens to contain the word")
+
 
 class TestTruncation(unittest.TestCase):
     """A survey that did not read every file must say so in the artifact."""
@@ -853,6 +894,80 @@ class TestAbandonment(unittest.TestCase):
         self.addCleanup(t.close)
         m = scan_file(os.path.join(t.dir, "pkg/__init__.py"), t.dir)
         self.assertNotIn("unused_import", analyse_module(m))
+
+    def test_a_future_directive_is_never_an_unused_import(self):
+        """`from __future__ import X` is a compiler flag, not a name.
+
+        It can never be "used" later in the file, whatever X is -- so every
+        one of these is a false finding by construction. The exemption used
+        to read the IMPORTED NAME and let through `annotations` alone, which
+        is the only directive whose name is also a plausible identifier; the
+        other eight in the language were reported. 106 of them on the larger
+        corpus.
+        """
+        for directive in ("annotations", "print_function", "unicode_literals",
+                          "division", "absolute_import", "generator_stop"):
+            with self.subTest(directive=directive):
+                t = Tree({"m.py": f"from __future__ import {directive}\nx = 1\n"})
+                self.addCleanup(t.close)
+                m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+                self.assertNotIn("unused_import", analyse_module(m))
+
+    def test_a_directive_list_is_exempt_and_a_real_import_beside_it_is_not(self):
+        """The near-miss: the exemption must key on the MODULE, `__future__`,
+        and must not spread to ordinary imports elsewhere in the file."""
+        t = Tree({"m.py": "from __future__ import division, print_function\n"
+                          "import zlib\n"
+                          "x = 1\n"})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        sig = analyse_module(m)
+        self.assertEqual([text for text, _line in sig.get("unused_import", [])],
+                         ["zlib (from zlib)"])
+
+    def test_a_nested_function_is_not_a_public_definition(self):
+        """`no_docstring` says "PUBLIC definition", and a closure is not one.
+
+        A helper defined inside a function is visible only to the body that
+        defines it -- it cannot be imported, called or subclassed from
+        outside, so no reader is ever left without its docstring. The guard
+        excluded methods but not closures, so the classic `def replace(match)`
+        inside a documented function was reported as undocumented public API:
+        210 of 942 stdlib findings and 558 of 3,524 on the larger corpus.
+        """
+        t = Tree({"m.py": '''
+            def outer(value):
+                """Documented, and its helper is its own business."""
+                def replace(match):
+                    return match
+                return replace(value)
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual(analyse_module(m).get("no_docstring", []), [])
+
+    def test_a_module_level_function_is_still_reported(self):
+        """The other half: nesting is the exemption, not being a function.
+
+        Without this, deleting the whole `no_docstring` line would leave the
+        test above green.
+        """
+        t = Tree({"m.py": '''
+            def outer(value):
+                """Documented."""
+                def replace(match):
+                    return match
+                return replace(value)
+
+
+            def bare(value):
+                return value
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual([name for name, _line
+                          in analyse_module(m).get("no_docstring", [])],
+                         ["bare"])
 
     def test_score_has_diminishing_returns(self):
         """Forty TODOs in one file is one situation, not forty."""

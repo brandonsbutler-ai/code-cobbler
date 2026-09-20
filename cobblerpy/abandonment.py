@@ -92,8 +92,17 @@ def _unused_imports(module):
     out = []
     if module.relpath.endswith("__init__.py"):
         return out                        # re-exporting is the point there
-    for target, alias, lineno, _level, _imported in module.imports:
+    for target, alias, lineno, level, _imported in module.imports:
         if alias == "*":
+            continue
+        # A `__future__` directive is a compiler flag, not a name: nothing in
+        # the file can ever "use" it, whichever of the nine it is. The
+        # exemption used to read the IMPORTED NAME, and so let through
+        # `annotations` alone -- the only directive whose name is also a
+        # plausible identifier -- while `print_function`, `unicode_literals`
+        # and the rest were reported. 106 of them on the larger corpus. The
+        # module is what identifies the statement, so that is what it reads.
+        if target == "__future__" and not level:
             continue
         head = alias.split(".")[0]
         if head in module.names_used:
@@ -104,8 +113,6 @@ def _unused_imports(module):
         # `ratio_helper` is not a use of `io`, and `Position` is not a use
         # of `os`. A substring test hid a real dead import in pygments.
         if any(head in _IDENTIFIERS.findall(s) for s in module.strings):
-            continue
-        if head in ("annotations", "__future__"):
             continue
         # The author said they meant it. An import that exists so a bundler
         # can see the package is real and deliberate, and reporting it as
@@ -258,7 +265,13 @@ def analyse_module(module, replaced=()):
             found["stub_ellipsis"].append((d.qualname, d.lineno))
         elif d.body_kind == "raise":
             found["not_implemented"].append((d.qualname, d.lineno))
-        if not d.docstring and not d.name.startswith("_") and d.kind != "method":
+        # A closure is not public: a helper defined inside a function body
+        # cannot be imported, called or subclassed from outside it, so no
+        # reader is ever left without its docstring. The guard excluded
+        # methods but not nested definitions, and 210 of 942 stdlib findings
+        # -- 558 of 3,524 on the larger corpus -- were local helpers.
+        if (not d.docstring and not d.name.startswith("_")
+                and d.kind != "method" and not d.nested):
             found["no_docstring"].append((d.qualname, d.lineno))
         if (d.docstring and not d.returns and d.body_kind == "code"
                 and _promises_a_return(d.docstring)):
