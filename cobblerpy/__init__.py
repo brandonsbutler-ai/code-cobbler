@@ -99,7 +99,7 @@ from .history import summary as history_summary
 from .origin import classify as classify_origins, coverage_note, summarise as summarise_origins
 from .scan import scan_tree
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 # The product name, for anything a person looks at -- the map's title bar, the
 # desktop window. The TOOL is cobblerpy and stays cobblerpy: the command, the

@@ -270,10 +270,11 @@ tar xzf CodeCobbler-linux-x86_64.tar.gz
 ./CodeCobbler --help                # also --version
 ```
 
-This source is 0.1.2. The v0.1.1 release binary predates `--help` and
-`--version`, which it treats as "map the current folder", and given nothing it
-maps the current folder rather than opening the shelf. Build 0.1.2 from this
-source, as below, until a v0.1.2 release is published:
+The released binary is v0.1.2. Take it: v0.1.0 and v0.1.1 could run the code
+they were reading, and their `--help` and `--version` mapped the current folder
+instead of answering.
+
+This source is 0.1.3, which is ahead of that release. To build it yourself:
 
 ```bash
 python3 -m pip install pyinstaller
@@ -371,7 +372,7 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 248 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 252 tests, no pytest required
 python3 verify_e2e.py                        # 115 end-to-end claim checks
 ```
 

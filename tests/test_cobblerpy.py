@@ -608,12 +608,33 @@ class TestDeliberateImports(unittest.TestCase):
             self._unused('import zlib\nmsg = "zlib is great"\nx = 1\n'),
             ["zlib (from zlib)"])
 
-    def test_a_name_that_is_merely_a_substring_of_prose_is_not_a_use(self):
-        """`io` occurs inside `ratio`. An unanchored substring test over every
-        string in the file exempts an import on an unrelated word."""
+    def test_an_annotation_string_excuses_only_the_name_it_holds(self):
+        """A collected string is tokenised, so a longer identifier inside it
+        is not a use of a shorter one. `Position` is not a use of `os`, and
+        the annotation IS collected -- which is what makes this test able to
+        fail when the match goes back to a substring."""
         self.assertEqual(
-            self._unused('import io\nmsg = "the ratio was high"\nx = 1\n'),
-            ["io (from io)"])
+            self._unused('import os\n'
+                         'from zlib import compress\n'
+                         'def f(p: "Position") -> "compress":\n'
+                         '    return p\n'),
+            ["os (from os)"])
+
+    def test_a_return_annotation_counts(self):
+        self.assertEqual(
+            self._unused('from zlib import compress\n'
+                         'def f() -> "compress":\n    return None\n'), [])
+
+    def test_a_keyword_only_or_star_arg_annotation_counts(self):
+        self.assertEqual(
+            self._unused('from zlib import compress\n'
+                         'def f(*a: "compress", k: "compress" = None):\n'
+                         '    return a, k\n'), [])
+
+    def test_a_string_annotation_on_a_variable_counts(self):
+        self.assertEqual(
+            self._unused('from zlib import compress\n'
+                         'c: "compress" = None\n'), [])
 
     def test_dunder_all_extended_after_the_import_still_exports(self):
         """`__all__ += [...]` is how the stdlib does a conditional re-export.
@@ -639,6 +660,13 @@ class TestDeliberateImports(unittest.TestCase):
         self.assertEqual(
             self._unused('from zlib import compress\n'
                          '__all__: list = ["compress"]\n'), [])
+
+    def test_a_name_outside_ascii_is_still_a_name(self):
+        """Python identifiers are Unicode (PEP 3131). An ASCII-only reading of
+        a collected string splits `café` into `caf` and loses the export."""
+        self.assertEqual(
+            self._unused('from mod import café\n'
+                         '__all__ = ["café"]\n'), [])
 
     def test_a_collected_string_only_excuses_a_whole_name(self):
         """The strings we collect name symbols, so the match is on the whole

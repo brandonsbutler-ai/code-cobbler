@@ -58,8 +58,12 @@ _RETURN_SECTION = re.compile(r"^\s*(returns?|:returns?|:rtype)\b[:\s]",
                              re.IGNORECASE | re.MULTILINE)
 
 # Whole identifiers inside a collected string, so a name is matched as a
-# name and never as a fragment of a longer one.
-_IDENTIFIERS = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# name and never as a fragment of a longer one. `[^\W\d]` is a word
+# character that is not a digit, which is what a Python identifier may
+# begin with -- and it reads Unicode, because identifiers are Unicode
+# (PEP 3131). An ASCII-only class splits `café` into `caf` and loses the
+# export it was meant to find.
+_IDENTIFIERS = re.compile(r"[^\W\d]\w*")
 
 
 def _promises_a_return(docstring):
