@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cobblerpy import survey                                    # noqa: E402
 from cobblerpy import origin, history                           # noqa: E402
-from cobblerpy.abandonment import analyse_module, score         # noqa: E402
+from cobblerpy.abandonment import SIGNALS, analyse_module, score  # noqa: E402
 from cobblerpy.clusters import analyse as analyse_clusters, split  # noqa: E402
 from cobblerpy.layout import compute, state_of                  # noqa: E402
 from cobblerpy.scan import _looks_like_code, scan_file, scan_tree  # noqa: E402
@@ -869,6 +869,7 @@ class TestAbandonment(unittest.TestCase):
             import json
 
             def stub():
+                # TODO: fill this in
                 pass
 
             def real():
@@ -953,6 +954,9 @@ class TestAbandonment(unittest.TestCase):
         test above green.
         """
         t = Tree({"m.py": '''
+            """A module that documents everything except one wide function."""
+
+
             def outer(value):
                 """Documented."""
                 def replace(match):
@@ -960,8 +964,32 @@ class TestAbandonment(unittest.TestCase):
                 return replace(value)
 
 
-            def bare(value):
+            def also(value):
+                """Documented."""
                 return value
+
+
+            def again(value):
+                """Documented."""
+                return value
+
+
+            def once_more(value):
+                """Documented."""
+                return value
+
+
+            def bare(value):
+                one = value
+                two = one
+                three = two
+                four = three
+                five = four
+                six = five
+                seven = six
+                eight = seven
+                nine = eight
+                return nine
         '''})
         self.addCleanup(t.close)
         m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
@@ -988,6 +1016,442 @@ class TestAbandonment(unittest.TestCase):
         self.addCleanup(t.close)
         m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
         self.assertEqual(score(analyse_module(m)), 0)
+
+
+class TestUnfinishedMeansMarked(unittest.TestCase):
+    """The stub signals report work SOMEBODY SAID was unfinished.
+
+    Measured on two corpora of real Python: an empty body on its own is
+    almost never abandoned work. Of 166 stdlib and 345 dist-packages
+    `stub_pass` findings, a hand-judged sample of 100 held one true
+    positive; of 281 `not_implemented` findings, eight. Keeping only the
+    findings whose own body carries a TODO/FIXME marker leaves 1 stdlib and
+    2 dist `stub_pass`, and 0 stdlib and 3 dist `not_implemented` -- every
+    one of them hand-verified as a place an inheritor should go and finish
+    something.
+    """
+
+    def test_a_bare_pass_is_not_reported_and_a_marked_one_is(self):
+        t = Tree({"m.py": '''
+            """A module."""
+
+
+            def deliberate_noop(row):
+                """A hook that intentionally does nothing."""
+                pass
+
+
+            def half_written(row):
+                # TODO: work out what to do with the row
+                pass
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual([name for name, _line
+                          in analyse_module(m).get("stub_pass", [])],
+                         ["half_written"])
+
+    def test_the_marker_must_be_in_the_body_not_above_the_def(self):
+        """A note ABOVE a definition is about the file, not about the body.
+
+        The `todo` signal already reports it, at its own weight. Counting it
+        twice would let one comment rank a module as two findings.
+        """
+        t = Tree({"m.py": '''
+            """A module."""
+
+
+            # TODO: the whole of this file needs a second pass
+            def hook(row):
+                """A hook."""
+                pass
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        sig = analyse_module(m)
+        self.assertEqual(sig.get("stub_pass", []), [])
+        self.assertEqual(len(sig.get("todo", [])), 1)
+
+    def test_a_function_named_todo_is_not_a_marked_stub(self):
+        """The near-miss: the marker is read from the BODY, and the name of
+        the thing being defined is not part of its body."""
+        t = Tree({"m.py": '''
+            """A module."""
+
+
+            def todo(row):
+                """Record a task."""
+                pass
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual(analyse_module(m).get("stub_pass", []), [])
+
+    def test_a_marker_in_an_annotation_still_counts(self):
+        """The other half: dropping the signature must not drop the body.
+
+        A one-line def puts the body after the colon on the same line, so
+        the rule cannot simply skip the first line.
+        """
+        t = Tree({"m.py": '''
+            """A module."""
+
+
+            def hook(row: int): pass  # TODO: implement
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual([name for name, _line
+                          in analyse_module(m).get("stub_pass", [])], ["hook"])
+
+    def test_an_abstract_method_written_in_prose_is_not_abandoned_work(self):
+        """The mainstream Python idiom, which the tool used to report.
+
+        `abc.ABC` plus "subclasses must implement this" plus
+        NotImplementedError carries no decorator, so the decorator
+        exemption could not see it -- while the signal's own advisory note
+        said "expected in an abstract base class".
+        """
+        t = Tree({"m.py": '''
+            """A module."""
+
+            import abc
+
+
+            class Base(abc.ABC):
+                """A base."""
+
+                def export(self, rows):
+                    """Subclasses must implement this."""
+                    raise NotImplementedError
+
+                def count(self, rows):
+                    """Count the rows."""
+                    return len(rows)
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        sig = analyse_module(m)
+        self.assertEqual(sig.get("not_implemented", []), [])
+        self.assertEqual(score(sig), 0)
+
+    def test_a_marked_not_implemented_is_still_reported(self):
+        """The other half: the marker is what the signal now means."""
+        t = Tree({"m.py": '''
+            """A module."""
+
+
+            class Reader:
+                """A reader."""
+
+                def read(self, path):
+                    """Read the file."""
+                    return open(path).read()
+
+                def extract(self, path):
+                    """Not yet implemented."""
+                    raise NotImplementedError  # TODO
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual([name for name, _line
+                          in analyse_module(m).get("not_implemented", [])],
+                         ["Reader.extract"])
+
+    def test_a_class_whose_methods_are_all_empty_is_an_interface(self):
+        """What `_DECLARING_BASES` already tries to say about Protocol.
+
+        A class in which EVERY method is empty is a shape somebody is
+        declaring, whatever it inherits from. Marked bodies are used here so
+        the marker gate cannot be what makes the test pass.
+        """
+        t = Tree({"m.py": '''
+            """A module."""
+
+
+            class Sink:
+                """Whatever a sink must do."""
+
+                def open(self):
+                    # TODO
+                    pass
+
+                def write(self, row):
+                    # TODO
+                    pass
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual(analyse_module(m).get("stub_pass", []), [])
+
+    def test_one_empty_method_among_finished_ones_is_still_reported(self):
+        """The other half: the exemption is ALL of them, not any of them."""
+        t = Tree({"m.py": '''
+            """A module."""
+
+
+            class Sink:
+                """A sink."""
+
+                def open(self):
+                    """Open it."""
+                    return True
+
+                def write(self, row):
+                    # TODO
+                    pass
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual([name for name, _line
+                          in analyse_module(m).get("stub_pass", [])],
+                         ["Sink.write"])
+
+    def test_the_two_stub_signals_weigh_the_same(self):
+        """Nothing measured tells them apart.
+
+        Once both are gated on the same marker, a `pass` and a
+        `raise NotImplementedError` are the same evidence: three verified
+        findings each across both corpora. Weight 5 against weight 4 claimed
+        a difference the measurement does not show.
+        """
+        self.assertEqual(SIGNALS["not_implemented"][0], SIGNALS["stub_pass"][0])
+
+
+class TestTypeCommentsAreUses(unittest.TestCase):
+    """A name used only in a `# type:` comment is used.
+
+    The comment form of an annotation is how a codebase that still supports
+    Python 2, or one written before variable annotations, spells a type. The
+    scanner could not see it, so every import that exists for one was
+    reported as abandoned: about 126 findings on the dist-packages corpus.
+    """
+
+    def test_a_name_used_only_in_a_function_type_comment_is_not_unused(self):
+        t = Tree({"m.py": '''
+            from typing import List
+
+
+            def names(archive):
+                # type: (str) -> List[str]
+                return sorted(archive)
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual(analyse_module(m).get("unused_import", []), [])
+
+    def test_a_name_used_only_in_a_variable_type_comment_is_not_unused(self):
+        t = Tree({"m.py": '''
+            import collections
+
+            counts = {}  # type: collections.OrderedDict
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual(analyse_module(m).get("unused_import", []), [])
+
+    def test_a_type_ignore_pragma_is_not_a_use_of_anything(self):
+        """The near-miss. `# type: ignore` names no type at all, and reading
+        it as one would exempt an import called `ignore`."""
+        t = Tree({"m.py": '''
+            import ignore  # type: ignore
+
+            x = 1
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual([text for text, _line
+                          in analyse_module(m).get("unused_import", [])],
+                         ["ignore (from ignore)"])
+
+    def test_an_import_no_type_comment_mentions_is_still_reported(self):
+        """The other half: the exemption must not spread to the file."""
+        t = Tree({"m.py": '''
+            import zlib
+            from typing import List
+
+
+            def names(archive):
+                # type: (str) -> List[str]
+                return sorted(archive)
+        '''})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual([text for text, _line
+                          in analyse_module(m).get("unused_import", [])],
+                         ["zlib (from zlib)"])
+
+
+class TestNoDocstringIsNotAbandonment(unittest.TestCase):
+    """Measured at zero true positives in 128 judged findings, and zero in
+    all 18 survivors of the tightest gate anyone proposed. It is a
+    readability note, so it carries no weight and cannot rank anything."""
+
+    def test_it_carries_no_weight(self):
+        self.assertEqual(score({"no_docstring": [("f", 1)] * 5}), 0)
+
+    def test_it_only_fires_where_the_module_documents_its_others(self):
+        """The label is the claim: a module that documents everything else
+        and not this one is saying something. A module that documents
+        nothing is saying nothing about any single definition in it."""
+        body = "\n".join("    x = %d" % i for i in range(12))
+        undocumented = "def wide(value):\n%s\n    return x\n" % body
+        t = Tree({"lonely.py": '"""M."""\n\n\n' + undocumented,
+                  "social.py": '"""M."""\n\n\n' + undocumented + '''
+
+def documented_one(value):
+    """Doc."""
+    return value
+
+
+def documented_two(value):
+    """Doc."""
+    return value
+
+
+def documented_three(value):
+    """Doc."""
+    return value
+
+
+def documented_four(value):
+    """Doc."""
+    return value
+'''})
+        self.addCleanup(t.close)
+        lonely = scan_file(os.path.join(t.dir, "lonely.py"), t.dir)
+        social = scan_file(os.path.join(t.dir, "social.py"), t.dir)
+        self.assertEqual(analyse_module(lonely).get("no_docstring", []), [])
+        self.assertEqual([name for name, _line
+                          in analyse_module(social).get("no_docstring", [])],
+                         ["wide"])
+
+    def test_a_short_definition_is_not_worth_a_docstring_finding(self):
+        """Nobody inherits a four-line function and wants a docstring for
+        it. The gate is ten lines of body."""
+        short = "def narrow(value):\n    return value\n"
+        documented = ('def documented_%d(value):\n    """Doc."""\n'
+                      '    return value\n')
+        t = Tree({"m.py": '"""M."""\n\n\n' + short + "\n\n"
+                  + "\n\n".join(documented % i for i in range(4))})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual(analyse_module(m).get("no_docstring", []), [])
+
+    def test_an_overload_declaration_is_not_undocumented_api(self):
+        """An @overload signature is a declaration; the implementation
+        underneath it is the thing that carries the documentation.
+
+        The signature here is long enough and the module documented enough
+        that the rest of the gate lets it through -- so the decorator is the
+        only thing that can be keeping it out.
+        """
+        documented = ('def documented_%d(value):\n    """Doc."""\n'
+                      '    return value\n')
+        t = Tree({"m.py": '"""M."""\n\nfrom typing import overload\n\n\n'
+                  "@overload\ndef render(value: int,\n"
+                  + "".join("           arg%d: int,\n" % i for i in range(10))
+                  + "           last: int) -> str: ...\n\n\n"
+                  + "\n\n".join(documented % i for i in range(4))})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertEqual(analyse_module(m).get("no_docstring", []), [])
+
+    def test_a_weightless_signal_is_still_reported(self):
+        """Weight 0 means "cannot rank", not "cannot be seen".
+
+        The frontier printed rows by score, so a module whose only finding
+        weighs nothing would have vanished from the report entirely -- which
+        is not reclassifying a signal, it is deleting one. The module here is
+        imported and reachable, so `orphan` cannot be what puts it on screen.
+        """
+        body = "\n".join("    x = %d" % i for i in range(12))
+        documented = ('def documented_%d(value):\n    """Doc."""\n'
+                      '    return value\n')
+        t = Tree({"m.py": '"""M."""\n\n\n'
+                  + "def wide(value):\n%s\n    return x\n\n\n" % body
+                  + "\n\n".join(documented % i for i in range(4)),
+                  "main.py": '"""Entry."""\n\nimport m\n\n'
+                             'if __name__ == "__main__":\n    m.wide(1)\n'})
+        self.addCleanup(t.close)
+        rows = {r["module"]: r for r in t.survey().frontier}
+        self.assertEqual(rows["m"]["counts"], {"no_docstring": 1})
+        self.assertEqual(rows["m"]["score"], 0)
+        out = subprocess.run([sys.executable, "-m", "cobblerpy", t.dir,
+                              "--frontier", "--no-history"],
+                             cwd=os.path.dirname(os.path.dirname(
+                                 os.path.abspath(__file__))),
+                             capture_output=True, text=True)
+        self.assertIn("wide", out.stdout)
+
+
+class TestAnUnreadableFileIsNotClean(unittest.TestCase):
+    """A file the tool could not read must never sort with the healthy ones.
+
+    Only "syntax error ..." raised a signal, so a file that defeated the
+    parser rather than the grammar -- or one that could not be opened at all
+    -- produced no signal, scored zero, and sorted to the clean end of the
+    ranking that the reader is told is "where the work stopped".
+    """
+
+    def test_a_file_the_parser_gives_up_on_is_reported(self):
+        t = Tree({"m.py": "x = " + "-" * 100000 + "1\n"})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertTrue(m.error and not m.error.startswith("syntax error"))
+        sig = analyse_module(m)
+        self.assertIn("unreadable", sig)
+        self.assertGreater(score(sig), 0)
+
+    def test_a_file_that_cannot_be_opened_is_reported(self):
+        t = Tree({"m.py": "x = 1\n"})
+        self.addCleanup(t.close)
+        path = os.path.join(t.dir, "m.py")
+        os.chmod(path, 0)
+        self.addCleanup(os.chmod, path, 0o644)
+        m = scan_file(path, t.dir)
+        if not m.error:
+            self.skipTest("running as a user that can read a 000 file")
+        sig = analyse_module(m)
+        self.assertIn("unreadable", sig)
+        self.assertGreater(score(sig), 0)
+
+    def test_the_map_draws_it_the_same_as_a_file_that_will_not_parse(self):
+        """The reader is looking at one question -- can this be read -- and
+        the two answers are the same answer."""
+        t = Tree({"main.py": '"""E."""\n\nimport m\n\n'
+                             'if __name__ == "__main__":\n    m\n',
+                  "m.py": "x = " + "-" * 100000 + "1\n"})
+        self.addCleanup(t.close)
+        s = t.survey()
+        g = compute(s.project, {r["module"]: r for r in s.frontier})
+        state, why = state_of(g["nodes"]["m"])
+        self.assertEqual(state, "broken")
+        self.assertIn("read", why)
+
+    def test_a_readable_file_raises_no_such_signal(self):
+        """The other half, so the signal cannot simply be unconditional."""
+        t = Tree({"m.py": '"""M."""\n'})
+        self.addCleanup(t.close)
+        m = scan_file(os.path.join(t.dir, "m.py"), t.dir)
+        self.assertNotIn("unreadable", analyse_module(m))
+
+
+class TestAdvisoryNotesDescribeWhatIsFound(unittest.TestCase):
+    """Each signal offers the reader an innocent explanation. An explanation
+    for a case the detector cannot produce teaches the reader to distrust
+    the ones that are real."""
+
+    def test_the_unused_import_note_does_not_offer_a_case_that_cannot_happen(self):
+        """`_unused_imports` returns empty for any __init__.py before it
+        looks at a single import, so no finding there can ever exist to be
+        excused by one."""
+        self.assertNotIn("__init__", SIGNALS["unused_import"][2])
+
+    def test_the_ellipsis_note_does_not_describe_a_file_type_never_read(self):
+        """scan_tree collects files ending .py, so a .pyi stub file is not
+        in the survey at all and no finding can come from one."""
+        self.assertNotIn(".pyi", SIGNALS["stub_ellipsis"][2])
 
 
 class TestShallowHistory(unittest.TestCase):
@@ -4956,10 +5420,12 @@ class TestTypedLibraryDeclarations(unittest.TestCase):
             "    @abc.abstractmethod\n"
             "    def stop(self): ...\n\n\n"
             "class Algorithm:\n"
-            "    def sign(self, key):\n        raise NotImplementedError()\n\n\n"
+            "    def sign(self, key):\n"
+            "        raise NotImplementedError()  # TODO\n\n\n"
             "def unfinished(x):\n    ...\n\n\n"
             "class Store:\n"
-            "    def save(self, row):\n        raise NotImplementedError\n"),
+            "    def save(self, row):\n"
+            "        raise NotImplementedError  # TODO\n"),
         "impl.py": ("from lib import Algorithm, unfinished, Store\n\n\n"
                     "class Algo(Algorithm):\n"
                     "    def sign(self, key):\n        return unfinished(key)\n\n\n"
@@ -5010,22 +5476,26 @@ class TestSubclassExemptionIsNarrow(unittest.TestCase):
                          "class Fast(Runner):\n    def run(self):\n        return 2\n"),
         "pkg/base.py": (
             "from abc import ABC\n"
-            "class Exporter:\n    def export(self, data):\n        raise NotImplementedError\n"
+            "class Exporter:\n    def export(self, data):\n"
+            "        raise NotImplementedError  # TODO\n"
             "class Csv(Exporter):\n    def export(self, data):\n        return ','.join(data)\n"
             "class Json(Exporter):\n    pass\n"
             "class Xml(Exporter):\n    pass\n\n"
             "class Plugin(ABC):\n    def setup(self):\n        pass\n"
             "    def teardown(self):\n        pass\n\n"
-            "class Runner:\n    def run(self):\n        raise NotImplementedError\n"),
+            "class Runner:\n    def run(self):\n"
+            "        raise NotImplementedError  # TODO\n"),
         "pkg/use.py": ("from pkg.base import Json, Plugin, Runner\n"
                        "def go():\n    Json().export([])\n    Plugin().setup()\n"
                        "    Runner().run()\n"),
         # Every subclass replaces it, but the base itself is called.
-        "pkg/tool.py": ("class Tool:\n    def use(self):\n        raise NotImplementedError\n"
+        "pkg/tool.py": ("class Tool:\n    def use(self):\n"
+                        "        raise NotImplementedError  # TODO\n"
                         "class Saw(Tool):\n    def use(self):\n        return 1\n"
                         "def pick():\n    return Tool().use()\n"),
         # Every subclass replaces it, and nothing calls the base itself.
-        "pkg/shapes.py": ("class Shape:\n    def area(self):\n        raise NotImplementedError\n"
+        "pkg/shapes.py": ("class Shape:\n    def area(self):\n"
+                          "        raise NotImplementedError  # TODO\n"
                           "class Sq(Shape):\n    def area(self):\n        return 1\n"),
         "pkg/draw.py": ("from pkg import shapes\n"
                         "class Circle(shapes.Shape):\n    def area(self):\n        return 3\n"
@@ -5041,9 +5511,17 @@ class TestSubclassExemptionIsNarrow(unittest.TestCase):
                       for name, _ln in r["signals"].get(kind, [])}
 
     def test_the_real_stubs_are_kept(self):
+        """Every stub in this fixture carries a marker, so what is missing
+        from the answer is missing because of an EXEMPTION, not the gate.
+
+        `Plugin` left the list when the interface exemption arrived: an ABC
+        whose every method is empty is a shape being declared, which is what
+        `_DECLARING_BASES` already says about Protocol. The dead-end report
+        still names `Plugin.setup`, because execution does reach it and stop.
+        """
         self.assertEqual(self.stubs - {("pkg.shapes", "Shape.area")},
-                         {("pkg.base", "Exporter.export"), ("pkg.base", "Plugin.setup"),
-                          ("pkg.base", "Plugin.teardown"), ("pkg.base", "Runner.run"),
+                         {("pkg.base", "Exporter.export"),
+                          ("pkg.base", "Runner.run"),
                           ("pkg.tool", "Tool.use")})
 
     def test_a_generic_or_abc_class_is_still_a_real_class_for_dead_ends(self):
@@ -5066,7 +5544,7 @@ class TestSubclassExemptionIsNarrow(unittest.TestCase):
         from cobblerpy.deadends import find
         t = Tree({"main.py": "import h\nif __name__ == '__main__':\n    h.A().handle(1)\n",
                   "h.py": ("class Handler:\n    def handle(self, x):\n"
-                           "        raise NotImplementedError\n"
+                           "        raise NotImplementedError  # TODO\n"
                            "class A(Handler):\n    def handle(self, x):\n"
                            "        return super().handle(x)\n"
                            "class B(Handler):\n    def handle(self, x):\n"

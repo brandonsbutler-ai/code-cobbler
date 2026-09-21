@@ -82,7 +82,7 @@ _PALETTE = {
                    "execution reaches here and stops inside it"),
     "maybe":      ("#bc8cff", "#1b1526",
                    "no static path reaches it -- an inference, not a verdict"),
-    "broken":     ("#f4796b", "#2a1614", "this file does not parse"),
+    "broken":     ("#f4796b", "#2a1614", "this file could not be read"),
 }
 
 # Every state the layout can return has an entry above, and nothing else does.

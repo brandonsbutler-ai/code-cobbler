@@ -216,8 +216,11 @@ def state_of(node, tested=False, deadend=False):
         return "maybe", "nothing imports it and nothing starts from it"
     if node["unreached"]:
         return "maybe", "no static path from an entry point (inference, not proof)"
-    if node["counts"].get("syntax_error"):
-        return "broken", "this file does not parse"
+    if node["counts"].get("syntax_error") or node["counts"].get("unreadable"):
+        # One question for the reader -- can this file be read -- and the
+        # same answer whether the grammar refused it, the parser gave up on
+        # it, or it would not open.
+        return "broken", "this file could not be read"
     real = {k: v for k, v in node["counts"].items()
             if k not in ("no_docstring", "unreached")}
     if tested and not real:
@@ -243,8 +246,8 @@ def _legacy_state_of(node):
         return "orphan", "nothing imports it and nothing starts from it"
     if node["unreached"]:
         return "unreached", "no static path from an entry point (inference, not proof)"
-    if node["counts"].get("syntax_error"):
-        return "broken", "this file does not parse"
+    if node["counts"].get("syntax_error") or node["counts"].get("unreadable"):
+        return "broken", "this file could not be read"
     if node["score"] >= 8:
         return "hot", "several signals of unfinished work"
     if node["score"] > 0:

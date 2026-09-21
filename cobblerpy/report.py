@@ -1091,7 +1091,9 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
         cycles_html = '<div class="card empty">No import cycles.</div>'
 
     # -- frontier
-    hot = [r for r in frontier if r["score"] > 0]
+    # Findings, not score: a weight-0 signal cannot rank a module and still
+    # has something to tell the reader about it.
+    hot = [r for r in frontier if r["score"] > 0 or r["signals"]]
     top = max((r["score"] for r in hot), default=1) or 1
     f_rows = []
     for r in hot:

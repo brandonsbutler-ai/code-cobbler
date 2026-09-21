@@ -70,6 +70,16 @@ trees and checking every finding against the source.
 | commented-out code | 22 | 15 | trailing annotations counted as disabled code |
 | unused import | 11 (this repo) | 0 | four were already marked `# noqa: F401` |
 | unreachable | 369 `maybe` | 57 | modules a named tool loads were not treated as places execution begins |
+| `pass` stubs | 511 on the two corpora | 3 | an empty body is how Python spells "deliberately empty"; 1 of 100 judged was abandoned work. Kept only where the body itself carries a TODO/FIXME, plus an exemption for a class whose every method is empty |
+| `NotImplementedError` | 281 | 3 | most abstract methods carry no decorator — they say "subclasses must implement" in prose, which no decorator list can see. Two instruments were measured: an `abc.ABC` exemption moved 3 of 281 findings, a prose exemption moved 182 and left precision where it was. The same in-body marker gate was the one that worked |
+| unused import | 787 | 666 | a name used only in a `# type:` comment is used; the scanner could not see the comment form of an annotation |
+| undocumented public definition | 3,698 | 78, at weight 0 | 0 true positives in 128 judged. Not an abandonment signal at all: reclassified, gated on a module that documents its others, and given no weight so it cannot rank |
+
+`except: pass` was measured too and nothing was changed. The audit's hypothesis was that a bare
+`except:` with an empty body, no `else`/`finally` and no explanatory comment would be defensible.
+That subset is 20 findings across the two trees; all 20 were opened and every one was a deliberate
+best-effort suppression -- a `close()` in a `__del__`, a debug write, a `flush()` on the way out.
+The evidence for narrowing the rule is not there, and neither is the evidence for the rule.
 
 The findings feed the score that ranks where the work stopped, so a detector that is 90%
 noise does not merely add rows — it reorders the list somebody reads first.
@@ -94,7 +104,7 @@ or it is decoration that invites a wrong conclusion. What ships:
 | **unfinished** | reached, and carrying signals of unfinished work |
 | **deadend** | execution reaches here and stops inside it |
 | **maybe** | no static path reaches it -- an inference, not a verdict |
-| **broken** | this file does not parse |
+| **broken** | this file could not be read |
 
 This table is checked against `svgmap._PALETTE` -- it described a four-colour vocabulary
 (green/amber/red/grey) for some time after the map had moved to these seven, which is exactly the

@@ -20,24 +20,35 @@ from collections import defaultdict
 SIGNALS = {
     "todo": (3, "explicit TODO/FIXME left in a comment",
              "some teams use these as permanent annotations"),
-    "stub_pass": (4, "function body is only `pass`",
-                  "may be a deliberate no-op or an interface placeholder"),
+    "stub_pass": (4, "function body is only `pass`, and says so in the body",
+                  "the marker may be a standing note rather than a promise"),
     "stub_ellipsis": (4, "function body is only `...`",
-                      "normal in .pyi stubs and Protocol definitions"),
-    "not_implemented": (5, "raises NotImplementedError",
-                        "expected in an abstract base class"),
+                      "normal in Protocol and @overload declarations"),
+    "not_implemented": (4, "raises NotImplementedError, and says so in the body",
+                        "the marker may be a standing note rather than a promise"),
     "unused_import": (4, "imported but never used in the file",
-                      "may be re-exported deliberately, especially in __init__.py"),
+                      "may be imported for a side effect; `# noqa: F401` marks "
+                      "one the author meant to keep"),
     "commented_code": (3, "a block of code left commented out",
                        "sometimes kept as a worked example"),
     "empty_except": (3, "exception caught and ignored",
                      "occasionally intentional, but usually unfinished"),
-    "no_docstring": (1, "public definition with no docstring",
-                     "common in code that was never meant to be read by others"),
+    "no_docstring": (0, "an undocumented public function in a module that "
+                        "documents its others",
+                     "a note about readability, not evidence of unfinished "
+                     "work -- it carries no weight and ranks nothing"),
     "promised_return": (3, "docstring describes a return value the code never returns",
                         "the docstring may simply be stale"),
     "syntax_error": (6, "file does not parse",
                      "may target a different Python version"),
+    # A file the tool could not read at all. Without this, the only error that
+    # raised a signal was "syntax error ...", so a file that defeated the
+    # PARSER rather than the grammar -- or one that could not be opened --
+    # produced no signal, scored zero, and sorted in with the healthy modules
+    # at the clean end of the ranking. "I could not read this" is the one
+    # finding a survey must never lose.
+    "unreadable": (6, "file could not be read",
+                   "the file may not be Python, or not meant to be read here"),
     "orphan": (4, "nothing imports it and nothing starts from it",
                "may be run directly, or reached by a tool outside this tree"),
     "unreached": (2, "no import path reaches it from any entry point",
@@ -64,6 +75,58 @@ _RETURN_SECTION = re.compile(r"^\s*(returns?|:returns?|:rtype)\b[:\s]",
 # (PEP 3131). An ASCII-only class splits `café` into `caf` and loses the
 # export it was meant to find.
 _IDENTIFIERS = re.compile(r"[^\W\d]\w*")
+
+
+# An empty body is evidence of nothing. A `pass` is how Python spells "this
+# block is deliberately empty", and `raise NotImplementedError` is how it
+# spells "a subclass supplies this" -- both are finished code in the shape the
+# language gives them.
+#
+# Measured, by opening findings against the source on two corpora of real
+# Python: of 100 judged `stub_pass` findings, one was work somebody had
+# started and left; of 100 judged `not_implemented` findings, eight. At weight
+# 4 and 5 those two signals were ranking the frontier.
+#
+# What separates the true positives from the rest is not the body -- it is
+# that somebody SAID SO. Keeping only the findings whose own body carries a
+# marker leaves 1 stdlib and 2 dist-packages `stub_pass`, and 0 and 3
+# `not_implemented`; every one of the six is a place an inheritor should go
+# and finish something (tkinter's `file_dialog`, setuptools' function marked
+# for removal, python-debian's two unimplemented extractors, apport's
+# `package_name_glob`).
+#
+# Two instruments were measured against each other for `not_implemented` and
+# both were rejected, because a false finding dismissed in five seconds
+# teaches the reader to dismiss the rest:
+#
+#   an abc.ABC / ABCMeta exemption   removes 0 of 93 stdlib and 3 of 188
+#                                    dist findings -- almost no real abstract
+#                                    base in either corpus inherits abc.ABC
+#   a "subclasses must override"     removes 68 of 93 and 114 of 188, and 0
+#   prose exemption                  of the 25 stdlib survivors sampled was
+#                                    genuine: it moves volume, not precision
+_UNFINISHED_MARKER = re.compile(
+    r"\b(TODO|FIXME)\b|\bnot\s+\(?yet\)?\s+implemented\b"
+    r"|\bnot\s+implemented\s+yet\b", re.IGNORECASE)
+
+
+def _says_unfinished(module, definition):
+    """True when the definition's OWN BODY carries an unfinished marker.
+
+    The signature is not part of the body: a function called `todo` is not a
+    marked stub, and a marker in the line ABOVE a `def` belongs to the `todo`
+    signal, which reports it at its own weight. Counting it here as well would
+    let one comment rank a module as two findings.
+
+    The first line is kept from its first colon onwards, because a one-line
+    def puts the whole body after that colon -- `def hook(row): pass  # TODO`.
+    """
+    lines = (getattr(module, "source", "") or "").split("\n")
+    first = lines[definition.lineno - 1] if definition.lineno <= len(lines) else ""
+    _head, colon, rest = first.partition(":")
+    body = (rest if colon else "") + "\n" + "\n".join(
+        lines[definition.lineno:definition.end_lineno])
+    return bool(_UNFINISHED_MARKER.search(body))
 
 
 def _promises_a_return(docstring):
@@ -231,6 +294,28 @@ def replaced_methods(project):
     return out
 
 
+def _every_method_is_empty(definition, module):
+    """True when NO method of this class has a body: it is an interface.
+
+    The same thing `_DECLARING_BASES` says about Protocol, said from the
+    evidence instead of from a base class name. A class in which every method
+    is empty is a shape somebody is declaring, whatever it inherits from --
+    and that is how most of them are written: 19 of 166 stdlib and 48 of 345
+    dist-packages `stub_pass` findings sit in one.
+
+    Two methods at least, because "sibling" means there is another one. A lone
+    empty method in a class is not an interface; it is the only evidence there
+    is, and it stays a finding.
+    """
+    if definition.kind != "method" or module is None:
+        return False
+    siblings = [d for d in module.definitions
+                if d.kind == "method" and d.parent == definition.parent
+                and not d.nested]
+    return len(siblings) >= 2 and all(
+        d.body_kind in ("pass", "ellipsis", "raise") for d in siblings)
+
+
 def declares_a_shape(definition, module=None, replaced=()):
     """True when an empty body is the definition's whole job."""
     if any(_tail(x) in _DECLARING_DECORATORS for x in definition.decorators):
@@ -238,8 +323,31 @@ def declares_a_shape(definition, module=None, replaced=()):
     if definition.kind != "method":
         return False
     return (any(_tail(b) in _DECLARING_BASES for b in definition.bases)
+            or _every_method_is_empty(definition, module)
             or (getattr(module, "dotted", None), definition.parent,
                 definition.name) in replaced)
+
+
+# What the `no_docstring` signal needs before it says anything at all.
+#
+# It is not an abandonment signal: 0 true positives in 128 findings opened
+# against the source, and 0 in all 18 survivors of the tightest gate proposed
+# for it. It carries weight 0 for that reason and cannot rank a module. What
+# it can still do is point at the one public function a module forgot, which
+# is worth saying only where the module documents the others -- a module that
+# documents nothing is not saying anything about any single definition in it.
+_DOCSTRING_MIN_BODY = 10          # lines; nobody wants a docstring on four
+_DOCUMENTS_ITS_OTHERS = 0.8       # of its public top-level definitions
+
+
+def _documented_share(module):
+    """Share of public top-level definitions that carry a docstring."""
+    public = [d for d in module.definitions
+              if d.parent is None and not d.nested
+              and not d.name.startswith("_")]
+    if not public:
+        return 0.0
+    return sum(1 for d in public if d.docstring) / len(public)
 
 
 def analyse_module(module, replaced=()):
@@ -249,29 +357,42 @@ def analyse_module(module, replaced=()):
     if module.error:
         if module.error.startswith("syntax error"):
             found["syntax_error"].append((module.error, 0))
+        else:
+            # Anything else the reader could not be given: a file that
+            # defeated the parser, or one that would not open. It used to
+            # fall through here silently and score 0, which put an unreadable
+            # file in among the healthy ones.
+            found["unreadable"].append((module.error, 0))
         return dict(found)
 
     for _tag, text, lineno in module.todos:
         found["todo"].append((text, lineno))    # the comment begins with its tag
 
+    documented_share = _documented_share(module)
     for d in module.definitions:
         if d.kind == "class":
             continue
+        declaring = any(_tail(x) in _DECLARING_DECORATORS for x in d.decorators)
         if d.body_kind != "code" and declares_a_shape(d, module, replaced):
             pass                          # a declaration, not a gap
-        elif d.body_kind == "pass":
+        elif d.body_kind == "pass" and _says_unfinished(module, d):
             found["stub_pass"].append((d.qualname, d.lineno))
         elif d.body_kind == "ellipsis":
             found["stub_ellipsis"].append((d.qualname, d.lineno))
-        elif d.body_kind == "raise":
+        elif d.body_kind == "raise" and _says_unfinished(module, d):
             found["not_implemented"].append((d.qualname, d.lineno))
         # A closure is not public: a helper defined inside a function body
         # cannot be imported, called or subclassed from outside it, so no
         # reader is ever left without its docstring. The guard excluded
         # methods but not nested definitions, and 210 of 942 stdlib findings
         # -- 558 of 3,524 on the larger corpus -- were local helpers.
+        # An @overload signature is a declaration and the implementation
+        # under it is what carries the documentation; 34 of the larger
+        # corpus's findings were overloads.
         if (not d.docstring and not d.name.startswith("_")
-                and d.kind != "method" and not d.nested):
+                and d.kind != "method" and not d.nested and not declaring
+                and d.end_lineno - d.lineno >= _DOCSTRING_MIN_BODY
+                and documented_share >= _DOCUMENTS_ITS_OTHERS):
             found["no_docstring"].append((d.qualname, d.lineno))
         if (d.docstring and not d.returns and d.body_kind == "code"
                 and _promises_a_return(d.docstring)):

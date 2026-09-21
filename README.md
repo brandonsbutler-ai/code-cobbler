@@ -117,13 +117,14 @@ top-down gives you an order to look at the code in:
 | Signal | Why it matters |
 |---|---|
 | unused imports | sometimes a library somebody started wiring up and left. A deliberate re-export looks identical to a parser, so read it as a place to look, not a verdict |
-| `pass` / `...` bodies, `NotImplementedError` | possibly a stub never filled in. Some deliberate no-ops are exempt -- `@overload`, `Protocol`, `@abstractmethod`, a base method every subclass replaces -- but many are not. An abstract base class that says "subclasses must implement this" in prose rather than in a decorator is still reported |
+| `pass` / `NotImplementedError` bodies **that say so in the body** | a stub somebody marked and left. An empty body on its own is not one: measured against the source on two real trees, 1 `pass` in 100 and 8 `NotImplementedError` in 100 were abandoned work and the rest were declarations -- including the abstract base class that says "subclasses must implement this" in prose rather than in a decorator. A TODO/FIXME inside the body is what tells them apart. Deliberate no-ops are exempt as well: `@overload`, `Protocol`, `@abstractmethod`, a class whose every method is empty, and a base method every subclass replaces |
+| `...` bodies | the same minus the marker, and the one stub signal still reported as written: it is a declaration in every typed library, so read it as a place to look |
 | `TODO` / `FIXME` / `XXX` | what the author knew they had to come back to |
 | commented-out code | a decision that was never finished |
 | `except: pass` | an error being swallowed. Often deliberate -- an optional import, a best-effort cleanup -- so read it as a place to look |
 | orphan modules | nothing imports them and nothing starts from them |
-| files that will not parse | left mid-edit, or written for another Python |
-| missing docstrings | the weakest signal here by a long way, and about a third of everything reported. A cluster of them marks code nobody expected to hand over; a single one means very little |
+| files that will not parse, or will not open | left mid-edit, written for another Python, or unreadable here. A file the tool could not read is never sorted in with the healthy ones |
+| an undocumented public function in a module that documents its others | **weight 0**: it cannot rank anything. Measured at 0 true positives in 128 findings opened against the source, so it is a readability note rather than evidence of unfinished work. Gated to the one public function a module forgot, which is what makes it worth printing at all |
 | a docstring promising a return the code never makes | the docstring may simply be stale |
 | unreached modules | no import path reaches them from any entry point -- an inference, not a verdict |
 
@@ -145,9 +146,13 @@ A tool that blurs those two makes its confident half untrustworthy.
 
 ## How the commented-out-code rule was measured
 
-This is the one detector that has been measured against a corpus. The others are rules of
-thumb, and on mature code most of what they flag turns out to be deliberate -- which is why
-every row in the table above carries the caveat that might explain it.
+Five detectors have now been measured this way -- findings opened one at a time and judged
+against the source on CPython's standard library and this machine's `dist-packages`. Four of
+them were wrong most of the time and were narrowed or demoted; `except: pass` was measured,
+found to be wrong in all 20 of its narrowest defensible subset, and left as it is pending a
+decision to drop it. The rest are still rules of thumb, and on mature code most of what they
+flag turns out to be deliberate -- which is why every row in the table above carries the
+caveat that might explain it.
 
 Deciding whether a comment is disabled code or ordinary prose is the sort of heuristic that
 quietly floods a report with noise. "It parses as Python" is far too weak a test -- an
@@ -391,9 +396,9 @@ Every option the command accepts. `--help` prints the same list.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 258 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 282 tests, no pytest required
                                              # 7 need PySide6 or a shared volume and skip
-python3 verify_e2e.py                        # 115 end-to-end claim checks
+python3 verify_e2e.py                        # 116 end-to-end claim checks
 ```
 
 `verify_e2e.py` checks the PRODUCT rather than its units. It builds a codebase whose every
@@ -475,7 +480,7 @@ it producing confident nonsense. [DESIGN_NOTES.md](DESIGN_NOTES.md) records all 
 the limitation that neither available codebase contains a known fork, so it has been tuned
 against absence rather than validated against a positive.
 
-The behaviour in "What it tells you" and "The map" is verified end to end by 115 checks
+The behaviour in "What it tells you" and "The map" is verified end to end by 116 checks
 against a fixture whose properties are known by construction. What they do **not** cover: how
 often a signal is a false positive on real code, the launcher installer, the desktop window, and
 anything platform-specific.

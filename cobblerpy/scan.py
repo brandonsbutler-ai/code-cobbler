@@ -479,6 +479,34 @@ _KEEPS_IMPORT_PYLINT = re.compile(
 _PYLINT_UNUSED_IMPORT = frozenset(("unused-import", "w0611"))
 
 
+# An annotation written as a comment. Before variable annotations existed --
+# and in every codebase that still has to run on Python 2 -- this is how a type
+# is spelled, and the names in it are ordinary uses of ordinary imports:
+#
+#     from typing import List
+#     def names(archive):
+#         # type: (str) -> List[str]
+#
+# The AST cannot see them, so `List` looked like an import nobody used. 126 of
+# the larger corpus's unused-import findings were exactly this.
+#
+# `# type: ignore` is the one form that names no type: it is a pragma telling a
+# checker to be quiet. Reading it as an annotation would exempt an import
+# called `ignore`, so the word is rejected where it stands alone or carries
+# mypy's error codes in brackets.
+_TYPE_COMMENT = re.compile(r"#\s*type:\s*(?P<annotation>\S.*)$")
+_TYPE_IGNORE = re.compile(r"ignore\s*(\[[^\]]*\])?\s*$")
+
+
+def _type_comment(text):
+    """The annotation in a `# type:` comment, or None if it is not one."""
+    found = _TYPE_COMMENT.search(text or "")
+    if not found:
+        return None
+    annotation = found.group("annotation").strip()
+    return None if _TYPE_IGNORE.match(annotation) else annotation
+
+
 def _keeps_import(text):
     """True when this comment marks an unused import as deliberate."""
     text = text or ""
@@ -539,6 +567,11 @@ def _read_comments(module, source):
             text = tok.string
             if _keeps_import(text):
                 module.kept_imports.add(tok.start[0])
+            annotation = _type_comment(text)
+            if annotation:
+                # Collected beside `__all__` entries and forward references:
+                # all three are names that appear in the file only as text.
+                module.strings.append(annotation)
             tag = _tag_of(text)
             if tag:
                 note = text.lstrip("#").strip()

@@ -200,7 +200,12 @@ def _print_summary(s, limit=12):
 def _print_frontier(s):
     print(f"\n{s.root}\n")
     for r in s.frontier:
-        if not r["score"]:
+        # A signal that weighs nothing still has something to say. Skipping by
+        # score alone meant that giving `no_docstring` weight 0 -- so it could
+        # not rank a module it has no evidence about -- would have deleted it
+        # from the report instead of reclassifying it. Rows with no findings
+        # at all are still silent.
+        if not r["score"] and not r["signals"]:
             continue
         print(f"{r['score']:>6}  {r['module']}  ({r['loc']} lines)")
         for kind, hits in sorted(r["signals"].items()):
