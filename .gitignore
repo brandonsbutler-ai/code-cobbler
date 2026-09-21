@@ -4,11 +4,37 @@ __pycache__/
 out/
 dist/
 build/
-dist/
-build/
 *.spec
 *.egg-info/
 
 # Pre-edit backups made during a session. Never part of the tree --
 # git history is the real backup.
 _backup_*/
+
+# Working notes that are not documentation. They cite paths outside this
+# repository and are written for one machine, so they must not be published
+# by a careless `git add -A`.
+docs/
+
+# This tool's own output embeds the source of whatever it surveyed. A map
+# generated inside the checkout would publish somebody else's code.
+*_map_*.html
+*-map-*.html
+shelf.html
+CodeCobbler.html
+CodeCobbler.maps.json
+maps.json
+
+# Credentials and key material, in every spelling. None of these has ever
+# been in this tree; the point is that none ever can be.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Editor and OS droppings.
+.idea/
+.vscode/
+.DS_Store
