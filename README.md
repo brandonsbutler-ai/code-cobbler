@@ -2,6 +2,9 @@
 
 **Pick up where someone else left off in a Python codebase.**
 
+**CodeCobbler** is the product. **cobblerpy** is the command, the package and the import name.
+**CobblerPy** is the desktop window. Same thing.
+
 Point it at a directory and it shows where the previous developer's train of thought was going,
 finds the dead ends they already discovered and abandoned, and marks where they stopped, with the
 file and the line. Structure, execution flow and what the version history says they were doing
@@ -113,13 +116,16 @@ top-down gives you an order to look at the code in:
 
 | Signal | Why it matters |
 |---|---|
-| unused imports | the strongest tell: someone pulled in a library, started wiring it up, stopped |
-| `pass` / `...` bodies, `NotImplementedError` | a stub that was never filled in. Not counted where the empty body is the point: `@overload` signatures, `Protocol` methods, `@abstractmethod`, and a base-class method that every subclass in the project replaces, on a base nothing calls itself |
+| unused imports | sometimes a library somebody started wiring up and left. A deliberate re-export looks identical to a parser, so read it as a place to look, not a verdict |
+| `pass` / `...` bodies, `NotImplementedError` | possibly a stub never filled in. Some deliberate no-ops are exempt -- `@overload`, `Protocol`, `@abstractmethod`, a base method every subclass replaces -- but many are not. An abstract base class that says "subclasses must implement this" in prose rather than in a decorator is still reported |
 | `TODO` / `FIXME` / `XXX` | what the author knew they had to come back to |
 | commented-out code | a decision that was never finished |
-| `except: pass` | an error somebody deferred |
+| `except: pass` | an error being swallowed. Often deliberate -- an optional import, a best-effort cleanup -- so read it as a place to look |
 | orphan modules | nothing imports them and nothing starts from them |
 | files that will not parse | left mid-edit, or written for another Python |
+| missing docstrings | the weakest signal here by a long way, and about a third of everything reported. A cluster of them marks code nobody expected to hand over; a single one means very little |
+| a docstring promising a return the code never makes | the docstring may simply be stale |
+| unreached modules | no import path reaches them from any entry point -- an inference, not a verdict |
 
 **What the history says** -- if it is a git repository: when each file first appeared, which files
 keep changing together (the code's real seams, which the directory layout often hides), and which
@@ -137,21 +143,26 @@ carries the caveat that might explain it, and the map colours them differently.
 
 A tool that blurs those two makes its confident half untrustworthy.
 
-## The detection rules were measured, not guessed
+## How the commented-out-code rule was measured
+
+This is the one detector that has been measured against a corpus. The others are rules of
+thumb, and on mature code most of what they flag turns out to be deliberate -- which is why
+every row in the table above carries the caveat that might explain it.
 
 Deciding whether a comment is disabled code or ordinary prose is the sort of heuristic that
 quietly floods a report with noise. "It parses as Python" is far too weak a test -- an
 astonishing amount of prose is syntactically valid.
 
 The rule was built by writing the near-misses first, proving *which clause* rejects each one, and
-then measuring against **48,482 real comments** from this machine's Python. That measurement
+then measuring against the **48,482 comments** of CPython's own standard library. That measurement
 deleted two clauses outright: a minimum-length check and a divider-stripping check (added
 specifically to stop `# --- DOCX`, which parses as `-(-(-DOCX))`) each changed **zero** verdicts,
 because the statement rule was already handling them. They were post-hoc suppression hiding which
 mechanism was load-bearing.
 
 It also caught a false-positive class nobody would invent: **worked examples inside explanatory
-comment blocks**, which CPython's own `typing.py` is full of. The flag rate on real code is 0.30%.
+comment blocks**, which CPython's own `typing.py` is full of. It flags 0.30% of the comments in
+that corpus. On third-party code the rate is roughly half again as high.
 
 ## Running it, on Linux and on Windows
 
@@ -250,9 +261,9 @@ that pulls a dependency (PySide6).
 
 One HTML file with nothing outside it -- no CDN, no fonts, no network. It
 opens from a `file://` URL, survives being e-mailed, and renders the same in
-Chrome, Edge and Firefox on either platform. It needs JavaScript enabled,
-which is how the chart, the trace and the detail panel work; with JavaScript
-off you get the page and no interaction.
+Chrome, Edge and Firefox on either platform. The chart is inline SVG and draws
+without JavaScript. The trace, the detail panel and hover-dimming need it;
+with JavaScript off you get a readable static map and no interaction.
 
 Geared for a 1920-wide window. Narrower than about 1180 and the detail panel
 moves below the chart rather than beside it.
@@ -269,6 +280,10 @@ tar xzf CodeCobbler-linux-x86_64.tar.gz
 ./CodeCobbler /path/to/project      # map that folder and open the map
 ./CodeCobbler --help                # also --version
 ```
+
+The single executable is the **launcher**: a folder in, a map out. The flags in
+[Options](#options) belong to the `cobblerpy` command line, which you get from `pip install`
+or from `build_standalone.py --cli`. This binary refuses them.
 
 The released binary is v0.1.2. Take it: v0.1.0 and v0.1.1 could run the code
 they were reading, and their `--help` and `--version` mapped the current folder
@@ -303,8 +318,12 @@ Windows .exe has to be built on Windows. It produces, in `dist/`:
 
 | | Linux | Windows |
 |---|---|---|
-| command line | `dist/cobblerpy` | `dist\cobblerpy.exe` |
+| the launcher, the one to hand somebody | `dist/CodeCobbler` | `dist\CodeCobbler.exe` |
+| command line -- the only one with `--json`, `--map`, `--frontier` | `dist/cobblerpy` | `dist\cobblerpy.exe` |
 | window | `dist/CobblerPy` | `dist\CobblerPy.exe` |
+
+A bare run builds all three, so it needs PySide6 installed for the window. Pass
+`--launcher`, `--cli` or `--app` to build just one.
 
 On Linux it also writes `dist/cobblerpy.desktop`; copy it to
 `~/.local/share/applications/` for a menu entry. On Windows the `.exe` runs
@@ -373,6 +392,7 @@ Every option the command accepts. `--help` prints the same list.
 
 ```bash
 python3 -m unittest discover -s tests -v     # 258 tests, no pytest required
+                                             # 7 need PySide6 or a shared volume and skip
 python3 verify_e2e.py                        # 115 end-to-end claim checks
 ```
 
@@ -393,10 +413,11 @@ against real trees rather than from unit-level reasoning: relative imports that 
 wrong module, git history that stopped at a rename, and a comment classifier that flagged section
 dividers.
 
-The suite is mutation-checked. Breaking the comment classifier, the relative-import resolution,
-the score's diminishing returns, the untracked-file detection and the cluster verdict each makes
-the specific test that guards it go red -- and one mutation had to be rewritten after the first
-attempt was caught by an IndentationError rather than by the test, which proves nothing.
+Five mutations were run by hand against the suite: the comment classifier, the relative-import
+resolution, the score's diminishing returns, the untracked-file detection and the cluster verdict.
+Each made the specific test that guards it go red. One had to be rewritten after the first attempt
+was caught by an IndentationError rather than by the test, which proves nothing. There is no
+mutation harness in the repository, so re-running this means reapplying them by hand.
 
 ## The map
 
@@ -410,8 +431,10 @@ is top to bottom, by how much code is in it, not left to right by depth.
 carries, thicker the more that passes through it, and coloured by a gradient from the condition at
 one end to the condition at the other. A ribbon per *import* is deliberately not drawn: on a chart
 this size every one of them had to be followed by eye. The aggregate is what a reader can follow
--- on a 977-module tree that is 41 ribbons rather than 597 crossing lines. Ribbons are drawn over
-the folder boxes but under the cards, so they can never cover the thing you are reading.
+-- on a large tree that is tens of ribbons rather than a thousand crossing lines. The map states
+its own figures: the page says how many ribbons it drew and how many imports they carry, so the
+numbers you read are the ones from your survey rather than from ours. Ribbons are drawn over the
+folder boxes but under the cards, so they can never cover the thing you are reading.
 
 Click any module for its source, its signals, and what it connects to, plus a top-to-bottom
 flowchart of just that module's path. **How they connect** answers the relationship in code
@@ -452,10 +475,17 @@ it producing confident nonsense. [DESIGN_NOTES.md](DESIGN_NOTES.md) records all 
 the limitation that neither available codebase contains a known fork, so it has been tuned
 against absence rather than validated against a positive.
 
-Everything described above is verified end to end. What is not done: the attachment question --
-where set-aside code *would* have fitted -- which [DESIGN_NOTES.md](DESIGN_NOTES.md) records as
-probably the boundary where deterministic analysis ends and narration begins.
+The behaviour in "What it tells you" and "The map" is verified end to end by 115 checks
+against a fixture whose properties are known by construction. What they do **not** cover: how
+often a signal is a false positive on real code, the launcher installer, the desktop window, and
+anything platform-specific.
+
+Nor is the attachment question answered -- where set-aside code *would* have fitted -- which
+[DESIGN_NOTES.md](DESIGN_NOTES.md) records as probably the boundary where deterministic analysis
+ends and narration begins.
 
 ## License
 
-MIT -- see [LICENSE](LICENSE).
+MIT -- see [LICENSE](LICENSE) in this repository. The release tarball currently ships the
+executable alone, so if the binary is your only copy, the licence text is here rather than
+beside it.
