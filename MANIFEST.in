@@ -1,0 +1,19 @@
+# What a source distribution carries beyond the package itself.
+#
+# The point is that somebody who downloads the sdist can re-run the claims rather
+# than believe them: the tests, the claim checker they drive, and the packaging
+# scripts a third of those tests exercise. Without packaging/, nineteen tests fail
+# in the sdist while passing in the checkout -- measured 2026-09-21.
+include verify_e2e.py
+include DESIGN_NOTES.md
+recursive-include tests *.py
+recursive-include packaging *.py *.sh *.bat
+
+# Working notes. They cite paths on one machine and are gitignored for the same
+# reason they are excluded here.
+prune docs
+
+# Never ship build litter, whatever else changes.
+global-exclude __pycache__/*
+global-exclude *.pyc
+global-exclude *.bak
