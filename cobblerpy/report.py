@@ -913,6 +913,12 @@ document.addEventListener('click', e => {
 """
 
 
+# Lifted out of the row f-string below: the markup needs double quotes, and
+# a backslash inside an f-string expression is a SyntaxError before 3.12
+# (PEP 701). Naming it keeps the row readable and the floor honest.
+_RESUME_TAG = ' <span class="tag ok">resume here</span>'
+
+
 def _e(v):
     return html.escape("" if v is None else str(v))
 
@@ -1158,7 +1164,7 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
                     f'<tr class="{ "lead" if lead else "" }">'
                     f'<td class="num">{a["percent"]}%</td>'
                     f'<td class="mono">{_e(a["relpath"])}'
-                    f'{" <span class=\"tag ok\">resume here</span>" if lead else ""}'
+                    f"{_RESUME_TAG if lead else ''}"
                     f'</td><td>'
                     + "".join(f'<div class="ln">{_e(f)}</div>' for f in a["facts"])
                     + "</td></tr>")
@@ -1280,11 +1286,19 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
     if forks:
         fork_rows = []
         for f in forks[:12]:
-            conts = "".join(
-                f'<div class="cont"><span class="mono">{_e(c["module"])}</span>'
-                f'{"".join(f"<span class=\"tag\">{_e(sig)}</span>" for sig in c["signals"])}'
-                f'<div class="ln">{_e(c["why"])}</div></div>'
-                for c in f["continued_as"])
+            # The signal tags are built first rather than inline: nesting a
+            # second f-string inside this one needs an escaped quote, and a
+            # backslash in an f-string expression is a SyntaxError before
+            # 3.12 (PEP 701).
+            cont_parts = []
+            for c in f["continued_as"]:
+                tags = "".join(f'<span class="tag">{_e(sig)}</span>'
+                               for sig in c["signals"])
+                cont_parts.append(
+                    f'<div class="cont"><span class="mono">{_e(c["module"])}</span>'
+                    f"{tags}"
+                    f'<div class="ln">{_e(c["why"])}</div></div>')
+            conts = "".join(cont_parts)
             fork_rows.append(
                 f'<tr><td class="mono">{_e(f["stopped"])}'
                 f'<div class="ln">last touched {_e(f["last_touched"])} &middot; '

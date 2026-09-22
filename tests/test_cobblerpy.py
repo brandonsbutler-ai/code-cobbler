@@ -7569,5 +7569,231 @@ class TestEmptyExceptPrecision(unittest.TestCase):
                 return fetch_unsigned(unsigned_url, out_path)
         '''), ["resp = requests.post(signed_url, timeout=120)"])
 
+
+# --- the declared Python floor ------------------------------------------
+#
+# 0.1.3 was cut with `requires-python = ">=3.11"` and a 3.11 classifier while
+# cobblerpy/report.py carried a backslash inside an f-string expression --
+# legal only from 3.12 (PEP 701). On 3.11 that is a SyntaxError at import, so
+# report, and with it launch and __main__, could not be imported at all: the
+# suite went from 369 passing to 21 failures and 83 errors, and verify_e2e.py
+# exited 1. The floor had been "verified" with ast.parse(feature_version=...),
+# which does not catch it -- see TestDeclaredPythonFloor for what that misses.
+
+def _floor():
+    """The floor the package DECLARES, read from pyproject rather than typed."""
+    import tomllib
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "pyproject.toml"), "rb") as fh:
+        spec = tomllib.load(fh)["project"]["requires-python"]
+    first = spec.split(",")[0].strip().lstrip("><=~^ ")
+    return tuple(int(x) for x in first.split(".")[:2])
+
+
+def _shipped_modules():
+    """Every .py the wheel ships, as (dotted-ish name, path)."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pkg = os.path.join(root, "cobblerpy")
+    out = []
+    for dirpath, dirnames, filenames in os.walk(pkg):
+        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+        for name in sorted(filenames):
+            if name.endswith(".py"):
+                path = os.path.join(dirpath, name)
+                out.append((os.path.relpath(path, root), path))
+    return sorted(out)
+
+
+def _pep701_uses(src):
+    """Every place `src` relies on an f-string relaxation PEP 701 brought in.
+
+    Returns [(line, what, text)]. Empty means the f-strings in this source
+    would also have parsed before 3.12.
+
+    PEP 701 deleted the separate f-string parser that ran until 3.11. That old
+    parser took the whole replacement field as raw text, so it rejected FOUR
+    things this one allows: a backslash anywhere in the expression, reusing the
+    enclosing quote, a newline in the expression, and a comment in it. Each is
+    checked below, and the table in
+    test_the_floor_detector_agrees_with_a_real_3_11 pins every one of them
+    against what CPython 3.11.16 actually does.
+
+    Needs 3.12+ to run, because it reads the FSTRING_* tokens PEP 701 added.
+    Below 3.12 it is not needed: the interpreter running this file would have
+    refused the source outright.
+    """
+    import io, tokenize
+    out, stack = [], []
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        kind, text, line = tok.type, tok.string, tok.start[0]
+        if kind == tokenize.FSTRING_START:
+            quote = text.lstrip("fFrRbBuU")
+            if stack and quote == stack[-1]:
+                out.append((line, "nested f-string reuses the enclosing quote", text))
+            stack.append(quote)
+            continue
+        if kind == tokenize.FSTRING_END:
+            if stack:
+                stack.pop()
+            continue
+        if not stack:
+            continue
+        if kind == tokenize.FSTRING_MIDDLE:
+            # Literal text. A backslash is fine in the OUTERMOST f-string --
+            # f"a\nb" always parsed. At depth 2 or more that text sits inside
+            # an outer replacement field, where the old parser allowed none.
+            if len(stack) >= 2 and "\\" in text:
+                out.append((line, "backslash in f-string expression "
+                                  "(inside a nested literal)", text))
+            continue
+        if "\\" in text:
+            out.append((line, "backslash in f-string expression", text))
+        elif kind == tokenize.STRING and text.lstrip("rbuRBUf").startswith(stack[-1]):
+            out.append((line, "expression reuses the enclosing f-string quote", text))
+        elif kind == tokenize.COMMENT:
+            out.append((line, "comment inside f-string expression", text))
+        elif kind in (tokenize.NL, tokenize.NEWLINE):
+            out.append((line, "newline inside f-string expression", "\\n"))
+    return out
+
+
+class TestDeclaredPythonFloor(unittest.TestCase):
+    """The metadata says 3.11. These say whether that is true.
+
+    Three checks, weakest first, because the weakest is the one that was
+    trusted last time and it is the one that lied:
+
+      1. ast.parse(feature_version=FLOOR). Cheap, runs anywhere, and BLIND to
+         this whole family. Measured on 3.12.3: feature_version=(3, 11)
+         rejects the PEP 695 forms (`type X = int`, `def f[T]()`,
+         `class C[T]`) but ACCEPTS all four PEP 701 f-string relaxations.
+         feature_version is a set of guards for named grammar features;
+         nothing re-imposes the lexical rules of a parser that was deleted.
+         Kept because it does catch PEP 695, never relied on alone.
+
+      2. _pep701_uses() over every shipped module. This is the check that
+         would have caught the 0.1.3 defect, and it is pinned against the
+         real interpreter's behaviour by the test below it.
+
+      3. A real floor interpreter, which is the only conclusive one. It runs
+         when this machine has one -- set COBBLERPY_FLOOR_PYTHON, or have
+         python3.11 on PATH -- and SKIPS with a reason when it does not.
+         CI runs the whole suite on the floor, which subsumes it.
+
+    The honest summary: only 3 proves the claim. 2 is a true statement about
+    the one class of syntax that has actually bitten this package, and it is
+    the strongest thing assertable without an interpreter to hand.
+    """
+
+    def test_every_shipped_module_parses_at_the_declared_floor(self):
+        """The weak check. Catches PEP 695; see the class docstring for what
+        it does NOT catch, which is why it is not the only one here."""
+        floor, bad = _floor(), []
+        for rel, path in _shipped_modules():
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            try:
+                ast.parse(text, filename=rel, feature_version=floor)
+            except SyntaxError as e:
+                bad.append(f"{rel}:{e.lineno}: {e.msg}")
+        self.assertEqual(bad, [], "modules that do not parse at the declared "
+                                  f"floor {floor[0]}.{floor[1]}: {bad}")
+
+    def test_no_shipped_module_needs_a_python_newer_than_the_floor_for_its_f_strings(self):
+        """The check that would have caught 0.1.3.
+
+        On the old report.py this fails with two entries, one per site.
+        """
+        if _floor() >= (3, 12):
+            self.skipTest("floor is 3.12+, where PEP 701 f-strings are allowed")
+        if sys.version_info < (3, 12):
+            self.skipTest("needs 3.12+ to read FSTRING_* tokens; below 3.12 "
+                          "this interpreter already refused any such source")
+        bad = []
+        for rel, path in _shipped_modules():
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            for line, what, snippet in _pep701_uses(text):
+                bad.append(f"{rel}:{line}: {what}: {snippet.strip()[:60]}")
+        self.assertEqual(bad, [], "PEP 701 f-strings need 3.12; this package "
+                                  f"declares {_floor()}: {bad}")
+
+    def test_the_floor_detector_agrees_with_a_real_3_11(self):
+        """A checker nobody checked is how 0.1.3 shipped.
+
+        Every row was run through CPython 3.11.16 and the `valid` column is
+        what it said, not what the rule reads like.
+        """
+        if sys.version_info < (3, 12):
+            self.skipTest("needs 3.12+ to read FSTRING_* tokens")
+        cases = [
+            # (source, valid on a real 3.11?)
+            ('x = f"a\\nb"', True),                          # backslash in TEXT
+            ('x = rf"\\d+{n}"', True),                       # raw text
+            ("x = f\"{d['k']}\"", True),                     # other quote in expr
+            ('x = f"{a!r:>{w}}"', True),                     # nested format spec
+            ('x = f\'{"".join(f"<i>{v}</i>" for v in xs)}\'', True),  # nested f-string
+            ('x = f"{d[\'#tag\']}"', True),                  # a hash inside a string
+            ('x = f"{\'a\\nb\' if c else \'\'}"', False),    # report.py site 1
+            ('x = f\'{"".join(f"<i class=\\"t\\">{v}</i>" for v in xs)}\'', False),  # site 2
+            ('x = f"{ f"inner" }"', False),                  # same-quote nesting
+            ('x = f"{ 1 # note\n }"', False),                # comment in expr
+            ('x = f"{(\n 1+2\n)}"', False),                  # newline in expr
+        ]
+        wrong = []
+        for source, valid_on_floor in cases:
+            clean = not _pep701_uses(source)
+            if clean != valid_on_floor:
+                wrong.append(f"{source!r}: real 3.11 says valid={valid_on_floor}, "
+                             f"detector says clean={clean}")
+        self.assertEqual(wrong, [], wrong)
+
+    def test_every_shipped_module_imports_on_a_real_floor_interpreter(self):
+        """The only conclusive check, and the one that needs an interpreter.
+
+        A static check is what let 0.1.3 out, so this runs a real one whenever
+        the machine has it and says so plainly when it does not.
+        """
+        floor = _floor()
+        exe = os.environ.get("COBBLERPY_FLOOR_PYTHON") or shutil.which(
+            f"python{floor[0]}.{floor[1]}")
+        if sys.version_info[:2] == floor:
+            exe = sys.executable          # already on it
+        if not exe:
+            self.skipTest(
+                f"no python{floor[0]}.{floor[1]} on this machine -- set "
+                "COBBLERPY_FLOOR_PYTHON to one. CI runs the whole suite on "
+                "the floor, which covers this.")
+        got = subprocess.run([exe, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+                             capture_output=True, text=True)
+        if got.returncode != 0 or got.stdout.strip() != f"{floor[0]}.{floor[1]}":
+            self.skipTest(f"{exe} is not {floor[0]}.{floor[1]} "
+                          f"(said {got.stdout.strip()!r})")
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        probe = (
+            "import importlib, pkgutil, sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import cobblerpy\n"
+            "bad = []\n"
+            "for m in ['cobblerpy'] + [x.name for x in "
+            "pkgutil.walk_packages(cobblerpy.__path__, 'cobblerpy.')]:\n"
+            "    try:\n"
+            "        importlib.import_module(m)\n"
+            # `as exc`, not `as e`: a lone letter before ":\n" reads as a
+            # drive-letter path to packaging/verify_dist.py's archive scan.
+            "    except SyntaxError as exc:\n"
+            "        bad.append('%s: %s:%s: %s'\n"
+            "                   % (m, exc.filename, exc.lineno, exc.msg))\n"
+            "    except Exception:\n"
+            "        pass\n"   # an optional dependency is not a floor problem
+            "print('\\n'.join(bad))\n"
+        )
+        run = subprocess.run([exe, "-c", probe, root], capture_output=True,
+                             text=True, timeout=300)
+        self.assertEqual(run.returncode, 0, run.stderr[-400:])
+        self.assertEqual(run.stdout.strip(), "",
+                         f"modules that will not import on {exe}:\n{run.stdout}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

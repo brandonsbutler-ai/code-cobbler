@@ -524,7 +524,7 @@ said and nothing is surveyed.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 369 tests, no pytest required
+python3 -m unittest discover -s tests -v     # 373 tests, no pytest required
                                              # 8 need PySide6 or a shared volume and skip
 python3 verify_e2e.py                        # 116 end-to-end claim checks
 ```

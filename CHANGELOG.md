@@ -8,7 +8,7 @@ The product is CodeCobbler; the package, the import name and the command are
 `cobblerpy`. Releases before 0.1.3 were the source and a standalone binary
 attached to a GitHub release.
 
-## [0.1.3] - 2026-09-21
+## [0.1.3] - 2026-09-22
 
 The first release packaged for PyPI, as `cobblerpy`, with `[gui]` for the
 window. Nothing about how the tool runs has changed for that: it still imports
@@ -106,6 +106,20 @@ only the standard library, and installing it brings nothing else with it.
 
 ### Fixed
 
+- The package can be imported on the 3.11 it says it needs. `report.py` put a
+  backslash inside an f-string expression in two places, which only parses from
+  3.12 (PEP 701); on 3.11 it is a SyntaxError at import, so `cobblerpy.report`
+  and everything that reaches it -- `cobblerpy.launch`, `cobblerpy.__main__`,
+  both console scripts -- would not load at all. Measured on CPython 3.11.16:
+  the suite went 21 failures and 83 errors out of 369, and `verify_e2e.py`
+  exited 1; on 3.12 everything was green, which is how it got this far. The
+  markup is now lifted into a name and out of the expression, and the rendered
+  HTML is byte-for-byte what it was. The floor is checked three ways now, in
+  the suite: `ast.parse(feature_version=...)`, which is what had been trusted
+  and which accepts all four of PEP 701's f-string relaxations; a detector for
+  those four, pinned against what a real 3.11 does; and, where the machine has
+  a 3.11, importing every shipped module under it. Only the last is conclusive,
+  and CI runs the whole suite on 3.11 for that reason.
 - A backup of the attempt the tool told you to resume no longer deletes the
   restart it belongs to. The copy verdict was read off the group's named file
   alone, so four genuine competing attempts plus a copy of the winning one
