@@ -132,13 +132,28 @@ def _print_summary(s, limit=12):
     # Competing attempts first: on the codebase this was built for, "these
     # four files are the same job" is the sentence that decides whether the
     # next hour is spent reading or rewriting.
-    from .attempts import find as find_attempts
+    from .attempts import (EFFORT_SCOPE, copies, copy_sentence,
+                           effort_sentence, find as find_attempts, restarts,
+                           stake_sentence)
     groups = find_attempts(s.project, s.modules_by_key, s.origins)
-    if groups:
-        print("\nTHE SAME JOB, STARTED OVER")
-        for group in groups[:3]:
+    restarted, copied = restarts(groups), copies(groups)
+    if restarted:
+        print("\nTHE SAME JOB, STARTED OVER  (most work at stake first)")
+        if any(effort_sentence(g) for g in restarted[:3]):
+            print(f"  ({EFFORT_SCOPE})")
+        for group in restarted[:3]:
             print(f"  {len(group['attempts'])} attempts share "
                   f"{', '.join(group['shared'][:4])}")
+            # The components, never a bare score: a reader has to be able to
+            # disagree with the ranking without reading the code that made it.
+            print(f"      {stake_sentence(group)}")
+            # Dropped when there is nothing unwritten, rather than printed as
+            # "nothing left unwritten by this measure": on a finished tree
+            # that was 12 rows out of 22 carrying a sentence that separates
+            # none of them.
+            effort = effort_sentence(group)
+            if effort:
+                print(f"      {effort}")
             for attempt in group["attempts"]:
                 mark = "->" if attempt["module"] == group["resume_at"] else "  "
                 print(f"   {mark} {attempt['percent']:>3}%  {attempt['relpath']}")
@@ -149,8 +164,23 @@ def _print_summary(s, limit=12):
             for module, extra in group["elsewhere"].items():
                 has = ", ".join(extra) if extra else "the only tests for this job"
                 print(f"        {module} has {has}")
-        if len(groups) > 3:
-            print(f"  ... and {len(groups) - 3} more groups")
+        if len(restarted) > 3:
+            print(f"  ... and {len(restarted) - 3} more groups")
+
+    # Copies get their own heading and their own verdict. Ranked below the
+    # restarts they would still have been read as restarts, and on a working
+    # tree they are the majority of what this detector finds -- 13 of 22 on
+    # the tree it was measured against.
+    if copied:
+        print(f"\nTHE SAME FILE, IN MORE THAN ONE PLACE ({len(copied)})")
+        print("  (not restarts: nothing here was started over and left)")
+        for group in copied[:3]:
+            print(f"  {group['resume_relpath']} "
+                  f"and {len(group['attempts']) - 1} other"
+                  f"{'s' if len(group['attempts']) > 2 else ''}")
+            print(f"      {copy_sentence(group)}")
+        if len(copied) > 3:
+            print(f"  ... and {len(copied) - 3} more")
 
     forks = []
     if h_available(s):
@@ -273,6 +303,26 @@ def main(argv=None):
     if not os.path.isdir(args.directory):
         print(f"cobblerpy: {args.directory}: not a directory", file=sys.stderr)
         return 1
+
+    # Every output path is checked BEFORE a single file is read. A mistyped
+    # --map used to surface as a FileNotFoundError traceback out of the
+    # writer, with the whole survey already spent and then discarded; the
+    # sentence a person needs there is which flag they mistyped and why, in
+    # the same voice the shelf uses when it cannot be updated.
+    from .launch import unwritable
+    refused = []
+    for flag, target in (("--map", args.map), ("--json", args.json),
+                         ("--mermaid", args.mermaid), ("--drawio", args.drawio)):
+        why = target and unwritable(target)
+        if why:
+            refused.append(f"cobblerpy: {flag} {target}: cannot write here "
+                           f"({why})")
+    if refused:
+        # Every one of them, not just the first: a person fixing two mistyped
+        # paths one run at a time pays for the refusal twice.
+        for line in refused:
+            print(line, file=sys.stderr)
+        return 2
 
     s = survey(args.directory, with_history=not args.no_history,
                max_files=args.max_files)

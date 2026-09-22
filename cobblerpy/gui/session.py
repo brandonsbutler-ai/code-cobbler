@@ -141,11 +141,23 @@ class Result:
         Restarts lead when there are any, because that is the finding that
         decides whether the next hour is spent reading or rewriting.
         """
-        if self.attempts:
-            total = sum(len(g["attempts"]) for g in self.attempts)
-            groups = len(self.attempts)
+        # Only the real restarts are counted here. Counting the copies made
+        # the first sentence in the window say "58 files are 22 jobs started
+        # over" about a tree where 13 of the 22 are backup folders and
+        # generated twins -- the one claim this finding must never make.
+        from ..attempts import copies, restarts
+        restarted = restarts(self.attempts)
+        copied = copies(self.attempts)
+        if restarted:
+            total = sum(len(g["attempts"]) for g in restarted)
+            groups = len(restarted)
             return (f"{total} files are {groups} job"
                     f"{'s' if groups != 1 else ''} started over")
+        if copied:
+            files = sum(len(g["attempts"]) for g in copied)
+            return (f"{files} files are {len(copied)} "
+                    f"file{'s' if len(copied) != 1 else ''} kept in more than "
+                    f"one place")
         if self.frontier:
             return f"{len(self.frontier)} modules carry unfinished-work signals"
         return f"{self.modules} modules, nothing obviously unfinished"

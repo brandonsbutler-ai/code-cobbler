@@ -13,6 +13,9 @@ reasoning: relative imports that resolved to the wrong module, git history that
 stopped at a rename, and a comment classifier that flagged section dividers.
 """
 
+import ast
+import pathlib
+import re
 import os
 import shutil
 import subprocess
@@ -876,7 +879,7 @@ class TestAbandonment(unittest.TestCase):
                 # TODO: finish the retry path
                 try:
                     return os.getcwd()
-                except OSError:
+                except Exception:
                     pass
         '''})
         self.addCleanup(t.close)
@@ -1775,8 +1778,18 @@ class TestCommandLineEdges(unittest.TestCase):
         self.assertEqual(_clip("short", 56), "short")
 
     def test_the_windows_launcher_finds_its_checkout_from_where_it_is(self):
-        """It named one machine's W:\\...\\cobblerpy. Read, not run: there
-        is no cmd.exe here, so this is the only instrument available."""
+        """It used to hard-code one developer's checkout, drive letter and all
+        -- the leak that cost this project a history rewrite on 2026-09-17.
+
+        The path is not written down here, not even abbreviated. This file
+        ships in the sdist, and a test that quotes the string it exists to keep
+        out publishes that string itself; commit 358e2d2 fixed exactly that in
+        the push guard. Measured 2026-09-21: spelled out, this docstring failed
+        the artifact scan while passing in the checkout.
+
+        Read, not run: there is no cmd.exe here, so reading the file is the
+        only instrument available.
+        """
         import re
         with open(os.path.join(REPO, "packaging", "CodeCobbler.bat"),
                   encoding="utf-8") as fh:
@@ -3244,11 +3257,13 @@ class TestShelf(unittest.TestCase):
     def test_the_shelf_lives_on_the_volume_both_operating_systems_can_see(self):
         """One shelf, not one per OS.
 
-        This machine dual-boots and the projects live on an NTFS partition that
-        is a mount point under Linux and a drive letter under Windows. A shelf
-        under ~ would give each side its own, so neither would list the other's
-        maps -- and a hardcoded /media/... path simply does not exist under
-        Windows.
+        A machine that dual-boots keeps its projects on a partition that is a
+        mount point under one system and a drive letter under the other. A
+        shelf under ~ would give each side its own, so neither would list the
+        other's maps. `CODECOBBLER_HOME` is how that volume is named, and
+        since 2026-09-22 it is the only way: a path written into the package
+        is right about one machine, and a drive letter written into it was
+        silently claiming whatever happened to be mapped there.
         """
         from cobblerpy import launch
         shared = launch.shared_root()
@@ -3259,7 +3274,7 @@ class TestShelf(unittest.TestCase):
                             f"{path} is not on the shared volume {shared}")
 
     def test_without_a_shared_volume_it_falls_back_instead_of_failing(self):
-        """A checkout on somebody else's machine has no W: drive."""
+        """Nothing in `CODECOBBLER_HOME`, so the documented default it is."""
         from cobblerpy import launch
         self.assertIsNone(launch.shared_root(candidates=("/nonexistent-xyz",)))
         fallback = launch.shelf_path(candidates=("/nonexistent-xyz",))
@@ -4958,6 +4973,28 @@ class TestDesktopWindow(unittest.TestCase):
                         "the winning attempt is not on screen")
         self.assertTrue(window.map_btn.isEnabled())
 
+    def test_a_group_of_copies_is_not_shown_under_the_restart_heading(self):
+        """The window has to make the same distinction the terminal does.
+
+        A reader who opens the desktop window instead of the summary must not
+        be told a backup folder was somebody starting the job over.
+        """
+        from PySide6 import QtWidgets
+        names = ["ledger_open", "ledger_post", "ledger_close", "ledger_audit"]
+        window, t = self._window({
+            "ledger.py": _attempt(names, 4, lines=200),
+            "ledger_source.py": _attempt(names, 4, lines=200),
+        })
+        window._load([t.dir])
+        window._finish(window.session.run())
+        joined = "\n".join(w.text() for w in
+                           window.findChildren(QtWidgets.QLabel))
+        self.assertIn("THE SAME FILE, IN MORE THAN ONE PLACE", joined)
+        self.assertIn("a copy, not a restart", joined)
+        self.assertNotIn("THE SAME JOB, STARTED OVER", joined,
+                         "a group of copies was shown under the restart "
+                         "heading")
+
     def test_starting_over_clears_the_previous_findings(self):
         from PySide6 import QtWidgets
         window, t = self._window(TestCompetingAttempts.FOUR_ATTEMPTS)
@@ -5269,6 +5306,1069 @@ class TestCompetingAttempts(unittest.TestCase):
         for group in groups:
             self.assertTrue(group["shared"],
                             "a group was reported with no shared names")
+
+
+def _attempt(names, filled, lines=0):
+    """Source for one attempt: `names` defined, the first `filled` with bodies.
+
+    `lines` pads the file out with comment lines so it has a realistic SIZE.
+    Padded with comments rather than blanks because the number being ranked on
+    is what a reader would have to read.
+    """
+    body = []
+    for i, name in enumerate(names):
+        body.append(f"def {name}(row):")
+        body.append("    return row" if i < filled else "    pass")
+        body.append("")
+    body += ["# one more line of this attempt"] * max(0, lines - len(body))
+    return "\n".join(body) + "\n"
+
+
+class TestRestartGroupsRankByWorkAtStake(unittest.TestCase):
+    """Which restart group is worth the afternoon.
+
+    The groups used to be ordered by how many attempts were in them, which
+    ranked how often somebody gave up rather than how much code is sitting
+    there. Measured 2026-09-21 on a 979-module tree: in two of the old top
+    three groups, every definition in the file the tool named also sits in a
+    sibling attempt -- they are copies of one script under different names --
+    so resuming either returns nothing new.
+
+    Every test here pins the BEHAVIOUR a reader would notice, not the formula.
+    """
+
+    # Ten names for the big attempt, three of which its sibling also has.
+    WIDE = ["render_invoice", "render_credit", "render_dunning",
+            "render_statement", "render_summary", "render_footer",
+            "render_header", "render_cover", "render_index", "render_audit"]
+    NARROW = ["ping_gateway", "ping_relay", "ping_bridge", "ping_probe"]
+
+    def _groups(self, files):
+        from cobblerpy.attempts import find
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        return find(s.project, s.modules_by_key, s.origins)
+
+    def _by_resume(self, groups):
+        return [g["resume_at"] for g in groups]
+
+    def test_a_big_half_finished_group_outranks_a_small_finished_one(self):
+        """400 lines at 35% beats 14 lines at 70%.
+
+        This is the whole point of the change: a reader with an afternoon is
+        choosing where the work is, and a small group can be further along
+        without there being anything much in it. Both groups hold two attempts,
+        so nothing but the size and the completeness separates them -- and the
+        names are ordered so that the old key, which could not tell them apart,
+        left the small one first.
+        """
+        groups = self._groups({
+            "aa_ping_one.py": _attempt(self.NARROW, 4, lines=14),
+            "aa_ping_two.py": _attempt(self.NARROW[:3], 1),
+            "zz_render_one.py": _attempt(self.WIDE, 5, lines=400),
+            "zz_render_two.py": _attempt(self.WIDE[:3], 0),
+        })
+        self.assertEqual(len(groups), 2, self._by_resume(groups))
+        big, small = groups[0], groups[1]
+        self.assertEqual(big["resume_at"], "zz_render_one")
+        self.assertEqual(small["resume_at"], "aa_ping_one")
+        # The fixture only proves something if the small one really is the
+        # further along of the two.
+        self.assertGreater(small["resume_percent"], big["resume_percent"])
+        self.assertEqual(len(big["attempts"]), len(small["attempts"]),
+                         "the two groups differ in attempt count, so this "
+                         "fixture cannot separate size from restart count")
+        self.assertGreater(big["at_stake_lines"], small["at_stake_lines"])
+
+    def test_a_group_whose_work_all_exists_elsewhere_sinks(self):
+        """A backup copy is not work at stake.
+
+        Both groups here are the same size, the same completeness and the same
+        number of attempts. In one of them the sibling defines everything the
+        leading file does -- which is what a copied file looks like -- so there
+        is nothing to lose by leaving it alone, and it has to sort below the
+        group that holds definitions found nowhere else in it.
+        """
+        copied = ["audit_ledger", "audit_batch", "audit_remit",
+                  "audit_charge", "audit_refund", "audit_credit"]
+        unique = ["settle_ledger", "settle_batch", "settle_remit",
+                  "settle_charge", "settle_refund", "settle_credit"]
+        groups = self._groups({
+            # `aa_` and `zz_` so the old ordering, which had nothing to say
+            # about either, left the copied pair on top.
+            "aa_copy_one.py": _attempt(copied, 3, lines=120),
+            "aa_copy_two.py": _attempt(copied, 2, lines=120),
+            "zz_uniq_one.py": _attempt(unique, 3, lines=120),
+            "zz_uniq_two.py": _attempt(unique[:3], 1, lines=120),
+        })
+        self.assertEqual(len(groups), 2, self._by_resume(groups))
+        self.assertEqual(self._by_resume(groups), ["zz_uniq_one", "aa_copy_one"])
+        copy_group = groups[1]
+        uniq_group = groups[0]
+        self.assertEqual(copy_group["elsewhere_percent"], 100)
+        self.assertEqual(copy_group["at_stake_lines"], 0)
+        self.assertEqual(copy_group["resume_lines"], uniq_group["resume_lines"])
+        self.assertEqual(copy_group["resume_percent"],
+                         uniq_group["resume_percent"],
+                         "the two groups differ in completeness, so this "
+                         "fixture cannot isolate what exists elsewhere")
+
+    def test_attempt_count_no_longer_decides_but_still_breaks_a_tie(self):
+        """Three groups: one with the work in it, and two that are level.
+
+        The first has two attempts and everything at stake, so it must beat a
+        three-attempt group -- a restart count says how often the job was
+        given up on, not how much is in it. The other two are identical by
+        construction, and there the count is the honest separator: restarted
+        three times is a more tangled job than restarted twice. The name is
+        deliberately the wrong way round, so a missing tie-break shows up as
+        the alphabetical order instead.
+        """
+        big = ["export_ledger", "export_batch", "export_remit",
+               "export_charge", "export_refund", "export_credit"]
+        tie_a = ["import_ledger", "import_batch", "import_remit",
+                 "import_charge"]
+        tie_b = ["upload_ledger", "upload_batch", "upload_remit",
+                 "upload_charge"]
+        groups = self._groups({
+            "big_one.py": _attempt(big, 6, lines=300),
+            "big_two.py": _attempt(big[:3], 1),
+            # `aa_tie_one` sorts before `zz_tie_one`, and has FEWER attempts.
+            "aa_tie_one.py": _attempt(tie_a, 4, lines=40),
+            "aa_tie_two.py": _attempt(tie_a[:3], 1),
+            "zz_tie_one.py": _attempt(tie_b, 4, lines=40),
+            "zz_tie_two.py": _attempt(tie_b[:3], 1),
+            # Each of the three restarts defines its OWN set. Two of them
+            # defined the same three names until 2026-09-22, which the copy
+            # rule reads as one file kept in two places -- so the group was
+            # two attempts and a copy, and this was measuring the tie-break
+            # on a fixture that no longer had three attempts in it.
+            "zz_tie_three.py": _attempt(tie_b[:3] + ["upload_settle"], 0),
+        })
+        self.assertEqual(len(groups), 3, self._by_resume(groups))
+        counts = [len(g["attempts"]) for g in groups]
+        self.assertEqual(counts, [2, 3, 2],
+                         f"restart counts came out {counts}; the fixture needs "
+                         f"a two-attempt group ahead of a three-attempt one")
+        self.assertEqual(self._by_resume(groups),
+                         ["big_one", "zz_tie_one", "aa_tie_one"])
+        self.assertEqual(groups[1]["at_stake_lines"],
+                         groups[2]["at_stake_lines"],
+                         "the two lower groups are not actually level, so "
+                         "nothing here tests the tie-break")
+
+    def test_the_printed_row_names_what_the_ranking_is_made_of(self):
+        """A bare score is a number nobody can argue with.
+
+        The terminal summary and the map both have to print the three inputs
+        and the effort still to spend, so a reader can disagree with the order
+        without reading the code that produced it.
+        """
+        import contextlib
+        import io
+        import tempfile as _tempfile
+        from cobblerpy.__main__ import _print_summary
+        from cobblerpy.report import write_map
+        files = {
+            "zz_render_one.py": _attempt(self.WIDE, 5, lines=400),
+            "zz_render_two.py": _attempt(self.WIDE[:3], 0),
+        }
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        group = self._groups(files)[0]
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            _print_summary(s)
+        out = printed.getvalue()
+        for part in (f"{group['at_stake_lines']:,} lines at stake",
+                     f"{group['resume_lines']:,} in the furthest attempt",
+                     f"{group['resume_percent']}% complete",
+                     f"{group['elsewhere_percent']}% of its definitions "
+                     f"exist elsewhere",
+                     f"{group['remaining_lines']:,} lines left to finish"):
+            self.assertIn(part, out, f"the terminal row does not say {part!r}")
+
+        path = os.path.join(_tempfile.mkdtemp(), "map.html")
+        self.addCleanup(_unlink_quietly, path)
+        write_map(s.project, s.frontier, s.history, path, origins=s.origins,
+                  modules_by_key=s.modules_by_key)
+        with open(path, encoding="utf-8") as fh:
+            markup = fh.read()
+        for part in (f"{group['at_stake_lines']:,} lines at stake",
+                     f"{group['elsewhere_percent']}% of its definitions "
+                     f"exist elsewhere",
+                     f"{group['remaining_lines']:,} lines left to finish"):
+            self.assertIn(part, markup, f"the map does not say {part!r}")
+
+    def test_the_json_carries_the_ranking_in_its_parts(self):
+        """`--json` is read by somebody building their own order.
+
+        The score alone would make them reverse-engineer it; the components
+        let them weigh the three inputs their own way.
+        """
+        group = self._groups({
+            "zz_render_one.py": _attempt(self.WIDE, 5, lines=400),
+            "zz_render_two.py": _attempt(self.WIDE[:3], 0),
+        })[0]
+        for field in ("at_stake_lines", "resume_lines", "resume_percent",
+                      "elsewhere_percent", "remaining_lines",
+                      "unwritten_definitions"):
+            self.assertIn(field, group)
+            self.assertIsInstance(group[field], int)
+        # 400 lines, 35% of them written, 30% of its definitions also in the
+        # sibling -- the estimate has to be inside what those three allow.
+        self.assertEqual(group["resume_lines"], 400)
+        self.assertEqual(group["elsewhere_percent"], 30)
+        self.assertLess(group["at_stake_lines"], group["resume_lines"])
+        self.assertGreater(group["at_stake_lines"], 0)
+        # Half the definitions in the file this names have no body, so the
+        # lines left to finish are half its lines. This used to be checked
+        # against `1 - completeness`, which is not what the field means: that
+        # also carries whether anything reaches the file and whether a test
+        # names it, neither of which is a line anybody has to write.
+        self.assertEqual(group["unwritten_definitions"], 5)
+        self.assertEqual(group["remaining_lines"], 200)
+        self.assertEqual(group["verdict"], "restart")
+
+
+class TestACopyIsNotARestart(unittest.TestCase):
+    """The majority of what this detector finds on a working tree.
+
+    Measured 2026-09-22 on a 979-module tree: 13 of its 22 groups are one file
+    in more than one place -- a backup folder, a re-dated variant, a generated
+    twin -- and the tool called every one of them a restart. "Somebody
+    restarted this four times" about a backup folder is a false sentence, not
+    a low-ranked one, so it is a different verdict and not a smaller score.
+
+    Every test here pins what a reader is TOLD, not how it was worked out.
+    """
+
+    SIX = ["ledger_open", "ledger_post", "ledger_close", "ledger_audit",
+           "ledger_void", "ledger_sweep"]
+    OTHER = ["invoice_open", "invoice_post", "invoice_close", "invoice_audit"]
+
+    def _groups(self, files):
+        from cobblerpy.attempts import find
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        return find(s.project, s.modules_by_key, s.origins)
+
+    def test_a_file_whose_sibling_defines_the_same_things_is_a_copy(self):
+        """The plain case: two files, one set of definitions between them."""
+        groups = self._groups({
+            "ledger.py": _attempt(self.SIX, 6, lines=200),
+            "ledger_source.py": _attempt(self.SIX, 6, lines=200),
+        })
+        self.assertEqual(len(groups), 1, groups)
+        group = groups[0]
+        self.assertEqual(group["verdict"], "copy",
+                         "a file whose twin defines the same things was "
+                         "reported as somebody starting the job over")
+        self.assertEqual(group["copy_of_relpath"], "ledger_source.py")
+
+    def test_the_copy_verdict_names_the_file_it_can_be_checked_against(self):
+        """A verdict a reader cannot check is a verdict they cannot act on."""
+        from cobblerpy.attempts import copy_sentence
+        group = self._groups({
+            "ledger.py": _attempt(self.SIX, 6, lines=200),
+            "ledger_source.py": _attempt(self.SIX, 6, lines=200),
+        })[0]
+        sentence = copy_sentence(group)
+        self.assertIn("a copy, not a restart", sentence)
+        self.assertIn("ledger_source.py", sentence)
+
+    def test_a_copy_is_kept_out_of_the_ranked_restart_list(self):
+        """The list is read as "these were started over and left"."""
+        from cobblerpy.attempts import copies, restarts
+        groups = self._groups({
+            "ledger.py": _attempt(self.SIX, 6, lines=200),
+            "ledger_source.py": _attempt(self.SIX, 6, lines=200),
+            # A real restart: the second attempt has three of the four names
+            # and stopped earlier, so neither defines what the other does.
+            "invoice_v2.py": _attempt(self.OTHER + ["invoice_sweep"], 5,
+                                      lines=300),
+            "invoice.py": _attempt(self.OTHER[:3], 1, lines=120),
+        })
+        self.assertEqual(len(groups), 2, groups)
+        self.assertEqual([g["resume_at"] for g in restarts(groups)],
+                         ["invoice_v2"])
+        self.assertEqual([g["resume_at"] for g in copies(groups)], ["ledger"])
+
+    def test_a_sibling_that_merely_has_more_besides_is_not_a_copy(self):
+        """One-way containment is not enough, and this is why.
+
+        Two report builders sharing a scaffold, one of them with two tables
+        the other has not got. Read side by side on the tree this was measured
+        against they are 45% the same text and two different documents. The
+        smaller one defines nothing the bigger one has not got, and calling it
+        a copy of the other would be wrong.
+        """
+        groups = self._groups({
+            "report_short.py": _attempt(self.SIX[:3], 3, lines=400),
+            "report_long.py": _attempt(self.SIX, 6, lines=365),
+        })
+        self.assertEqual(len(groups), 1, groups)
+        self.assertEqual(groups[0]["verdict"], "restart",
+                         "a file was called a copy of a sibling that has it "
+                         "plus two more definitions besides")
+
+    def test_an_archived_file_with_its_own_work_is_still_a_restart(self):
+        """A backup directory on its own is not evidence.
+
+        Measured on the 979-module tree, matching on the directory word alone
+        called a genuinely distinct archived script a copy: it shares three
+        names with its sibling and 78% of its definitions are its own.
+        """
+        groups = self._groups({
+            "_archive/old_runs/orchestrator.py": _attempt(
+                self.SIX[:3] + ["stage_boot", "stage_scan", "stage_report"],
+                6, lines=564),
+            "runner.py": _attempt(self.SIX[:3] + ["stage_verify"], 4,
+                                  lines=420),
+        })
+        self.assertEqual(len(groups), 1, groups)
+        self.assertEqual(groups[0]["verdict"], "restart",
+                         "a file was called a copy for sitting under an "
+                         "archive directory, with most of its definitions "
+                         "found nowhere else")
+
+    def test_the_same_name_under_a_backup_directory_is_a_copy(self):
+        """What the definitions miss: a backup taken before the last edit.
+
+        The live file gained one definition after the copy was made, so their
+        definition sets are no longer equal -- and the filename says what the
+        pair is anyway. This is the one group the definitions missed on the
+        979-module tree.
+        """
+        groups = self._groups({
+            "attest.py": _attempt(self.SIX, 6, lines=171),
+            "backups/canon/attest.py": _attempt(self.SIX[:5], 5, lines=104),
+        })
+        self.assertEqual(len(groups), 1, groups)
+        self.assertEqual(groups[0]["verdict"], "copy",
+                         "the same file name kept under backups/ was reported "
+                         "as the job being started over")
+        self.assertIn("backups", groups[0]["copy_of_relpath"])
+
+    def test_the_same_name_in_two_ordinary_directories_is_not_a_copy(self):
+        """Two implementations of one interface share a file name.
+
+        `backends/postgres/store.py` and `backends/mysql/store.py` are not one
+        file in two places, and nothing in either path says otherwise.
+        """
+        groups = self._groups({
+            "backends/postgres/store.py": _attempt(self.SIX, 5, lines=200),
+            "backends/mysql/store.py": _attempt(self.SIX[:4], 2, lines=160),
+        })
+        self.assertEqual(len(groups), 1, groups)
+        self.assertEqual(groups[0]["verdict"], "restart",
+                         "two implementations of one interface were called "
+                         "copies of each other")
+
+    def test_every_renderer_calls_the_copy_a_copy(self):
+        """Terminal, report, map panel and the window must agree.
+
+        A reader who opens the map instead of the summary must not be handed
+        a different account of the same group.
+        """
+        import contextlib
+        import io
+        import json as _json
+        import re as _re
+        import tempfile as _tempfile
+        from cobblerpy.__main__ import _print_summary
+        from cobblerpy.report import write_map
+        files = {
+            "ledger.py": _attempt(self.SIX, 6, lines=200),
+            "ledger_source.py": _attempt(self.SIX, 6, lines=200),
+        }
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            _print_summary(s)
+        out = printed.getvalue()
+        self.assertIn("a copy, not a restart", out)
+        self.assertNotIn("THE SAME JOB, STARTED OVER", out,
+                         "a group of copies was printed under the restart "
+                         "heading")
+
+        path = os.path.join(_tempfile.mkdtemp(), "map.html")
+        self.addCleanup(_unlink_quietly, path)
+        write_map(s.project, s.frontier, s.history, path, origins=s.origins,
+                  modules_by_key=s.modules_by_key)
+        with open(path, encoding="utf-8") as fh:
+            markup = fh.read()
+        self.assertIn("a copy, not a restart", markup)
+        # The card panel, read out of the payload the page carries rather than
+        # off the markup: the names leak into the page through other lists.
+        blob = _re.search(r'const DATA\s*=\s*(\{.*?\});', markup, _re.S)
+        self.assertTrue(blob, "the map carries no node payload")
+        data = _json.loads(blob.group(1))
+        kinds = {name: (row.get("verdict") or {}).get("kind")
+                 for name, row in data.items()}
+        self.assertEqual(kinds.get("ledger"), "copy", kinds)
+        self.assertEqual(kinds.get("ledger_source"), "copy", kinds)
+
+        from cobblerpy.attempts import find as _find
+        from cobblerpy.gui.session import Result
+        result = Result(s.root)
+        result.survey = s
+        result.attempts = _find(s.project, s.modules_by_key, s.origins)
+        self.assertNotIn("started over", result.headline(),
+                         "the window led with a restart that did not happen")
+        self.assertIn("more than one place", result.headline())
+
+
+class TestFileUrlsAreBuiltNotConcatenated(unittest.TestCase):
+    """Every link this tool hands a browser had to be parseable.
+
+    Found 2026-09-22 in a clean-virtual-environment audit of the built wheel.
+    Four places built a URL as `"file://" + path`. On Windows that produces
+    `file://C:\\Work\\x.html`, which parses with the whole path as the HOSTNAME
+    and an empty path -- so every `cobble` run on that platform left a dead
+    link on the shelf and opened nothing. On any platform a project path
+    holding `#`, `?` or `%` broke the same way, and a space went through
+    unencoded.
+    """
+
+    AWKWARD = "a project #2 100% done"
+
+    def test_the_url_survives_a_hash_and_a_space(self):
+        from urllib.parse import unquote, urlparse
+        from cobblerpy.launch import _file_url
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, self.AWKWARD, "map.html")
+        os.makedirs(os.path.dirname(path))
+        write(os.path.dirname(path), "map.html", "<html></html>")
+        url = _file_url(path)
+        parsed = urlparse(url)
+        self.assertEqual(parsed.scheme, "file")
+        self.assertEqual(parsed.netloc, "", f"{url} has a hostname in it")
+        self.assertEqual(parsed.fragment, "",
+                         f"{url} lost everything after the #")
+        self.assertEqual(parsed.query, "")
+        self.assertEqual(unquote(parsed.path), path,
+                         f"{url} does not point back at the file")
+        self.assertNotIn(" ", url, "a space went into the URL unencoded")
+
+    def test_a_windows_path_does_not_become_a_hostname(self):
+        r"""The drive letter is read as a host. Pinned as a PARSE, because
+        there is no Windows here to run on, and the letter is supplied by the
+        test rather than by the package -- which is the point of C3.
+
+        This one states the mechanism the other five are the fix for: unlike
+        them it cannot fail against the old code, because it never calls it.
+        """
+        from urllib.parse import urlparse
+        drive = chr(67) + ":" + chr(92) + "Work" + chr(92) + "x.html"
+        old = urlparse("file://" + drive)
+        self.assertNotEqual(old.netloc, "",
+                            "this platform's parser does not show the bug "
+                            "the fix is for")
+        new = urlparse(pathlib.PureWindowsPath(drive).as_uri())
+        self.assertEqual(new.netloc, "")
+        self.assertTrue(new.path.startswith("/C:/"), new.path)
+
+    def test_the_shelf_links_to_a_map_under_an_awkward_path(self):
+        from urllib.parse import unquote, urlparse
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        folder = os.path.join(d, self.AWKWARD)
+        os.makedirs(folder)
+        target = os.path.join(folder, "ledger-map-1.html")
+        write(folder, "ledger-map-1.html", "<html></html>")
+        registry = os.path.join(d, "maps.json")
+        launch.record_map(registry, "ledger", target, 12, folder=folder)
+        out = os.path.join(d, "shelf.html")
+        launch.write_shelf(registry, out)
+        with open(out, encoding="utf-8") as fh:
+            page = fh.read()
+        hrefs = re.findall(r'href="([^"]+)"', page)
+        self.assertEqual(len(hrefs), 1, hrefs)
+        parsed = urlparse(hrefs[0].replace("&amp;", "&"))
+        self.assertEqual(parsed.netloc, "")
+        self.assertEqual(parsed.fragment, "")
+        self.assertEqual(unquote(parsed.path), target)
+
+    def test_the_url_the_run_opens_is_the_one_the_map_is_at(self):
+        from urllib.parse import unquote, urlparse
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        project = os.path.join(d, self.AWKWARD, "ledger")
+        os.makedirs(project)
+        write(project, "m.py", "def go():\n    return 1\n")
+        opened = []
+        code = launch.main([project], notify=lambda m: None,
+                           open_url=lambda url: opened.append(url) or True,
+                           registry=os.path.join(d, "maps.json"),
+                           shelf=os.path.join(d, "shelf.html"))
+        self.assertEqual(code, 0)
+        self.assertEqual(len(opened), 1, opened)
+        parsed = urlparse(opened[0])
+        self.assertEqual(parsed.netloc, "")
+        self.assertEqual(parsed.fragment, "")
+        self.assertTrue(os.path.isfile(unquote(parsed.path)),
+                        f"{opened[0]} does not point at a file that exists")
+
+    def test_the_shelf_the_icon_opens_is_a_url_a_browser_can_parse(self):
+        from urllib.parse import unquote, urlparse
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        shelf = os.path.join(d, self.AWKWARD, "CodeCobbler.html")
+        os.makedirs(os.path.dirname(shelf))
+        opened = []
+        code = launch.main(["--shelf"], notify=lambda m: None,
+                           open_url=lambda url: opened.append(url) or True,
+                           registry=os.path.join(d, "maps.json"), shelf=shelf)
+        self.assertEqual(code, 0)
+        parsed = urlparse(opened[0])
+        self.assertEqual(parsed.netloc, "")
+        self.assertEqual(parsed.fragment, "")
+        self.assertEqual(unquote(parsed.path), shelf)
+
+    def test_no_source_file_still_concatenates_a_file_scheme(self):
+        """The four sites, kept gone. Prose about it is not a call."""
+        found = []
+        for folder in ("cobblerpy",):
+            for dirpath, dirs, files in os.walk(os.path.join(REPO, folder)):
+                dirs[:] = [x for x in dirs if x != "__pycache__"]
+                for name in sorted(files):
+                    if not name.endswith(".py"):
+                        continue
+                    whole = os.path.join(dirpath, name)
+                    with open(whole, encoding="utf-8") as fh:
+                        for n, line in enumerate(fh, 1):
+                            if re.search(r'"file://"\s*\+', line):
+                                found.append(
+                                    f"{os.path.relpath(whole, REPO)}:{n}")
+        self.assertEqual(found, [])
+
+
+class TestTheShelfGoesWhereTheEnvironmentSaysAndSaysSo(unittest.TestCase):
+    """No drive letter in the package, and no silent shelf.
+
+    Until 2026-09-22 the shelf root was looked for in `CODECOBBLER_HOME` and
+    then in a hardcoded drive letter, ahead of the documented fallback under
+    the home directory -- under a comment insisting it was not a hardcoded
+    path. On Windows any mapped drive on that letter, commonly a corporate
+    network share, silently became the shelf root, and nothing in the output
+    said where the shelf had gone. The environment variable is the documented
+    mechanism and is now the only one, and a shelf anywhere but the default
+    is named in the run that writes it.
+    """
+
+    def test_the_package_hardcodes_no_drive_letter(self):
+        """A machine-specific value belongs in the installer's shim.
+
+        Written as a pattern rather than as the letter it caught, because
+        this file ships in the sdist and a test that quotes the string it
+        exists to keep out publishes that string itself.
+        """
+        import re
+        pattern = re.compile("[\"'][A-Za-z]:[\\\\/]")
+        found = []
+        for dirpath, dirs, files in os.walk(os.path.join(REPO, "cobblerpy")):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for name in sorted(files):
+                if not name.endswith(".py"):
+                    continue
+                whole = os.path.join(dirpath, name)
+                with open(whole, encoding="utf-8") as fh:
+                    for n, line in enumerate(fh, 1):
+                        if pattern.search(line):
+                            found.append(f"{os.path.relpath(whole, REPO)}:{n}")
+        self.assertEqual(found, [],
+                         "a drive letter is written into the package")
+
+    def test_the_environment_variable_is_the_only_way_to_move_the_shelf(self):
+        """Read in a fresh interpreter, because the list is built at import."""
+        def shared_with(env_value):
+            env = dict(os.environ)
+            env.pop("CODECOBBLER_HOME", None)
+            if env_value is not None:
+                env["CODECOBBLER_HOME"] = env_value
+            r = subprocess.run(
+                [sys.executable, "-c",
+                 "from cobblerpy import launch; print(list(launch.SHARED))"],
+                capture_output=True, text=True, cwd=REPO, env=env, timeout=120)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return ast.literal_eval(r.stdout.strip())
+
+        self.assertEqual(shared_with(None), [],
+                         "something other than the environment variable can "
+                         "still move the shelf")
+        here = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, here, True)
+        self.assertEqual(shared_with(here), [here])
+
+    def test_without_the_variable_the_shelf_is_the_documented_default(self):
+        from cobblerpy import launch
+        self.assertIsNone(launch.shared_root(candidates=()))
+        self.assertEqual(os.path.dirname(launch.shelf_path(candidates=())),
+                         os.path.expanduser(launch.FALLBACK))
+
+    def test_a_run_says_where_the_shelf_is_when_it_is_not_the_default(self):
+        """Nothing used to say where the shelf had gone."""
+        from cobblerpy import launch
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        project = os.path.join(d, "ledger")
+        os.makedirs(project)
+        write(project, "m.py", "def go():\n    return 1\n")
+        shelf = os.path.join(d, "elsewhere", "CodeCobbler.html")
+        said = []
+        code = launch.main([project], notify=said.append,
+                           open_url=lambda url: True,
+                           registry=os.path.join(d, "elsewhere", "maps.json"),
+                           shelf=shelf)
+        self.assertEqual(code, 0, said)
+        self.assertIn(shelf, " ".join(said),
+                      "the run did not say where the shelf went")
+
+    def test_the_default_shelf_is_not_announced(self):
+        """A sentence that is always there separates nothing."""
+        from cobblerpy import launch
+        self.assertEqual(
+            launch.shelf_note(os.path.join(os.path.expanduser(launch.FALLBACK),
+                                           "CodeCobbler.html")), "")
+        self.assertIn("elsewhere",
+                      launch.shelf_note("/elsewhere/CodeCobbler.html"))
+
+
+class TestAnUnwritableOutputPathIsRefusedBeforeTheSurvey(unittest.TestCase):
+    """A mistyped output path used to be a traceback after all the work.
+
+    Found 2026-09-22 by installing the built wheel into a clean virtual
+    environment: all four of --map, --json, --mermaid and --drawio raised
+    FileNotFoundError, PermissionError or IsADirectoryError out of the `open`
+    call -- AFTER the whole survey had run, so the survey was thrown away as
+    well. `cobble` did the same when the project's parent is read-only, which
+    a mounted share often is.
+
+    The rule copied from the sibling extraction tool: every output path is
+    checked BEFORE anything is read, and a bad one is one plain sentence
+    naming the flag and the reason, with exit 2.
+    """
+
+    def _cli(self, *args):
+        return subprocess.run([sys.executable, "-m", "cobblerpy", *args],
+                              capture_output=True, text=True, cwd=REPO,
+                              timeout=120)
+
+    def setUp(self):
+        self.t = Tree({"m.py": "def go():\n    return 1\n"})
+        self.addCleanup(self.t.close)
+        self.out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.out, True)
+
+    def test_each_output_flag_says_which_flag_and_why(self):
+        missing = os.path.join(self.out, "no-such-folder")
+        for flag, name in (("--map", "map.html"), ("--json", "survey.json"),
+                           ("--mermaid", "graph.mmd"),
+                           ("--drawio", "graph.drawio")):
+            target = os.path.join(missing, name)
+            with self.subTest(flag=flag):
+                r = self._cli(self.t.dir, "--no-history", flag, target)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertNotIn("Traceback", r.stderr)
+                self.assertIn(f"cobblerpy: {flag} {target}: cannot write here "
+                              f"(its folder does not exist)", r.stderr)
+
+    def test_a_folder_where_a_file_was_meant_is_named_as_one(self):
+        r = self._cli(self.t.dir, "--no-history", "--json", self.out)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("cannot write here (it is a folder)", r.stderr)
+
+    def test_a_read_only_folder_is_named_as_one(self):
+        if os.geteuid() == 0:
+            self.skipTest("root can write into a read-only folder")
+        locked = os.path.join(self.out, "locked")
+        os.mkdir(locked, 0o500)
+        self.addCleanup(os.chmod, locked, 0o700)
+        r = self._cli(self.t.dir, "--no-history", "--map",
+                      os.path.join(locked, "map.html"))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("cannot write here (its folder is not writable)",
+                      r.stderr)
+
+    def test_one_bad_path_stops_the_survey_before_any_output_is_written(self):
+        """The whole point: the work is not done and then thrown away.
+
+        A good --map and a bad --json together. If the check ran where the
+        writing does, the map would already be on disk and the survey spent.
+        """
+        good = os.path.join(self.out, "map.html")
+        r = self._cli(self.t.dir, "--no-history", "--map", good,
+                      "--json", os.path.join(self.out, "gone", "s.json"))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertFalse(os.path.exists(good),
+                         "the map was written before the bad path was noticed")
+        self.assertNotIn("modules,", r.stdout)
+
+    def test_every_bad_path_is_named_not_just_the_first(self):
+        gone = os.path.join(self.out, "gone")
+        r = self._cli(self.t.dir, "--no-history",
+                      "--map", os.path.join(gone, "m.html"),
+                      "--json", os.path.join(gone, "s.json"))
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("--map", r.stderr)
+        self.assertIn("--json", r.stderr)
+
+    def test_cobble_refuses_a_project_whose_parent_cannot_be_written(self):
+        """The map goes BESIDE the project, so a read-only parent is fatal.
+
+        A mounted share, read-only, is the ordinary way to meet this. It used
+        to be a PermissionError traceback out of the map writer, with the
+        survey already paid for -- and from a desktop icon, with no terminal,
+        nothing visible at all.
+        """
+        if os.geteuid() == 0:
+            self.skipTest("root can write into a read-only folder")
+        from cobblerpy import launch
+        parent = os.path.join(self.out, "share")
+        project = os.path.join(parent, "ledger")
+        os.makedirs(project)
+        write(project, "m.py", "def go():\n    return 1\n")
+        os.chmod(parent, 0o500)
+        self.addCleanup(os.chmod, parent, 0o700)
+        said = []
+        code = launch.main([project], notify=said.append,
+                           open_url=lambda url: True,
+                           registry=os.path.join(self.out, "maps.json"),
+                           shelf=os.path.join(self.out, "shelf.html"))
+        self.assertNotEqual(code, 0)
+        self.assertTrue(said, "nothing was said, and there is no terminal")
+        self.assertIn("cannot write here", " ".join(said))
+        self.assertIn("is not writable", " ".join(said))
+
+
+class TestABackupOfTheWinnerDoesNotSilenceTheRestart(unittest.TestCase):
+    """A backup folder must not switch off the finding this tool is named for.
+
+    Regression, 2026-09-22. The copy verdict landed earlier the same day and
+    was read off the GROUP'S NAMED FILE alone: if one sibling defined
+    everything the named file defines, the whole group was reclassified. So
+    four genuine competing attempts at one job, plus a copy of the winning
+    one under `backups/2026-08/`, printed no restart at all -- the four
+    attempts, their percentages and the resume recommendation were not
+    demoted or footnoted, they were gone, replaced by a single copy row.
+    Backing up a LOSING attempt was harmless; backing up the WINNER swallowed
+    the group.
+
+    The fix splits the COPY out of the group and re-ranks what is left,
+    rather than judging four files on the strength of one of them. A group
+    is a copy only when every one of its members is the same file as every
+    other -- which is what all 13 copy groups on the 979-module tree
+    measured 2026-09-22 actually are.
+    """
+
+    # The README's own worked example: four attempts at one claims pipeline,
+    # each abandoned at a different point. No two of them define the SAME SET
+    # -- each developer kept the core and reached for one more thing -- so
+    # nothing here is a copy of anything until the backup folder arrives.
+    NAMES = ["normalise_codes", "parse_claim", "validate_claim",
+             "submit_claim"]
+    WINNER = "app/claims_v3.py"
+
+    FOUR = {
+        "app/__init__.py": "",
+        "app/main.py": "from app import claims_v3\n\n"
+                       "if __name__ == '__main__':\n"
+                       "    claims_v3.submit_claim({})\n",
+        "app/claims_v3.py": _attempt(NAMES + ["price_claim"], 4, lines=240),
+        "app/claims_ingest.py": _attempt(NAMES + ["audit_claim"], 2, lines=180),
+        "app/intake_new.py": _attempt(NAMES, 1, lines=150),
+        "app/intake.py": _attempt(NAMES[1:], 0, lines=120),
+    }
+
+    def _groups(self, files):
+        from cobblerpy.attempts import find
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        return find(s.project, s.modules_by_key, s.origins)
+
+    def _with_backup_of(self, relpath):
+        files = dict(self.FOUR)
+        files["backups/2026-08/" + os.path.basename(relpath)] = files[relpath]
+        return files
+
+    def test_backing_up_the_winner_leaves_the_restart_group_reported(self):
+        """The whole point: the four real attempts survive the backup folder.
+
+        Before the fix this list was empty and the summary printed no
+        `THE SAME JOB, STARTED OVER` heading at all.
+        """
+        from cobblerpy.attempts import restarts
+        restarted = restarts(self._groups(self._with_backup_of(self.WINNER)))
+        self.assertEqual(len(restarted), 1,
+                         "a copy of the winning attempt deleted the restart "
+                         "group instead of being split out of it")
+        group = restarted[0]
+        self.assertEqual(group["resume_at"], "app.claims_v3")
+        self.assertEqual(len(group["attempts"]), 4,
+                         [a["module"] for a in group["attempts"]])
+        self.assertNotIn("backups.2026-08.claims_v3",
+                         [a["module"] for a in group["attempts"]],
+                         "the backup copy was left in the ranked attempts")
+        percents = [a["percent"] for a in group["attempts"]]
+        self.assertEqual(percents, sorted(percents, reverse=True))
+        self.assertTrue(group["resume_percent"] > 0)
+
+    def test_the_backup_pair_is_reported_as_a_copy_and_only_the_pair(self):
+        """The copy verdict is about TWO files, not about the other three.
+
+        Before the fix the copy row read "app/claims_v3.py and 4 others",
+        calling three unrelated restarts copies of it.
+        """
+        from cobblerpy.attempts import copies, copy_sentence
+        copied = copies(self._groups(self._with_backup_of(self.WINNER)))
+        self.assertEqual(len(copied), 1, copied)
+        self.assertEqual(len(copied[0]["attempts"]), 2,
+                         [a["module"] for a in copied[0]["attempts"]])
+        self.assertEqual(
+            sorted(a["relpath"] for a in copied[0]["attempts"]),
+            ["app/claims_v3.py", "backups/2026-08/claims_v3.py"])
+        self.assertIn("a copy, not a restart", copy_sentence(copied[0]))
+
+    def test_the_restart_and_copy_split_survives_a_backed_up_winner(self):
+        """The 13/9 shape of the 979-module tree, at fixture scale.
+
+        Thirteen pairs that really are one file in two places, nine real
+        restart groups, and the winner of one of those nine also kept under
+        `backups/`. The honest answer is nine restarts and fourteen copies.
+        Before the fix it was eight and fourteen: the backup ate a restart.
+        """
+        from cobblerpy.attempts import copies, restarts
+        files = {}
+        for i in range(13):
+            names = [f"twin{i}_alpha", f"twin{i}_bravo", f"twin{i}_charlie",
+                     f"twin{i}_delta"]
+            files[f"twin{i}.py"] = _attempt(names, 4, lines=200)
+            files[f"twin{i}_source.py"] = _attempt(names, 4, lines=200)
+        for i in range(9):
+            names = [f"job{i}_alpha", f"job{i}_bravo", f"job{i}_charlie",
+                     f"job{i}_delta"]
+            files[f"job{i}_v2.py"] = _attempt(names + [f"job{i}_echo"], 5,
+                                              lines=300)
+            files[f"job{i}.py"] = _attempt(names, 1, lines=140)
+        files["backups/2026-08/job0_v2.py"] = files["job0_v2.py"]
+        groups = self._groups(files)
+        self.assertEqual(len(restarts(groups)), 9,
+                         [g["resume_relpath"] for g in restarts(groups)])
+        self.assertEqual(len(copies(groups)), 14,
+                         [g["resume_relpath"] for g in copies(groups)])
+
+    def test_backing_up_a_losing_attempt_is_still_harmless(self):
+        """The half that was never broken, pinned so it stays that way."""
+        from cobblerpy.attempts import restarts
+        restarted = restarts(self._groups(self._with_backup_of("app/intake.py")))
+        self.assertEqual(len(restarted), 1, restarted)
+        self.assertEqual(restarted[0]["resume_at"], "app.claims_v3")
+
+    def test_the_map_card_for_the_live_file_still_says_resume_here(self):
+        """The map must not be handed a different account of the group.
+
+        The live file is now in two groups -- the restart it wins and the
+        copy pair its backup makes -- and the card is written once. The
+        restart is what the reader acts on, so it takes the card; the backup
+        keeps its own, and both still have their row in the summary.
+        """
+        import json as _json
+        import re as _re
+        import tempfile as _tempfile
+        from cobblerpy.report import write_map
+        t = Tree(self._with_backup_of(self.WINNER))
+        self.addCleanup(t.close)
+        s = t.survey()
+        path = os.path.join(_tempfile.mkdtemp(), "map.html")
+        self.addCleanup(_unlink_quietly, path)
+        write_map(s.project, s.frontier, s.history, path, origins=s.origins,
+                  modules_by_key=s.modules_by_key)
+        with open(path, encoding="utf-8") as fh:
+            markup = fh.read()
+        blob = _re.search(r'const DATA\s*=\s*(\{.*?\});', markup, _re.S)
+        self.assertTrue(blob, "the map carries no node payload")
+        data = _json.loads(blob.group(1))
+        kinds = {name: (row.get("verdict") or {}).get("kind")
+                 for name, row in data.items()}
+        self.assertEqual(kinds.get("app.claims_v3"), "resume", kinds)
+        self.assertEqual(kinds.get("backups.2026-08.claims_v3"), "copy", kinds)
+        self.assertEqual(kinds.get("app.intake"), "superseded", kinds)
+
+    def test_the_summary_still_prints_the_restart_under_its_own_heading(self):
+        """What a reader is TOLD, read off the terminal output itself."""
+        import contextlib
+        import io
+        from cobblerpy.__main__ import _print_summary
+        t = Tree(self._with_backup_of(self.WINNER))
+        self.addCleanup(t.close)
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            _print_summary(t.survey())
+        out = printed.getvalue()
+        self.assertIn("THE SAME JOB, STARTED OVER", out,
+                      "a backup folder switched off the headline finding")
+        self.assertIn("resume at app/claims_v3.py", out)
+        self.assertIn("THE SAME FILE, IN MORE THAN ONE PLACE", out)
+
+
+class TestTheResumePickIsNotTheSmallerCopy(unittest.TestCase):
+    """Which of two equally-complete attempts gets named.
+
+    Completeness is a proportion of what each file itself started, so two
+    files that are both fully written score the same however far apart their
+    sizes are. The name settled it, and on the 979-module tree measured
+    2026-09-22 that named the smaller file in 7 of the 15 groups with a tie at
+    the top -- in one of them a 2,767-line copy under a backup directory over
+    the 3,527-line live file it came from.
+    """
+
+    def _groups(self, files):
+        from cobblerpy.attempts import find
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        return find(s.project, s.modules_by_key, s.origins)
+
+    def test_the_bigger_of_two_equally_complete_attempts_is_named(self):
+        names = ["ledger_open", "ledger_post", "ledger_close", "ledger_audit"]
+        groups = self._groups({
+            # `aa_` sorts first, so a missing tie-break shows up as the
+            # alphabetical order. The bigger file also defines one more thing,
+            # which keeps the pair a restart rather than a copy.
+            "aa_small.py": _attempt(names, 4, lines=300),
+            "zz_big.py": _attempt(names + ["ledger_sweep"], 5, lines=900),
+        })
+        self.assertEqual(len(groups), 1, groups)
+        group = groups[0]
+        self.assertEqual(
+            group["attempts"][0]["percent"], group["attempts"][1]["percent"],
+            "the two attempts differ in completeness, so this fixture cannot "
+            "test what happens when they tie")
+        self.assertEqual(group["resume_at"], "zz_big",
+                         "the smaller of two equally-complete attempts was "
+                         "named as the one to resume from")
+        self.assertEqual(group["resume_lines"], 900,
+                         "the work at stake was measured on the file that was "
+                         "not named")
+
+
+class TestLinesLeftCountsUnwrittenDefinitions(unittest.TestCase):
+    """What "lines left to finish it" is allowed to mean.
+
+    It was `lines x (1 - completeness)`, and completeness also carries whether
+    anything reaches the file and whether a test names it. So a file with a
+    body on every definition, which nothing imported and no test mentioned,
+    was reported as having ~281 lines left to write when it had none. Measured
+    2026-09-22 across all 67 attempts in the 22 groups of a 979-module tree:
+    every one of them has a body on every definition, so the old line put a
+    number on 10 of the 22 groups and told the other 12 "nothing left
+    unwritten by this measure".
+    """
+
+    NAMES = ["ledger_open", "ledger_post", "ledger_close", "ledger_audit",
+             "ledger_void", "ledger_sweep", "ledger_purge", "ledger_reopen",
+             "ledger_rebase", "ledger_verify"]
+
+    def _group(self, files):
+        from cobblerpy.attempts import find
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        groups = find(s.project, s.modules_by_key, s.origins)
+        self.assertEqual(len(groups), 1, groups)
+        return groups[0]
+
+    def _pair(self, filled, lines, reachable):
+        """One restart group, optionally reached from an entry point."""
+        files = {
+            "zz_ledger.py": _attempt(self.NAMES, filled, lines=lines),
+            "aa_ledger_old.py": _attempt(self.NAMES[:3] + ["ledger_stage"],
+                                         1, lines=60),
+        }
+        if reachable:
+            files["main.py"] = ("import zz_ledger\n\n"
+                                "if __name__ == '__main__':\n"
+                                "    zz_ledger.ledger_open()\n")
+        return self._group(files)
+
+    def test_nothing_unwritten_means_no_lines_left_and_no_line_printed(self):
+        """A file with a body on every definition has nothing left to write."""
+        from cobblerpy.attempts import effort_sentence
+        group = self._pair(filled=10, lines=400, reachable=False)
+        self.assertLess(group["resume_percent"], 100,
+                        "the fixture is at 100%, so it cannot show that the "
+                        "shortfall came from somewhere other than the bodies")
+        self.assertEqual(group["remaining_lines"], 0,
+                         "lines were reported left to write in a file where "
+                         "every definition already has a body")
+        self.assertEqual(effort_sentence(group), "",
+                         "a row carried an effort sentence with nothing to "
+                         "say")
+
+    def test_reaching_a_file_does_not_change_how_much_is_left_to_write(self):
+        """The same unwritten definitions, whoever imports the file."""
+        alone = self._pair(filled=6, lines=400, reachable=False)
+        reached = self._pair(filled=6, lines=400, reachable=True)
+        self.assertGreater(reached["resume_percent"], alone["resume_percent"],
+                           "the fixture does not actually differ in "
+                           "completeness, so it tests nothing")
+        self.assertEqual(alone["remaining_lines"], reached["remaining_lines"],
+                         "importing a file changed how many lines it was "
+                         "said to have left to write")
+        self.assertGreater(alone["remaining_lines"], 0)
+
+    def test_the_effort_sentence_names_the_definitions_it_counted(self):
+        from cobblerpy.attempts import effort_sentence
+        group = self._pair(filled=6, lines=400, reachable=False)
+        self.assertEqual(group["unwritten_definitions"], 4,
+                         group["resume_facts"])
+        self.assertIn("4 definitions with no body yet", effort_sentence(group))
+
+    def test_no_renderer_prints_an_effort_line_with_nothing_to_say(self):
+        """Terminal and map both drop it rather than softening it."""
+        import contextlib
+        import io
+        import tempfile as _tempfile
+        from cobblerpy.__main__ import _print_summary
+        from cobblerpy.report import write_map
+        files = {
+            "zz_ledger.py": _attempt(self.NAMES, 10, lines=400),
+            "aa_ledger_old.py": _attempt(self.NAMES[:3] + ["ledger_stage"],
+                                         1, lines=60),
+        }
+        t = Tree(files)
+        self.addCleanup(t.close)
+        s = t.survey()
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            _print_summary(s)
+        out = printed.getvalue()
+        self.assertIn("lines at stake", out, "the fixture printed no group")
+        for phrase in ("left to finish", "nothing left unwritten"):
+            self.assertNotIn(phrase, out,
+                             f"the terminal row still says {phrase!r}")
+
+        path = os.path.join(_tempfile.mkdtemp(), "map.html")
+        self.addCleanup(_unlink_quietly, path)
+        write_map(s.project, s.frontier, s.history, path, origins=s.origins,
+                  modules_by_key=s.modules_by_key)
+        with open(path, encoding="utf-8") as fh:
+            markup = fh.read()
+        self.assertNotIn("nothing left unwritten", markup)
 
 
 class TestDiversionNoise(unittest.TestCase):
@@ -5754,6 +6854,720 @@ class TestDiversion(unittest.TestCase):
         for fork in find(s.project, s.modules_by_key, s.history, s.frontier):
             self.assertIn("hypothesis", fork["caveat"])
 
+
+class TestDistributionGuard(unittest.TestCase):
+    """packaging/verify_dist.py refuses a distribution that should not be published.
+
+    These are negative controls. A guard that has only ever passed has never been
+    tested -- the same lesson the unused-import exemption taught on 2026-09-20.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        if sys.version_info < (3, 11):
+            raise unittest.SkipTest("verify_dist.py needs tomllib (3.11+)")
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "packaging", "verify_dist.py")
+        if not os.path.exists(path):
+            raise unittest.SkipTest("packaging/verify_dist.py is not in this distribution")
+        spec = importlib.util.spec_from_file_location("verify_dist", path)
+        cls.vd = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.vd)
+
+    def wheel(self, files):
+        """Write a throwaway .whl holding exactly these members."""
+        import zipfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "thing-1.0-py3-none-any.whl")
+        with zipfile.ZipFile(path, "w") as z:
+            for name, body in files.items():
+                z.writestr(name, body)
+        return path
+
+    def test_a_clean_wheel_is_accepted(self):
+        """The positive control: without it, a guard that always fails looks perfect."""
+        w = self.wheel({"thing/__init__.py": "VERSION = '1.0'\n",
+                        "thing-1.0.dist-info/METADATA": "Name: thing\nVersion: 1.0\n"})
+        import zipfile
+        names = zipfile.ZipFile(w).namelist()
+        self.assertEqual(self.vd.forbidden_members(names), [])
+        self.assertEqual(self.vd.forbidden_text_hits(w), [])
+
+    def test_compiled_bytecode_is_refused(self):
+        w = self.wheel({"thing/__init__.py": "x = 1\n",
+                        "thing/__pycache__/__init__.cpython-312.pyc": "\x00\x00"})
+        import zipfile
+        bad = self.vd.forbidden_members(zipfile.ZipFile(w).namelist())
+        # A zip carries no directory entries of its own, so the .pyc is the one hit.
+        self.assertEqual(bad, ["thing/__pycache__/__init__.cpython-312.pyc"])
+
+    def test_working_notes_are_refused(self):
+        import zipfile
+        w = self.wheel({"docs/notes_for_one_machine.md": "# not for anybody else\n"})
+        self.assertTrue(self.vd.forbidden_members(zipfile.ZipFile(w).namelist()))
+
+    def test_a_machine_path_inside_a_file_is_refused(self):
+        """The leak that cost this project a history rewrite, gated at the artifact.
+
+        The sample below is invented. Writing the real string here would put it
+        back into a published file, which is the whole failure being guarded.
+        """
+        w = self.wheel({"thing/launch.py": 'REPO = "D:\\\\Acme\\\\checkout"\n'})
+        hits = self.vd.forbidden_text_hits(w)
+        self.assertTrue(hits, "a machine path must never reach a published artifact")
+        self.assertIn("drive-letter path", " ".join(h[1] for h in hits))
+
+    def test_a_home_directory_inside_a_file_is_refused(self):
+        """Only the push guard can tell a home directory from any other path.
+        The built-in patterns in verify_dist.py know THIS machine's home and
+        nothing else, on purpose -- a pattern that named other accounts would
+        be a list of them. So outside a checkout there is no rule to exercise.
+
+        The account below is invented, and it is spelled in two pieces so that
+        the fixture never appears whole in this file: an sdist carries tests/,
+        so a file that writes `/home/<name>/` out in full is itself carrying
+        the shape it is asking the guard to refuse. Measured 2026-09-21:
+        written whole, it failed the artifact scan on its own test.
+        """
+        if self.vd.load_push_guard() is None:
+            self.skipTest("no .githooks/ beside this copy (an unpacked sdist)")
+        who = "jd" + "oe"
+        w = self.wheel({"thing/paths.py":
+                        'SHELF = "/home/' + who + '/.local/share/thing"\n'})
+        hits = self.vd.forbidden_text_hits(w)
+        self.assertEqual(len(hits), 1, hits)
+        self.assertIn("home directory", hits[0][1])
+
+    def test_a_documented_drive_path_is_not_a_leak(self):
+        """A manual has to be able to show what a Windows path looks like.
+
+        The escaped form, because that is what a path becomes once it is
+        written into a source file, and because the push guard's own rule does
+        not match that form at all -- so this is the built-in exemption
+        standing on its own. A profile directory is no longer on the list and
+        has a test of its own below.
+        """
+        for example in (self.drive_path("C", "Work", "Project", escaped=True),
+                        self.drive_path("C", "path", "to", "cobblerpy", escaped=True),
+                        self.drive_path("C", "Work", "Some Project", escaped=True)):
+            w = self.wheel({"thing/doc.py": f'EXAMPLE = "{example}"\n'})
+            self.assertEqual(self.vd.forbidden_text_hits(w), [], example)
+
+    def test_a_documented_example_home_is_not_a_leak(self):
+        """Measured 2026-09-21: `/home/me/` in a docstring failed the first version
+        of this guard. A rule that cannot tell documentation from a real account
+        is not a tighter gate, it is a broken one."""
+        for placeholder in ("/home/me/notes", "/home/you/docs", "/home/user/x"):
+            w = self.wheel({"thing/doc.py": f'EXAMPLE = "{placeholder}"\n'})
+            self.assertEqual(self.vd.forbidden_text_hits(w), [], placeholder)
+
+    def test_the_rules_come_from_the_push_guard(self):
+        """One definition of unpublishable, shared with .githooks/pre-push.
+
+        An unpacked sdist carries no .githooks/, and that is deliberate -- the
+        hooks guard a repository, not a release. There the built-in patterns
+        stand in, so this check only applies where the guard exists.
+        """
+        guard = self.vd.load_push_guard()
+        if guard is None:
+            self.skipTest("no .githooks/ beside this copy (an unpacked sdist)")
+        self.assertTrue(hasattr(guard, "scan_text"))
+        self.assertIn("me", guard.GENERIC_USERS)
+
+    def test_a_credential_inside_a_file_is_refused(self):
+        token = "ghp_" + "a" * 36
+        w = self.wheel({"thing/oops.py": f'TOKEN = "{token}"\n'})
+        hits = self.vd.forbidden_text_hits(w)
+        self.assertTrue(hits)
+        self.assertIn("token", " ".join(h[1] for h in hits).lower())
+
+    def test_a_credential_is_never_reprinted_in_full(self):
+        """The report goes into an evidence file and a CI transcript. A check that
+        finds a live token and then prints it has moved the leak, not stopped it."""
+        token = "ghp_" + "b" * 36
+        w = self.wheel({"thing/oops.py": f'TOKEN = "{token}"\n'})
+        for _member, _why, shown in self.vd.forbidden_text_hits(w):
+            self.assertNotIn(token, shown)
+
+    def test_a_one_segment_drive_path_is_refused(self):
+        """The half the push guard cannot see: its rule needs two path segments,
+        and a drive letter with a single name after it is still one machine."""
+        w = self.wheel({"thing/perfectly_ordinary.py": 'p = "D:\\\\Acmesecrets"\n'})
+        import zipfile
+        self.assertEqual(self.vd.forbidden_members(zipfile.ZipFile(w).namelist()), [])
+        self.assertTrue(self.vd.forbidden_text_hits(w))
+
+    def test_an_sdist_without_its_tests_is_refused(self):
+        """Shipping the claim checker is the point; missing it must fail loudly."""
+        missing = self.vd.missing_from_sdist(
+            ["thing-1.0/PKG-INFO", "thing-1.0/README.md", "thing-1.0/LICENSE",
+             "thing-1.0/pyproject.toml", "thing-1.0/thing/__init__.py"])
+        self.assertIn("tests/", missing)
+        self.assertIn("verify_e2e.py", missing)
+
+    def test_a_complete_sdist_is_accepted(self):
+        self.assertEqual(self.vd.missing_from_sdist(
+            ["thing-1.0/PKG-INFO", "thing-1.0/README.md", "thing-1.0/LICENSE",
+             "thing-1.0/pyproject.toml", "thing-1.0/verify_e2e.py",
+             "thing-1.0/tests/test_thing.py"]), [])
+
+    # -- fixtures built at RUN TIME ---------------------------------------
+    # tests/ ships inside the sdist, so a fixture written out whole would put
+    # the very shape it asks the guard to refuse into a published file. The
+    # first version of verify_dist.py's own docstring made that mistake and the
+    # guard caught it in the built sdist. Every sample below is invented.
+
+    def drive_path(self, letter, *segments, escaped=False):
+        """A drive-letter path, assembled rather than spelled.
+
+        `escaped` gives the form a path takes INSIDE a source string literal,
+        where the language ate one backslash of each pair. Both forms are real
+        and the rule has to see both.
+        """
+        sep = "\\" * (2 if escaped else 1)
+        return letter + ":" + sep + sep.join(segments)
+
+    def account_path(self, root, who, rest):
+        """`<root>/<account>/<rest>`, assembled for the same reason."""
+        return root + "/" + who + "/" + rest
+
+    def test_a_raw_one_segment_drive_path_is_refused(self):
+        """One backslash, one name after it: the shape the push guard cannot
+        see, because its rule needs two path segments, AND the shape the old
+        over-escaped pattern could not see either. Reproduced 2026-09-21
+        against that pattern: NO MATCH, and the distribution certified clean.
+        """
+        sample = self.drive_path("Z", "Acmeprivate")
+        w = self.wheel({"thing/perfectly_ordinary.py": f'p = "{sample}"\n'})
+        hits = self.vd.forbidden_text_hits(w)
+        # The exact triple, which only the built-in pattern produces: the
+        # guard's own reason for a drive path is a longer sentence.
+        self.assertIn(("thing/perfectly_ordinary.py",
+                       "an absolute drive-letter path", sample), hits)
+
+    def test_a_raw_two_segment_drive_path_is_refused(self):
+        sample = self.drive_path("D", "ClientNDAWork", "checkout")
+        w = self.wheel({"thing/launch.py": f'REPO = "{sample}"\n'})
+        hits = self.vd.forbidden_text_hits(w)
+        self.assertTrue(hits, sample)
+        self.assertIn("drive-letter path", " ".join(h[1] for h in hits))
+
+    def test_an_escaped_drive_path_in_a_string_literal_is_refused(self):
+        """The form that survives being written into source: two backslashes.
+        The push guard's rule does not match it at all, so the built-in pattern
+        is the only thing between this and an index."""
+        sample = self.drive_path("C", "Users", "arlo", "notes", escaped=True)
+        w = self.wheel({"thing/paths.py": f'P = "{sample}"\n'})
+        hits = self.vd.forbidden_text_hits(w)
+        self.assertIn(("thing/paths.py", "an absolute drive-letter path", sample), hits)
+
+    def test_a_windows_profile_path_is_not_documentation(self):
+        """A manual shows a path-to-thing placeholder. A profile directory
+        names the account that owns it -- whatever the account is called -- so
+        it is not on the documentation list any more. That one word was
+        exempting the only form of this leak the old pattern could still see.
+        """
+        for who in ("arlo", "you", "Administrator"):
+            sample = self.drive_path("C", "Users", who, "Documents", escaped=True)
+            w = self.wheel({"thing/doc.py": f'E = "{sample}"\n'})
+            self.assertTrue(self.vd.forbidden_text_hits(w), sample)
+
+    def test_the_documentation_exemption_still_covers_a_raw_placeholder(self):
+        """Both halves, on the same string: the shape is RECOGNISED, and then
+        it is exempted for being a placeholder. A rule that never matched would
+        pass this test on the first half alone, which is how the old one
+        looked correct."""
+        for example in (self.drive_path("C", "path", "to", "thing"),
+                        self.drive_path("C", "Work", "Project"),
+                        self.drive_path("C", "temp", "out")):
+            found = self.vd._DRIVE_PATH.search(example.encode())
+            self.assertTrue(found, example)
+            self.assertTrue(self.vd._DOC_DRIVE_PATH.match(found.group(0)), example)
+
+    def test_one_nul_byte_no_longer_hides_a_file_from_every_rule(self):
+        """Reproduced 2026-09-21: a token, a home path and a drive path all
+        shipped undetected inside a PNG, a UTF-16 settings file and a plain
+        .txt with one stray NUL, because both passes skipped any file with a
+        NUL in its first 8 KiB -- at any size, for every rule."""
+        token = "ghp_" + "c" * 36
+        sample = self.drive_path("D", "Acme", "checkout")
+        cases = {
+            "thing/logo.png": b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + token.encode(),
+            "thing/settings.ini": ("[paths]\nroot=" + sample).encode("utf-16-le"),
+            "thing/notes.txt": b"see\x00 " + sample.encode(),
+        }
+        for member, body in cases.items():
+            hits = self.vd.forbidden_text_hits(self.wheel({member: body}))
+            self.assertTrue(hits, member)
+            self.assertEqual({h[0] for h in hits}, {member})
+
+    def test_a_credential_found_inside_a_binary_is_still_redacted(self):
+        token = "ghp_" + "d" * 36
+        w = self.wheel({"thing/logo.png": b"\x89PNG\r\n\x1a\n\x00" + token.encode()})
+        hits = self.vd.forbidden_text_hits(w)
+        self.assertTrue(hits)
+        for _member, _why, shown in hits:
+            self.assertNotIn(token, shown)
+
+    def test_a_member_too_big_to_read_whole_is_named(self):
+        """"every file read, nothing matched" has to be a fact. Whatever cannot
+        be read in full is NAMED by a check instead of passed over."""
+        w = self.wheel({"thing/huge.bin": b"A" * (self.vd.MAX_SCAN_BYTES + 1)})
+        unscanned = []
+        self.vd.forbidden_text_hits(w, unscanned=unscanned)
+        self.assertEqual([n for n, _why in unscanned], ["thing/huge.bin"])
+
+    def test_a_wheel_filename_version_that_is_not_the_release_is_not_selected(self):
+        """Only METADATA was ever compared against the project's version, and
+        selection was a substring test. A wheel named for a four-component
+        version carrying METADATA for the release passed every check."""
+        self.assertEqual(
+            self.vd.wheel_filename_version("thing-0.1.3.9-py3-none-any.whl"), "0.1.3.9")
+        chosen, errors = self.vd.select_artifacts(
+            ["thing-0.1.3.9-py3-none-any.whl", "thing-0.1.3.post1-py3-none-any.whl",
+             "thing-0.1.3.tar.gz"], "thing", "0.1.3")
+        self.assertNotIn("wheel", chosen)
+        self.assertTrue(errors)
+
+    def test_two_candidate_wheels_is_a_refusal_not_a_quiet_choice(self):
+        _chosen, errors = self.vd.select_artifacts(
+            ["thing-0.1.3-py3-none-any.whl", "thing-0.1.3-1-py3-none-any.whl",
+             "thing-0.1.3.tar.gz"], "thing", "0.1.3")
+        self.assertTrue(any("which one" in e for e in errors), errors)
+
+    def test_the_release_pair_is_selected(self):
+        """The positive control for the two above."""
+        chosen, errors = self.vd.select_artifacts(
+            ["thing-0.1.3-py3-none-any.whl", "thing-0.1.3.tar.gz",
+             "other-9.9-py3-none-any.whl"], "thing", "0.1.3")
+        self.assertEqual(errors, [])
+        self.assertEqual(chosen, {"wheel": "thing-0.1.3-py3-none-any.whl",
+                                  "sdist": "thing-0.1.3.tar.gz"})
+
+    def test_a_subprocess_resolves_the_tilde_inside_the_sandbox(self):
+        """A subprocess given no HOME does not fail and does not complain: it
+        falls back to the passwd database, so every unsandboxed tool writes
+        where it always writes. Measured 2026-09-21: pip populated the real pip
+        cache in the middle of a verification run."""
+        import pwd
+        say_home = "import os;print(os.path.expanduser('~'))"
+        saved = dict(self.vd.SANDBOX)
+        self.addCleanup(self.vd.SANDBOX.update, saved)
+        self.vd.SANDBOX.clear()
+        p = self.vd.run([sys.executable, "-c", say_home], timeout=120)
+        # The bug, demonstrated: with no HOME in the environment `~` is the
+        # PASSWD entry -- the real account -- however this process was invoked.
+        self.assertEqual(p.stdout.strip(), pwd.getpwuid(os.getuid()).pw_dir)
+        sandbox = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, sandbox, True)
+        self.vd.SANDBOX.update({"HOME": sandbox,
+                                "XDG_CACHE_HOME": os.path.join(sandbox, "cache")})
+        p = self.vd.run([sys.executable, "-c",
+                         say_home + ";print(os.environ['XDG_CACHE_HOME'])"], timeout=120)
+        self.assertEqual(p.stdout.split("\n")[0], sandbox)
+        self.assertEqual(p.stdout.split("\n")[1], os.path.join(sandbox, "cache"))
+
+    def _fake_home(self):
+        fake = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, fake, True)
+        os.makedirs(os.path.join(fake, ".cache", "pip"))
+        os.makedirs(os.path.join(fake, ".local", "bin"))
+        saved = os.environ.get("HOME")
+        os.environ["HOME"] = fake
+        self.addCleanup(os.environ.__setitem__, "HOME", saved or fake)
+        return fake
+
+    def test_a_write_where_an_install_lands_is_seen(self):
+        """The failure this check exists to catch: with HOME unsandboxed, pip
+        wrote into the real pip cache while the check reported nothing touched.
+        Measured 2026-09-21."""
+        fake = self._fake_home()
+        before, present = self.vd.watched_fingerprint()
+        self.assertTrue(present, "the watched paths should have been found")
+        again, _ = self.vd.watched_fingerprint()
+        self.assertEqual(again, before)                 # the positive control
+        with open(os.path.join(fake, ".cache", "pip", "http-v2"), "w") as fh:
+            fh.write("a wheel somebody downloaded\n")
+        with open(os.path.join(fake, ".local", "bin", "planted"), "w") as fh:
+            fh.write("a console script written outside the sandbox\n")
+        after, _ = self.vd.watched_fingerprint()
+        gained = sorted(set(after) - set(before))
+        self.assertEqual(len(gained), 2, gained)
+        self.assertTrue(any("pip" in g for g in gained), gained)
+        self.assertTrue(any("bin" in g for g in gained), gained)
+
+    def test_churn_elsewhere_in_the_home_is_not_reported(self):
+        """Why the whole-home version was replaced. It went red on its first
+        independent run over sixteen files under a scratch directory another
+        process created and deleted mid-run -- nothing to do with the
+        distribution. A gate that fails for reasons unrelated to what it gates
+        gets switched off, and then it guards nothing. Measured 2026-09-21."""
+        fake = self._fake_home()
+        before, _ = self.vd.watched_fingerprint()
+        noise = os.path.join(fake, "sctest")
+        os.makedirs(noise)
+        with open(os.path.join(noise, "probe.html"), "w") as fh:
+            fh.write("another process, doing its own work\n")
+        with open(os.path.join(fake, ".bash_history"), "w") as fh:
+            fh.write("a shell wrote its history\n")
+        after, _ = self.vd.watched_fingerprint()
+        self.assertEqual(after, before)
+
+    def test_a_link_device_node_or_escaping_member_is_refused(self):
+        """A link names something that is NOT in the archive, so no content
+        check can ever see it. Reproduced 2026-09-21: a member with a leading
+        parent reference wrote outside the unpack directory, and a symlink to a
+        private key was invisible to every check."""
+        import io
+        import tarfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "hostile.tar.gz")
+        with tarfile.open(path, "w:gz") as t:
+            def add(name, body=b"", **kw):
+                info = tarfile.TarInfo(name)
+                info.size = len(body)
+                for key, value in kw.items():
+                    setattr(info, key, value)
+                t.addfile(info, io.BytesIO(body) if info.type == tarfile.REGTYPE else None)
+            add("thing-1.0/ok.py", b"x = 1\n")
+            add("thing-1.0/../ESCAPED.txt", b"written outside\n")
+            add("thing-1.0/key.pem", type=tarfile.SYMTYPE,
+                linkname="/etc/ssl/private/site.key")
+            add("/etc/passwd", b"absolute\n")
+            add("thing-1.0/null", type=tarfile.CHRTYPE, devmajor=1, devminor=3)
+        named = dict(self.vd.unsafe_entries(self.vd.archive_entries(path)))
+        self.assertEqual(sorted(named),
+                         sorted(["/etc/passwd", "thing-1.0/../ESCAPED.txt",
+                                 "thing-1.0/key.pem", "thing-1.0/null"]))
+        unscanned = []
+        self.vd.forbidden_text_hits(path, unscanned=unscanned)
+        self.assertEqual(sorted(n for n, _why in unscanned),
+                         ["thing-1.0/key.pem", "thing-1.0/null"])
+        unpack = os.path.join(d, "unpack")
+        os.makedirs(unpack)
+        with tarfile.open(path) as t:
+            with self.assertRaises(Exception):
+                t.extractall(unpack, filter="data")
+        self.assertFalse(os.path.exists(os.path.join(d, "ESCAPED.txt")))
+
+    def test_an_ordinary_archive_has_no_unsafe_member(self):
+        self.assertEqual(self.vd.unsafe_entries(
+            [("thing-1.0", "directory"), ("thing-1.0/a.py", "file")]), [])
+
+    def test_a_platform_gated_requirement_is_not_no_dependency(self):
+        """--no-index proves what this platform resolved today. It cannot prove
+        what the metadata ASKS FOR on somebody else's platform, and a project
+        whose central claim is that it has none would certify clean."""
+        gated = 'Name: t\nRequires-Dist: somepackage; sys_platform == "win32"\n'
+        self.assertEqual(self.vd.ungated_requirements(gated),
+                         ['somepackage; sys_platform == "win32"'])
+        optional = 'Name: t\nRequires-Dist: somepackage>=1; extra == "gui"\n'
+        self.assertEqual(self.vd.ungated_requirements(optional), [])
+
+    def test_a_generic_account_name_does_not_excuse_a_machine_path(self):
+        """The push guard downgrades these to a warning, and for a PUSH that is
+        the right answer. For a PUBLISH it is not: the account name is not the
+        disclosure, the segment after it is. The names below are invented and
+        assembled at run time."""
+        if self.vd.load_push_guard() is None:
+            self.skipTest("no .githooks/ beside this copy (an unpacked sdist)")
+        for root, who, rest in (("/home", "bui" + "ld", "jenkins/workspace/acme/"),
+                                ("/home", "ubu" + "ntu", "clients/acme-nda/"),
+                                ("/Users", "adm" + "in", "Documents/ClientNDA/")):
+            sample = self.account_path(root, who, rest)
+            w = self.wheel({"thing/p.py": 'P = "' + sample + '"\n'})
+            self.assertTrue(self.vd.forbidden_text_hits(w), sample)
+
+    def test_a_similar_name_does_not_satisfy_the_sdist_manifest(self):
+        """`want in name` said yes to a module called latests.py for tests/
+        and to NOTLICENSE for LICENSE, so an sdist could satisfy every line of
+        the manifest and carry none of it."""
+        missing = self.vd.missing_from_sdist(
+            ["thing-1.0/PKG-INFO", "thing-1.0/README.md", "thing-1.0/NOTLICENSE",
+             "thing-1.0/pyproject.toml", "thing-1.0/thing/latests.py",
+             "thing-1.0/verify_e2e.py"])
+        self.assertIn("tests/", missing)
+        self.assertIn("LICENSE", missing)
+
+    def test_a_licence_is_matched_by_name_not_by_suffix(self):
+        self.assertEqual(self.vd.licence_members(["thing/NOTLICENSE"]), [])
+        self.assertEqual(self.vd.licence_members(["t.dist-info/licenses/LICENSE"]),
+                         ["t.dist-info/licenses/LICENSE"])
+
+    def test_a_crash_inside_a_check_becomes_a_failed_check(self):
+        """A post-release wheel was selected by the substring match and then
+        died on a KeyError: no RESULT section, no evidence file -- the one
+        shape of failure that looks exactly like nothing having happened."""
+        import contextlib
+        import io as _io
+        saved = list(self.vd.results)
+        self.addCleanup(self.vd.results.extend, saved)
+        self.vd.results.clear()
+        def explodes():
+            raise KeyError("0.1.3.post1")
+        with contextlib.redirect_stdout(_io.StringIO()):
+            self.assertIsNone(self.vd.attempt("the exploding check", explodes))
+        self.assertEqual(len(self.vd.results), 1)
+        self.assertFalse(self.vd.results[0]["ok"])
+        self.assertIn("KeyError", self.vd.results[0]["detail"])
+        self.assertNotIn(os.path.expanduser("~"), self.vd.results[0]["detail"])
+
+    def test_the_evidence_is_written_even_when_a_check_crashed(self):
+        import contextlib
+        import io as _io
+        import json as _json
+        import types
+        saved = list(self.vd.results)
+        self.addCleanup(self.vd.results.extend, saved)
+        self.vd.results.clear()
+        with contextlib.redirect_stdout(_io.StringIO()):
+            self.vd.attempt("the exploding check", lambda: 1 / 0)
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        out = os.path.join(d, "evidence.json")
+        with contextlib.redirect_stdout(_io.StringIO()) as printed:
+            code = self.vd.finish(types.SimpleNamespace(json=out), "thing", "1.0", {})
+        self.assertEqual(code, 1)
+        self.assertIn("DISTRIBUTION NOT FIT TO PUBLISH", printed.getvalue())
+        self.assertEqual(_json.load(open(out))["passed"], 0)
+
+    def test_only_the_generated_metadata_is_judged_as_the_readme(self):
+        """The old rule mapped ANY member basenamed METADATA or PKG-INFO, at
+        any depth, onto README.md -- so allowlist entries written for the
+        README covered files nobody had reviewed."""
+        self.assertEqual(self.vd._repo_relative("t-1.0.dist-info/METADATA"), "README.md")
+        self.assertEqual(self.vd._repo_relative("t-1.0/PKG-INFO"), "README.md")
+        self.assertEqual(self.vd._repo_relative("t-1.0/t.egg-info/PKG-INFO"), "README.md")
+        self.assertEqual(self.vd._repo_relative("t-1.0/t/vendor/METADATA"),
+                         "t/vendor/METADATA")
+
+    def test_a_finding_is_reported_against_the_member_it_is_in(self):
+        sample = self.drive_path("D", "Acme", "checkout", escaped=True)
+        w = self.wheel({"thing-1.0.dist-info/METADATA": f"Name: t\nHome-page: {sample}\n"})
+        hits = self.vd.forbidden_text_hits(w)
+        self.assertTrue(hits)
+        self.assertEqual({h[0] for h in hits}, {"thing-1.0.dist-info/METADATA"})
+
+
+class TestEmptyExceptPrecision(unittest.TestCase):
+    """The shapes a swallowed exception is allowed to take, and the two it is not.
+
+    Measured 2026-09-22 against a 979-module tree: the unfiltered rule fired
+    503 times, and a 30-finding sample judged against the source read 25
+    deliberate-and-correct, 3 unclear, 2 worth acting on. One test per
+    exemption below pins the shape it silences; the last three pin the shapes
+    that must survive it, because those two real findings are the whole point
+    and a reader never reaches them through twenty-five dismissals.
+    """
+
+    def swallows(self, source):
+        """For every reported handler, the first line of the `try` it guards.
+
+        The handler lines all read `except Exception:`; the guarded line is
+        what tells one finding in a fixture from another.
+        """
+        import ast
+        from cobblerpy.abandonment import _empty_excepts
+        t = Tree({"m.py": source})
+        self.addCleanup(t.close)
+        path = os.path.join(t.dir, "m.py")
+        module = scan_file(path, t.dir)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        lines = text.splitlines()
+        guarded = {}
+        for node in ast.walk(ast.parse(text)):
+            for handler in getattr(node, "handlers", ()):
+                guarded[handler.lineno] = lines[node.body[0].lineno - 1].strip()
+        return sorted(guarded[ln] for ln in _empty_excepts(module))
+
+    def test_a_narrow_named_catch_is_a_decision_not_an_omission(self):
+        """90 of the corpus's 503. Naming the one failure you expect IS the
+        handling; `except zlib.error` while trying candidate chunks is the
+        idiom. Every narrow catch in the sample was deliberate."""
+        self.assertEqual(self.swallows('''
+            import zlib
+
+            def decode(chunks):
+                out = []
+                for chunk in chunks:
+                    try:
+                        out.append(zlib.decompress(chunk))
+                    except zlib.error:
+                        pass
+                return out
+        '''), [])
+
+    def test_a_comment_saying_why_is_the_author_answering_the_question(self):
+        """37 of 503. On the handler, the line above it, or beside the `pass`
+        -- `except (OSError, AttributeError): pass  # fsync not available on
+        all fs backends` has already told the reader everything the signal
+        would."""
+        on_the_handler = '''
+            def save(fh):
+                try:
+                    os.fsync(fh.fileno())
+                except Exception:  # fsync is not available on all fs backends
+                    pass
+        '''
+        above_the_handler = '''
+            def save(fh):
+                try:
+                    os.fsync(fh.fileno())
+                    # fsync is not available on all fs backends
+                except Exception:
+                    pass
+        '''
+        beside_the_pass = '''
+            def save(fh):
+                try:
+                    os.fsync(fh.fileno())
+                except Exception:
+                    pass  # fsync is not available on all fs backends
+        '''
+        for where, source in (("on the handler", on_the_handler),
+                              ("above the handler", above_the_handler),
+                              ("beside the pass", beside_the_pass)):
+            with self.subTest(comment=where):
+                self.assertEqual(self.swallows(source), [])
+
+    def test_an_import_in_the_guarded_block_is_an_optional_dependency(self):
+        """44 of 503. `import winreg` off Windows cannot succeed and is not
+        meant to; an optional dependency probe has no other spelling in the
+        language."""
+        self.assertEqual(self.swallows('''
+            CRYPTO_KEY = "SOFTWARE/Microsoft/Cryptography"
+
+            def machine_guid(parts):
+                try:
+                    import winreg
+                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, CRYPTO_KEY)
+                    guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+                    winreg.CloseKey(key)
+                    parts.append(guid)
+                except Exception:
+                    pass
+        '''), [])
+
+    def test_a_lone_teardown_or_log_call_is_cleanup_not_abandoned_work(self):
+        """Closing something you are done with is allowed to fail, and a
+        logger that raises must not take the program with it. Both shapes
+        recurred through the sample."""
+        self.assertEqual(self.swallows('''
+            def finish(client, proc):
+                try:
+                    client.close()
+                except Exception:
+                    pass
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                try:
+                    add_log("SCAN", "bastion closed", "info")
+                except Exception:
+                    pass
+        '''), [])
+
+    def test_a_try_already_on_a_failure_path_is_not_a_second_failure(self):
+        """A `try` inside an `except` handler or a `finally` is running
+        because something already went wrong, and must not raise again. Every
+        one in the sample was a close, a rollback, or a last-ditch
+        diagnostic."""
+        self.assertEqual(self.swallows('''
+            def commit(conn):
+                try:
+                    conn.execute("COMMIT")
+                except ValueError:
+                    try:
+                        conn.rollback()
+                        note_the_failure(conn)
+                    except Exception:
+                        pass
+
+            def shut(conn):
+                try:
+                    conn.execute("SELECT 1")
+                finally:
+                    try:
+                        conn.disconnect()
+                        flush_the_buffer(conn)
+                    except Exception:
+                        pass
+        '''), [])
+
+    def test_a_broad_uncommented_swallow_around_real_work_is_still_reported(self):
+        """The finding the signal exists for. This is the compliance snapshot
+        from the sample: a failure silently omits the encryption section and
+        the evidence ships looking complete. It must survive every exemption
+        standing beside it here."""
+        self.assertEqual(self.swallows('''
+            import zlib
+
+            def snapshot(target, snap):
+                try:
+                    raw = ssh_run(target, "esxcli system settings encryption get")
+                    enc = parse_encryption(raw)
+                    if enc:
+                        snap["encryption"] = enc
+                except Exception:
+                    pass
+                try:
+                    target.close()
+                except Exception:
+                    pass
+                try:
+                    snap["blob"] = zlib.decompress(snap["raw"])
+                except zlib.error:
+                    pass
+                return snap
+        '''), ['raw = ssh_run(target, "esxcli system settings encryption get")'])
+
+    def test_a_bare_except_around_real_work_is_still_reported(self):
+        """`except:` names nothing and comments nothing. Nothing exempts it
+        except being cleanup, and parsing a config file is not cleanup."""
+        self.assertEqual(self.swallows('''
+            def load(path, cfg):
+                try:
+                    cfg.read(path)
+                    cfg["ready"] = True
+                except:
+                    pass
+                try:
+                    cfg.close()
+                except:
+                    pass
+        '''), ["cfg.read(path)"])
+
+    def test_a_two_statement_swallow_is_still_reported(self):
+        """The refinement that must never be made.
+
+        Requiring the guarded block to hold three or more statements was
+        scored on the same 979-module tree on 2026-09-22: it takes 503 to 97,
+        and it is the only refinement family that provably drops a real
+        finding. This is that finding -- a chain-of-custody upload whose two
+        guarded statements fall back to the UNSIGNED endpoint on any
+        exception. If a size or line threshold is ever added here, this test
+        is what says no.
+        """
+        self.assertEqual(self.swallows('''
+            def fetch_evidence(signed_url, unsigned_url, out_path, cleanup):
+                try:
+                    resp = requests.post(signed_url, timeout=120)
+                    if resp.status_code == 200 and resp.content:
+                        out_path.write_bytes(resp.content)
+                        return str(out_path)
+                except Exception:
+                    pass
+                try:
+                    cleanup.close()
+                except Exception:
+                    pass
+                return fetch_unsigned(unsigned_url, out_path)
+        '''), ["resp = requests.post(signed_url, timeout=120)"])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

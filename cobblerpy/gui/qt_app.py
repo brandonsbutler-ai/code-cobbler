@@ -416,17 +416,37 @@ def build(qt, session=None):
                 f"{result.unreached} unreached", "quiet", True))
             self._add(self._spacer(20))
 
-            if result.attempts:
+            # Restarts and copies are two different findings and get two
+            # headings. A backup folder listed under "the same job, started
+            # over" tells the reader something that did not happen.
+            from ..attempts import copies, copy_sentence, restarts
+            restarted = restarts(result.attempts)
+            copied = copies(result.attempts)
+            if restarted:
                 self._add(self._label("THE SAME JOB, STARTED OVER", "cap"))
                 self._add(self._spacer(9))
-                for group in result.attempts[:6]:
+                for group in restarted[:6]:
                     self._add(self._attempt_panel(group))
                     self._add(self._spacer(12))
-                if len(result.attempts) > 6:
+                if len(restarted) > 6:
                     self._add(self._label(
-                        f"and {len(result.attempts) - 6} more groups, in the map",
+                        f"and {len(restarted) - 6} more groups, in the map",
                         "quiet"))
                     self._add(self._spacer(12))
+
+            if copied:
+                self._add(self._label(
+                    f"THE SAME FILE, IN MORE THAN ONE PLACE ({len(copied)})",
+                    "cap"))
+                self._add(self._spacer(9))
+                for group in copied[:4]:
+                    self._add(self._label(group["resume_relpath"], "fact", True))
+                    self._add(self._label(copy_sentence(group), "quiet", True))
+                    self._add(self._spacer(8))
+                if len(copied) > 4:
+                    self._add(self._label(
+                        f"and {len(copied) - 4} more, in the map", "quiet"))
+                self._add(self._spacer(12))
 
             if result.frontier:
                 self._add(self._spacer(8))
@@ -449,6 +469,17 @@ def build(qt, session=None):
             lay.addWidget(self._label(
                 f"{len(group['attempts'])} attempts   ·   sharing "
                 + ", ".join(group["shared"][:5]), "quiet", True))
+            # The panels are listed in ranking order, so each one has to say
+            # what put it there, in the parts a reader can argue with. The
+            # effort to finish sits beside it and is not part of the ranking.
+            from ..attempts import effort_sentence, stake_sentence
+            lay.addWidget(self._label(stake_sentence(group), "fact", True))
+            # Dropped, not softened, when there is nothing unwritten: it used
+            # to read "nothing left unwritten by this measure", which on a
+            # finished tree was 12 panels of 22 saying the same non-finding.
+            effort = effort_sentence(group)
+            if effort:
+                lay.addWidget(self._label(effort, "quiet", True))
 
             # The wall first. When every attempt stopped at the same place,
             # that is the finding -- not which one got furthest. A reader who
@@ -546,7 +577,12 @@ def build(qt, session=None):
         def _open_map(self):
             result = self.session.result
             if result and result.map_path and os.path.exists(result.map_path):
-                webbrowser.open("file://" + os.path.abspath(result.map_path))
+                # Through the launcher's URL builder, not by concatenation: a
+                # project path holding `#`, `?`, `%` or a space produced a URL
+                # that opened nothing, and on Windows the drive letter was
+                # read as a hostname. Measured 2026-09-22.
+                from ..launch import _file_url
+                webbrowser.open(_file_url(result.map_path))
 
         def _say(self, text, colour=MUTED):
             self.status.setText(text)

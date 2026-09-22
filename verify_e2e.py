@@ -184,7 +184,7 @@ KNOWN = {
             # TODO: wire up the retry path
             try:
                 return os.getcwd()
-            except OSError:
+            except Exception:
                 pass
 
 
@@ -964,15 +964,61 @@ def verify_documentation():
     check("the pyproject Homepage is the repository the README links to",
           bool(_linked) and _linked == {_home},
           f"Homepage {_home}, README links {sorted(_linked)}")
-    # cobblerpy is not on PyPI, so `pip install cobblerpy[gui]` fails for
-    # anybody who types it. Every install of THIS package must name a place
-    # it can be installed from: the checkout, or the repository.
+    # Every `pip install` and `pipx install` the README shows must name
+    # something a reader can actually get: a path or a URL, or a distribution
+    # this project publishes, spelled as an index will hold it and with only
+    # the extras this project declares.
+    #
+    # This check used to assert something narrower -- that cobblerpy was on no
+    # index at all, so any `pip install cobblerpy` was a lie and the README had
+    # to send people to the checkout or the repository instead. That was true
+    # until 0.1.3 was packaged for PyPI, and a check that encodes a fact about
+    # the world has to move when the world does. What survives the premise is
+    # the failure underneath it: a README that sends somebody to a name nobody
+    # publishes. `pip install cobblerpie` fails here, and so does an extra that
+    # does not exist, whichever side of the upload this runs on.
+    #
+    # A bare index install of our own name also requires the README to say
+    # WHICH version is on the index, so "install it from PyPI" cannot stand on
+    # its own with no statement of what that gets you.
+    import shlex as _shlex
+    # Distributions other than ours that the README tells a reader to install.
+    # Named here, so another one cannot arrive without somebody deciding to put
+    # it in front of a reader.
+    _third_party = {"pyinstaller"}
+    def _norm(_n):                      # PEP 503, so cobblerpy_gui == cobblerpy-gui
+        return re.sub(r"[-_.]+", "-", _n).strip().lower()
+    _dist = _norm(_cfg["project"]["name"])
+    _declared_extras = set(_cfg["project"].get("optional-dependencies") or {})
+    _known = {_dist} | {_norm(x) for x in _third_party}
     with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as _fh:
-        _installs = re.findall(r"pip install\s+([^\n`#]+)", _fh.read())
-    _nowhere = [a for a in _installs
-                if re.match(r"[\"']?cobblerpy\b", a) and "@" not in a]
-    check("no install instruction sends people to a package index it is not on",
-          not _nowhere, _nowhere)
+        _readme_text = _fh.read()
+    _bad, _bare_ours = [], False
+    for _args in re.findall(r"\bpipx? install\s+([^\n`#]+)", _readme_text):
+        for _tok in _shlex.split(_args):
+            if _tok.startswith("-"):                 # a flag, not a target
+                continue
+            _head = re.split(r"[\s@]", _tok, 1)[0]    # before any ` @ url` part
+            _extras = re.findall(r"\[([^\]]+)\]", _head)
+            _base = re.split(r"[=<>!~;]", _head.split("[")[0])[0].strip()
+            _is_path = (_base in ("", ".", "..") or "://" in _base
+                        or _base.startswith((".", "/", "git+", "\\")))
+            _ours = _is_path                          # a path install is ours
+            if not _is_path:
+                if _norm(_base) not in _known:
+                    _bad.append(f"{_tok}: no distribution of this project is "
+                                f"called {_base!r}")
+                _ours = _norm(_base) == _dist
+                if _ours and "@" not in _tok:
+                    _bare_ours = True
+            if _ours:
+                _bad += [f"{_tok}: [{e}] is not an extra this project declares"
+                         for e in _extras if e not in _declared_extras]
+    if _bare_ours and __version__ not in _readme_text:
+        _bad.append(f"the README installs {_dist} from an index without saying "
+                    f"anywhere which version that gets you ({__version__})")
+    check("every install instruction in the README names something this "
+          "project publishes", not _bad, _bad)
     _tags = subprocess.run(["git", "-C", ROOT, "tag", "--list", "v*"],
                            capture_output=True, text=True).stdout.split()
     _released = max((tuple(int(x) for x in t[1:].split(".")) for t in _tags

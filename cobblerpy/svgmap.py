@@ -15,6 +15,7 @@ from collections import Counter
 import html
 import json
 
+from .attempts import copy_sentence, effort_sentence, stake_sentence
 from .layout import BAR_H, NODE_H, NODE_W, state_of
 
 def state_for(node, name, project, deadends_by_module):
@@ -331,7 +332,11 @@ def render(graph, project, frontier_by_module, snippets_by_module,
     for group in attempts:
         winner = group.get("resume_at")
         for attempt in group.get("attempts", []):
-            if attempt["module"] != winner:
+            # First group wins, for the same reason the verdict does: a file
+            # that is both a superseded restart and the original of a backup
+            # copy carries on in the attempt that got further, not in its
+            # own backup.
+            if attempt["module"] != winner and attempt["module"] not in continues_from:
                 continues_from[attempt["module"]] = {
                     "to": winner, "relpath": group.get("resume_relpath", ""),
                     "shared": list(group.get("shared", []))[:4]}
@@ -506,15 +511,48 @@ def render(graph, project, frontier_by_module, snippets_by_module,
     verdicts = {}
     for group in attempts:
         winner = group.get("resume_at")
+        # A group of copies must not open a panel saying "another attempt got
+        # further" -- there was no other attempt. Both cards say what the group
+        # is, in the same words the summary and the report use.
+        is_copy = group.get("verdict") == "copy"
         for attempt in group.get("attempts", []):
             key = attempt["module"]
-            if key == winner:
+            # One module can now appear in two groups: a live file that both
+            # is an attempt at a real restart and has a copy of itself kept
+            # under `backups/`. Restarts are first in this list, and the first
+            # verdict written keeps the card -- "another attempt got further"
+            # is the finding the reader acts on, and "there is a copy of this
+            # under backups/" is the one they can see in the file tree. The
+            # copy still has its own card, and both still have their row in
+            # the summary under its own heading.
+            if key in verdicts:
+                continue
+            if is_copy:
+                verdicts[key] = {
+                    "kind": "copy",
+                    "headline": "the same file, in more than one place",
+                    "detail": (copy_sentence(group) if key == winner else
+                               f"one of {len(group['attempts'])} copies of "
+                               f"{group.get('resume_relpath', '')}, which "
+                               f"defines the same things"),
+                    "shared": group.get("shared", [])[:6],
+                    "facts": attempt.get("facts", []),
+                    "other": group.get("resume_relpath", ""),
+                    "otherModule": winner,
+                }
+            elif key == winner:
+                # The card that says "resume here" carries the same components
+                # the summary ranks on, so a reader who opens the map instead
+                # of the report is not handed a different account of the group.
+                effort = effort_sentence(group)
                 verdicts[key] = {
                     "kind": "resume",
                     "headline": "this is where it goes",
                     "detail": (f"furthest along of {len(group['attempts'])} "
                                f"attempts at this job -- "
-                               f"{attempt['percent']}% of what it started"),
+                               f"{attempt['percent']}% of what it started; "
+                               f"{stake_sentence(group)}"
+                               + (f"; {effort}" if effort else "")),
                     "shared": group.get("shared", [])[:6],
                     "facts": attempt.get("facts", []),
                     "other": group.get("resume_relpath", ""),

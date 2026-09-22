@@ -33,12 +33,15 @@ def _m_target():
     """The module `python -m` was asked to run, or None.
 
     sys.argv is ["-m", *rest] while ANY -m program is being located, so it
-    cannot say which; sys.orig_argv can, from 3.10. Parsing the options
+    cannot say which; sys.orig_argv can, from 3.10, so it is present on every
+    interpreter this package supports (the floor is 3.11). Parsing the options
     missed combined flags (-Bm) and options that take a value, so the target
     is found by position instead: it is the element just before `rest`
     (checked on 3.12 for -m, -Bm, -Om, -mNAME, -W/-X values and
     --check-hash-based-pycs). Written joined, as -mNAME or -BmNAME, it is
-    the text after the m. On 3.9 this answers None and the guard stands down.
+    the text after the m. The getattr below stays anyway: an embedded or
+    re-entrant interpreter can leave orig_argv absent, and answering None
+    there stands the guard down rather than raising.
     """
     orig = getattr(sys, "orig_argv", None)
     if not orig or len(orig) <= len(sys.argv):

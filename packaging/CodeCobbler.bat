@@ -28,7 +28,7 @@ set "PY="
 where py >nul 2>nul && set "PY=py"
 if not defined PY where python >nul 2>nul && set "PY=python"
 if not defined PY (
-  echo CodeCobbler needs Python 3.9 or newer on this machine.
+  echo CodeCobbler needs Python 3.11 or newer on this machine.
   echo Install it from python.org or the Microsoft Store, then run this again.
   pause
   exit /b 1

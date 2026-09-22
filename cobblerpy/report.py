@@ -21,6 +21,8 @@ import os
 from . import BRAND, __version__
 from . import snippets as snip
 from . import svgmap
+from .attempts import (EFFORT_SCOPE, copy_sentence, effort_sentence,
+                       stake_sentence)
 from .deadends import by_module as deadends_by_module, find as find_deadends
 from .layout import compute as compute_layout
 
@@ -288,6 +290,10 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 .verdict.resume b{color:var(--ok)}
 .verdict.superseded{background:var(--sunk)}
 .verdict.superseded b{color:var(--mut)}
+/* A copy is not an attempt at one job, so it gets neither the green of "carry
+   on here" nor the grey of "somebody else got further". */
+.verdict.copy{background:var(--sunk);border-style:dashed}
+.verdict.copy b{color:var(--mut)}
 .verdict.deadend{background:rgba(255,110,199,.08);border-color:#ff6ec7}
 .verdict.deadend b{color:#ff6ec7}
 .attempt{margin-bottom:18px}
@@ -305,6 +311,7 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.
 .added{color:var(--accent)}
 .dropped{color:var(--mut)}
 .attempt-head{margin-bottom:7px}
+.stake{margin:0 0 9px;font-size:12.5px}
 tr.lead td{background:color-mix(in srgb,var(--ok) 9%,transparent)}
 .tag.ok{background:var(--ok);color:#fff;border-color:transparent}
 .cont{padding:5px 0;border-bottom:1px dotted var(--line)}
@@ -1139,9 +1146,11 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
     # rewriting a fifth. The percentage is a proportion of what that file
     # itself started, not of an imagined finished feature, and the facts that
     # produced it are printed beside it so the reader can disagree.
-    if attempts:
+    from .attempts import copies as _copies, restarts as _restarts
+    _restarted, _copied = _restarts(attempts), _copies(attempts)
+    if _restarted:
         blocks = []
-        for group in attempts[:8]:
+        for group in _restarted[:8]:
             rows = []
             for a in group["attempts"]:
                 lead = a["module"] == group["resume_at"]
@@ -1199,21 +1208,65 @@ def write_map(project, frontier, history, path, title=None, summary_totals=None,
                         f'<div class="stepbody">{detail}</div></div>')
                 lineage = ('<div class="lineage"><div class="lincap">HOW IT GREW'
                            '</div>' + "".join(rows_) + "</div>")
+            # What resuming this group hands back, in its parts. The groups
+            # are ordered by it, so the order is only defensible if the
+            # numbers behind it are on the row -- a reader who disagrees with
+            # the ranking can see which of the three inputs they disagree
+            # with. The effort to finish rides along beside it and is NOT part
+            # of the ordering, so a small nearly-done group still reads as a
+            # quick win from where it sorts.
+            # The effort line is dropped, not softened, when there is nothing
+            # unwritten. It used to read "nothing left unwritten by this
+            # measure", which on a finished tree was 12 rows out of 22 saying
+            # the same non-finding.
+            _effort = effort_sentence(group)
+            stake = (f'<div class="stake"><b>{_e(stake_sentence(group))}</b>'
+                     + (f'<span class="ln"> &middot; {_e(_effort)}</span>'
+                        if _effort else "")
+                     + '</div>')
             blocks.append(
                 f'<div class="attempt"><div class="attempt-head">'
                 f'<b>{len(group["attempts"])} attempts at one job</b>'
                 f'<span class="ln"> &middot; sharing '
                 f'{_e(", ".join(group["shared"][:6]))}</span></div>'
-                f"{wall}{lineage}"
+                f"{stake}{wall}{lineage}"
                 f'<div class="tablewrap"><table><tbody>{"".join(rows)}</tbody>'
                 f"</table></div>{extra}</div>")
-        attempts_html = "".join(blocks)
-        if len(attempts) > 8:
-            attempts_html += (f'<p class="lede">{len(attempts) - 8} more groups '
-                              f"not shown.</p>")
+        attempts_html = (
+            '<p class="lede">Ordered by the work at stake -- the lines in the '
+            'furthest attempt, taken down by how much of it is written and by '
+            'how much of it a sibling attempt already holds. How many times '
+            f'the job was restarted only breaks ties. {_e(EFFORT_SCOPE)}.</p>'
+            + "".join(blocks))
+        if len(_restarted) > 8:
+            attempts_html += (f'<p class="lede">{len(_restarted) - 8} more '
+                              f"groups not shown.</p>")
     else:
         attempts_html = ('<p class="empty">No two modules define enough of the '
                          'same things to look like restarts of one job.</p>')
+
+    # Copies under their own heading, never in the ranked list above. A reader
+    # told "somebody restarted this four times" about a backup folder has been
+    # told something false -- and on a working tree this is the bigger of the
+    # two lists: 13 of 22 groups on the tree it was measured against.
+    if _copied:
+        _rows = "".join(
+            f'<div class="attempt"><div class="attempt-head">'
+            f'<b>{_e(g["resume_relpath"])}</b><span class="ln"> &middot; '
+            f'and {len(g["attempts"]) - 1} other'
+            f'{"s" if len(g["attempts"]) > 2 else ""}</span></div>'
+            f'<div class="stake"><b>{_e(copy_sentence(g))}</b></div></div>'
+            for g in _copied[:8])
+        attempts_html += (
+            '<h4>the same file, in more than one place</h4>'
+            f'<p class="lede">{len(_copied)} group'
+            f'{"s" if len(_copied) != 1 else ""} where the file named defines '
+            'nothing a sibling does not already define. These are copies -- a '
+            'backup folder, a re-dated variant, a generated twin -- not work '
+            'somebody started over and left, so they are kept out of the '
+            'ranking above.</p>' + _rows
+            + (f'<p class="lede">{len(_copied) - 8} more not shown.</p>'
+               if len(_copied) > 8 else ""))
 
     # -- where the effort went instead
     #

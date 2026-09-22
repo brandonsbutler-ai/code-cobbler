@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 import webbrowser
 
 from . import __version__, survey
@@ -40,19 +41,23 @@ opens the shelf when it is given nothing, because it is double-clicked."""
 # they describe, which is right and also leaves them scattered -- seven files
 # named cobblerpy_map_*.html in one directory, no way to tell which was current.
 #
-# W:\ is the shelf's home because it is the one path visible from both Linux
-# and Windows on this machine, so one bookmark works from either side.
-# This machine dual-boots, and the projects live on an NTFS partition that is
-# a mount point under Linux and a drive letter under Windows -- the SAME disk.
-# The shelf and its register go there so both sides list the same maps. Under ~
-# each OS would keep its own and neither would see the other's; a hardcoded
-# /media/... path does not exist under Windows at all.
-# NOT a hardcoded path. An earlier draft of this listed one developer's mount
-# point, username and all, in a repository that is public -- the same leak that
-# had to be scrubbed out of a sibling project's history. The shared volume is
-# named by the environment; the installer writes it into the launcher shim,
-# where a machine-specific value belongs.
-SHARED = tuple(p for p in (os.environ.get("CODECOBBLER_HOME"), "W:\\", "W:/") if p)
+# WHERE THE SHELF LIVES
+#
+# `CODECOBBLER_HOME` and nothing else, then the fallback under the home
+# directory. The variable is what the installer asks about and what the README
+# documents, and until 2026-09-22 it was not the only answer: a drive letter
+# was tried after it and BEFORE the fallback, under a comment insisting it was
+# not a hardcoded path. It was. On Windows a mapped drive on that letter is
+# usually a corporate network share, so a machine that happened to have one
+# silently wrote somebody's shelf and register onto it -- and nothing in the
+# output said where they had gone.
+#
+# The case it was there for is real: a machine that dual-boots, with the
+# projects on one partition that is a mount point under one system and a drive
+# letter under the other, wants ONE shelf that both sides list. That is what
+# the variable is for. A machine-specific value belongs in the launcher shim
+# the installer writes, not in a package anybody can install.
+SHARED = tuple(p for p in (os.environ.get("CODECOBBLER_HOME"),) if p)
 FALLBACK = os.path.expanduser("~/.local/share/codecobbler")
 
 
@@ -74,6 +79,44 @@ def registry_path(candidates=SHARED):
     root = shared_root(candidates)
     return (os.path.join(root, "CodeCobbler.maps.json") if root
             else os.path.join(FALLBACK, "maps.json"))
+
+
+def _file_url(path):
+    """A `file://` URL for a path on disk, built by the standard library.
+
+    Pasting the scheme onto the front of a path, which is what this did until
+    2026-09-22, is wrong in two ways that both turn up in ordinary use. On
+    Windows
+    `file://C:\\Work\\x.html` parses with the whole path as the HOSTNAME and
+    an empty path, so every `cobble` run on that platform left a dead link on
+    the shelf and opened nothing. On Linux a project path holding `#`, `?` or
+    `%` broke the same way -- everything from the `#` on became a fragment --
+    and a space went through unencoded. `Path.as_uri` percent-encodes all of
+    it and writes the `file:///C:/...` form Windows actually reads.
+
+    It needs an absolute path, and a register row written by an older version
+    can hold anything, so a path it refuses is handed back as it came: a row
+    that cannot be linked is better than a shelf that will not render.
+    """
+    try:
+        return Path(os.path.abspath(path)).as_uri()
+    except (ValueError, OSError):
+        return path
+
+
+def shelf_note(path):
+    """Where the shelf went, when that is not where it always goes.
+
+    Said because a shelf that moves without a word is a shelf nobody can find
+    again: `CODECOBBLER_HOME` puts it on another volume, and before
+    2026-09-22 a mapped drive letter could put it on a network share with
+    nothing printed either way. Empty for the default location, because a
+    sentence printed on every run separates nothing.
+    """
+    default = os.path.abspath(os.path.expanduser(FALLBACK))
+    if os.path.dirname(os.path.abspath(path)) == default:
+        return ""
+    return f"the shelf is at {path}"
 
 
 def record_map(registry, project, map_path, modules, folder=None):
@@ -173,7 +216,7 @@ def write_shelf(registry, path=None):
         body = "".join(
             '<a class="row" href="{href}" title="{f}"><span class="p">{p}</span>'
             '<span class="m">{m} modules</span><span class="w">{w}</span></a>'.format(
-                href=html.escape("file://" + str(r.get("map", "")), quote=True),
+                href=html.escape(_file_url(str(r.get("map", ""))), quote=True),
                 f=html.escape(str(r.get("folder", "")), quote=True),
                 p=html.escape(str(r.get("project", "?"))),
                 m=html.escape(str(r.get("modules", "?"))),
@@ -261,6 +304,35 @@ def project_for(path):
     return folder
 
 
+def unwritable(path):
+    """Why `path` cannot be written as an output file, or None if it can.
+
+    Checked BEFORE anything is read. Found 2026-09-22 by installing the built
+    wheel into a clean virtual environment: a mistyped --map, --json,
+    --mermaid or --drawio came back as a FileNotFoundError, PermissionError
+    or IsADirectoryError traceback out of the `open` call, AFTER the whole
+    survey had run -- so the survey was thrown away too, and the person was
+    handed a stack trace instead of the one thing they needed, which is which
+    flag they mistyped. `cobble` did the same on a read-only parent, and from
+    a desktop icon that is not even visible.
+
+    The reasons are the four that actually happen, in the order they have to
+    be asked: a folder given where a file was meant answers `os.path.isdir`
+    and nothing else, and a path that does not exist yet has to be judged by
+    the folder that would hold it.
+    """
+    folder = os.path.dirname(os.path.abspath(path))
+    if os.path.isdir(path):
+        return "it is a folder"
+    if not os.path.isdir(folder):
+        return "its folder does not exist"
+    if os.path.exists(path) and not os.access(path, os.W_OK):
+        return "the file is not writable"
+    if not os.path.exists(path) and not os.access(folder, os.W_OK):
+        return "its folder is not writable"
+    return None
+
+
 def map_destination(folder, stamp=None):
     """Where the map goes: beside the project, never inside it.
 
@@ -313,8 +385,12 @@ def main(argv=None, notify=None, open_url=None, registry=None, shelf=None):
     # a bare `cobble` in a terminal still means "here".
     if "--shelf" in argv and not paths:
         written = write_shelf(registry, shelf)
-        if not open_url("file://" + written):
+        if not open_url(_file_url(written)):
             notify(f"No browser to open it with; the shelf is at {written}")
+        elif shelf_note(written):
+            # Opened, and still said: the person who moved it with
+            # CODECOBBLER_HOME is the one who needs to be able to find it.
+            notify(shelf_note(written))
         return 0
 
     if not paths:
@@ -340,12 +416,22 @@ def main(argv=None, notify=None, open_url=None, registry=None, shelf=None):
         # refusing it would be pedantry.
         target = project_for(target)
 
+    # The map goes BESIDE the project, so the project's PARENT is where it
+    # lands -- a read-only mounted share is the ordinary way to meet this.
+    # Asked before the survey, for the reason `unwritable` gives: the work
+    # used to be done in full and then thrown away with a traceback.
+    destination = map_destination(target)
+    why = unwritable(destination)
+    if why:
+        notify(f"the map goes beside the project, at {destination}, and "
+               f"cannot write here ({why}). Nothing was surveyed.")
+        return 2
+
     surveyed = survey(target)
     if not surveyed.project.modules:
         notify(f"no Python found under {target}")
         return 1
 
-    destination = map_destination(target)
     write_map(surveyed.project, surveyed.frontier, surveyed.history,
               destination, origins=surveyed.origins,
               modules_by_key=surveyed.modules_by_key)
@@ -365,11 +451,15 @@ def main(argv=None, notify=None, open_url=None, registry=None, shelf=None):
     # container -- and announcing "opening the map" before checking left
     # somebody told it worked with no path to the file that was written.
     mapped = f"{count:,} module{'s' if count != 1 else ''} mapped"
-    if open_url("file://" + destination):
-        notify(f"{mapped} -- opening the map")
+    # Where the shelf went rides along with the count, and only when it is not
+    # where it always is. A shelf that moved silently is a shelf nobody finds.
+    where = shelf_note(shelf)
+    tail = f" ({where})" if where else ""
+    if open_url(_file_url(destination)):
+        notify(f"{mapped} -- opening the map{tail}")
     else:
         notify(f"{mapped}. No browser to open it with; the map is at "
-               f"{destination}")
+               f"{destination}{tail}")
     return 0
 
 

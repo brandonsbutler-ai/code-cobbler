@@ -188,8 +188,33 @@ def _unused_imports(module):
 
 
 def _empty_excepts(module):
-    """`except: pass` -- an error someone decided not to deal with yet."""
+    """`except: pass` -- an error someone decided not to deal with yet.
+
+    Swallowing an exception is sometimes exactly right, and the shapes where
+    it is right are legible in the syntax. Measured 2026-09-22 against a
+    979-module tree: the unfiltered rule fired 503 times, and a 30-finding
+    random sample judged against the source read 25 deliberate-and-correct,
+    3 unclear, 2 worth acting on. Reported raw, this signal costs a reader
+    twenty-five dismissals to reach one thing -- and the two worth reaching
+    were a compliance snapshot that silently omits its encryption section and
+    an upload that falls back to the UNSIGNED endpoint on any exception.
+
+    The five exemptions below are the shapes that produced those dismissals,
+    each with its count in the 503: a narrow named catch (90), a comment
+    saying why (37), an import in the guarded block (44), a lone teardown or
+    log call, and a `try` already on a failure path. They take the corpus to
+    239 and drop neither of the two findings worth acting on.
+
+    What is NOT exempted is the case the signal exists for: a broad or bare
+    catch, uncommented, wrapping real work, on a path that is not itself
+    cleanup. A SIZE threshold would be the obvious sixth rule and it is the
+    one family that must not be added: requiring three or more statements in
+    the guarded block takes the same corpus 503 -> 97 and provably drops the
+    two-statement block that downgrades a signed artifact.
+    """
     import ast
+    import io
+    import tokenize
     if module.error or not module.source:
         return []
     out = []
@@ -199,13 +224,109 @@ def _empty_excepts(module):
             tree = ast.parse(module.source)
     except SyntaxError:
         return []
+
+    # A half-line saying why is the author telling the reader this was
+    # decided, not deferred. Take them at their word.
+    comments = {}
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(module.source).readline):
+            if tok.type == tokenize.COMMENT:
+                comments[tok.start[0]] = tok.string
+    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+        comments = {}
+
+    parent = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+
+    # A try/except that sits INSIDE an except handler or a finally block is on
+    # a path that is already handling a failure, and a path that is already
+    # handling a failure must not raise a second one. Every one of these in
+    # the sample was a close(), a rollback, or a last-ditch diagnostic.
+    in_cleanup = set()
+    for node in ast.walk(tree):
+        bodies = []
+        if isinstance(node, ast.ExceptHandler):
+            bodies = [node.body]
+        elif isinstance(node, ast.Try) or type(node).__name__ == "TryStar":
+            bodies = [node.finalbody]
+        for body in bodies:
+            for stmt in body:
+                for inner in ast.walk(stmt):
+                    in_cleanup.add(id(inner))
+
     for node in ast.walk(tree):
         if not isinstance(node, ast.ExceptHandler):
             continue
-        body = [n for n in node.body if not isinstance(n, ast.Pass)]
-        if not body:
-            out.append(node.lineno)
+        if [n for n in node.body if not isinstance(n, ast.Pass)]:
+            continue
+
+        # 1. A NAMED, narrow catch is a decision about one failure, not a
+        #    blanket. `except zlib.error: pass` while trying candidate chunks
+        #    is the idiom, not an omission. 90 of the corpus's 503; every one
+        #    of the four in the sample was deliberate.
+        if not _catches_broadly(node.type):
+            continue
+
+        # 2. The author wrote down why, on the handler, the line above it, or
+        #    beside the `pass`. 37 of 503.
+        if any(ln in comments for ln in (node.lineno - 1, node.lineno,
+                                         node.body[0].lineno)):
+            continue
+
+        guarded = getattr(parent.get(node), "body", ())
+
+        # 3. An import inside the guarded block: an optional dependency or a
+        #    platform probe (`import winreg` off Windows, which cannot
+        #    succeed and is not meant to). 44 of 503, and the pattern the
+        #    language has no other spelling for.
+        if any(isinstance(n, (ast.Import, ast.ImportFrom))
+               for stmt in guarded for n in ast.walk(stmt)):
+            continue
+
+        # 4. The guarded block is one call, and the call is a teardown or a
+        #    log. `try: client.close() except Exception: pass` is what closing
+        #    something you are done with looks like, and a logger that raises
+        #    must not take the program with it.
+        if (len(guarded) == 1 and isinstance(guarded[0], ast.Expr)
+                and isinstance(guarded[0].value, ast.Call)):
+            func = guarded[0].value.func
+            name = getattr(func, "attr", None) or getattr(func, "id", "")
+            if name in _BEST_EFFORT_CALLS or name in _LOGGING_CALLS:
+                continue
+
+        # 5. Already on a failure path (see in_cleanup above).
+        if id(parent.get(node)) in in_cleanup:
+            continue
+
+        out.append(node.lineno)
     return out
+
+
+def _catches_broadly(node_type):
+    """Broad enough to hide anything: bare `except:`, or one of the two roots."""
+    import ast
+    if node_type is None:
+        return True
+    parts = node_type.elts if isinstance(node_type, ast.Tuple) else [node_type]
+    for part in parts:
+        name = (part.attr if isinstance(part, ast.Attribute)
+                else getattr(part, "id", ""))
+        if name in ("Exception", "BaseException"):
+            return True
+    return False
+
+
+# Names that say the call is best-effort by nature. Closing, killing and
+# deleting are things you do when you are already done with the object, and
+# the value of the signal is in the work that was NOT done -- not in whether
+# a teardown that was going to be discarded anyway succeeded.
+_BEST_EFFORT_CALLS = {"close", "terminate", "kill", "quit", "shutdown", "unlink",
+                      "remove", "rmtree", "disconnect", "flush", "fsync", "stop",
+                      "cancel", "release", "join", "delete", "logout", "abort"}
+_LOGGING_CALLS = {"print", "log", "add_log", "warn", "warning", "debug", "info",
+                  "error", "exception", "critical", "emit", "write"}
 
 
 # An empty body under these is a DECLARATION, not a gap: typed libraries write
