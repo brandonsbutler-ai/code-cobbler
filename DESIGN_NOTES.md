@@ -416,3 +416,207 @@ read four authors as four qualities of work. Signals must be structural.
 
 Motive still stays out. "Why did they stop" is not recoverable and a guess at it would undermine
 the one thing the brief actually asks for, which is grounds for trusting the rest.
+
+## Which restart group is worth the afternoon (2026-09-21)
+
+The salvage list ranks by lines, which is the right answer to "where do I spend an afternoon".
+It did not answer "which of these is worth the afternoon", and neither did the restart groups:
+they were sorted by `-len(attempts)`, so five half-finished stabs at a 40-line helper outranked
+two serious stabs at a 1,200-line subsystem. A restart count says how often somebody gave up.
+It says nothing about how much code is sitting in the group.
+
+What a reader does with a group is open its furthest-along attempt and carry on, so the group is
+worth what that one file hands back:
+
+    at stake = lines(resume_at) x (resume_percent / 100) x (1 - already elsewhere)
+
+`already elsewhere` is the share of the resume module's own specific definition names -- the same
+set the matching uses -- that at least one OTHER attempt in the group also defines. Scoped to the
+group, because the question is what is lost by leaving this group alone. It is not the `elsewhere`
+map on the group, which points the other way: that lists what the siblings hold and the resume
+module does not.
+
+Whether the sibling's copy of a definition has a real body is deliberately not asked. Measured on
+a 979-module, 362k-line tree with 22 restart groups: requiring a filled body changed nothing in
+the top five, and only lifted four whole-file backup copies off zero. It buys no ordering anyone
+would act on and costs the one sentence a reader can check against the files.
+
+Measured on that tree, old order against new:
+
+| | resume module | lines | complete | elsewhere | attempts | at stake |
+|---|---|---|---|---|---|---|
+| old 1 | a deploy script | 867 | 90% | 13% | 7 | ~679 |
+| old 2 | a combined e2e script | 108 | 70% | 100% | 5 | ~0 |
+| old 3 | a PDF builder | 353 | 90% | 100% | 5 | ~0 |
+| old 4 | a backup copy of a matrix module | 2,767 | 100% | 100% | 4 | ~0 |
+| old 5 | a backup copy of a scanner | 2,261 | 100% | 100% | 4 | ~0 |
+| new 1 | a license server | 1,375 | 100% | 12% | 2 | ~1,215 |
+| new 2 | a deploy script | 867 | 90% | 13% | 7 | ~679 |
+| new 3 | an e2e walkthrough | 1,599 | 90% | 53% | 4 | ~677 |
+| new 4 | an archived e2e run | 564 | 90% | 22% | 2 | ~395 |
+| new 5 | a 3-phase validation run | 453 | 90% | 29% | 4 | ~291 |
+
+Four of the old top five return nothing. Every definition of the file the tool names in them also
+sits in a sibling attempt: two are modules copied into a `backups/` folder, one is five re-dated
+copies of a single PDF builder, one a family of re-dated variants of one script. The group with the most work in it -- a 1,375-line
+license server that two people wrote twice -- came 21st of 22 under the old order, because it had
+only been restarted once.
+
+Thirteen of the 22 groups on that tree score zero for the same reason. That is a finding in its
+own right and the ranking now shows it: most of what "the same job, started over" detects on a
+working tree is somebody's backup copy, not a restart.
+
+The ranking prints its three inputs on every row and never a bare score, and the lines left to
+finish ride beside them without being part of the order, so a small nearly-done group still reads
+as a quick win from wherever it sorts.
+
+## A copy is not a restart (2026-09-22)
+
+Sorting those thirteen groups to the bottom was not enough. They were still in a list headed "the
+same job, started over", and a reader told that about a `backups/` folder has been told something
+that did not happen. A wrong verdict is not fixed by ranking it low.
+
+**Where the cut sits, from the distribution.** Across the 22 groups, the share of the named
+module's definitions that a sibling attempt also holds:
+
+    12  13  22  29  50  53  60  60  80   ·   100 ×13
+
+Nothing between 80 and 100. The cut goes in the gap, which puts it at *everything*, and the same
+place the conservative rule would have put it. It is stated as **the two files defining the same
+set**, not as a share of what all the siblings hold together, for two reasons. The verdict prints
+as "every definition in it is also in *one named file*", so the reader has one file to open rather
+than four. And one-way containment over-fires: it called a 401-line report builder a copy of a
+365-line one that had the same three-name scaffold plus two tables besides -- read side by side
+they are 45% the same text and two different documents.
+
+**The filename signal was measured and did not do the work.** The same basename in another
+directory fired on 5 of the 22 groups where the definitions fired on 13. A backup/archive
+directory *on its own* was worse than useless: it fired on an archived script sharing only 22% of
+its definitions with its sibling -- a real, distinct earlier attempt. So the two are used as a
+conjunction, same file name *and* one of them under a directory whose name is a generic word for
+kept-aside work. On that tree it added exactly one group the definitions missed -- a live module
+whose copy under `backups/` is one class behind -- and fired on none of the nine real restarts.
+The word list is generic English (`backup`, `archive`, `old`, `legacy`, …) and never a particular
+tree's folder names; a rule built from those would be right about one repository.
+
+**Checked against the files, not the rule.** Every pair called a copy was then read by how much of
+the two texts is the same: ten are byte-identical, eleven of twelve are 99.9% or more, and the
+least alike is 72% -- three enrichment scripts, one per database. The nine left as restarts run
+from 77% down to 2%. Text similarity is not used as a signal, because a survey has to work where
+the source has not been kept; it was used to check the rule.
+
+Copies are still returned, still carried in `--json`, still marked on the map. They go under their
+own heading with their own sentence, and out of the ranked restart list.
+
+## A backup of the winner switched the whole finding off (2026-09-22, same day)
+
+The copy verdict above shipped in the morning and was wrong in its scope by the afternoon. It was
+read off the group's **named file alone**: if one sibling defined everything the named file
+defined, the entire group was reclassified.
+
+Reproduced on a four-attempt fixture built to the shape of the worked example in the README --
+`claims_v3`, `claims_ingest`, `intake_new`, `intake`, sharing four definitions at 76%, 28%, 18%
+and 0%. The tool reported `THE SAME JOB, STARTED OVER`, the four percentages, `~36 lines at
+stake` and `resume at app/claims_v3.py`. Then a `backups/2026-08/claims_v3.py` was added -- a
+copy of the file the tool had just named as the place to resume. The entire restart disappeared:
+not demoted, not footnoted, replaced by one row reading `app/claims_v3.py and 4 others ... this
+is a copy, not a restart`. Backing up a *losing* attempt was harmless. Backing up the *winner*
+swallowed the group. Every inherited codebase has a backup folder in it, so the product's
+headline feature was switchable off by the thing it exists to be pointed at.
+
+**The verdict is about a pair, so it is asked between every pair.** A group's members are
+partitioned into sets that are the same file as each other, by the same two tests as before --
+identical definition sets, or the file-name-plus-kept-aside-directory conjunction -- treated as
+transitive, so five re-dated copies of one script come out as one set rather than four
+overlapping pairs. One set means the group is a copy end to end. More than one set means a real
+restart with a duplicate in it: the restart is reported with one member per set and re-ranked on
+what is left, and each set holding more than one file is reported as its own copy under the copy
+heading. The representative is the live file rather than the one under the kept-aside directory,
+which is the same correction the line-count tie-break made for the same reason.
+
+**Measured on the same 979-module tree.** The matcher still finds 22 groups. 12 are copies end to
+end, 7 hold no duplicate at all, 3 hold both. Reported: 25 groups, 10 restarts and 15 copies,
+against 9 and 13 before. The restart recovered is the bug in miniature on real data -- a
+machine-identity helper has a generated twin of itself beside it, and that twin was being used to
+call a licence client a copy as well: two files whose texts are **8%** alike. The three copies
+split out of restart groups were checked against the files the same way the original cut was:
+they are **87.7%, 99.7% and 100%** the same text as the file they were split from. Nothing moved
+that should have stayed.
+
+One module can now appear twice -- once as an attempt in a restart, once in the copy pair its
+backup makes. On the map the card is written once, and the restart takes it: "another attempt got
+further" is what the reader acts on, and "there is a copy of this under `backups/`" is something
+they can see in the file tree. The copy keeps its own card, and both keep their row in the
+summary.
+
+## Output paths are checked before the survey, not after it (2026-09-22)
+
+All four of `--map`, `--json`, `--mermaid` and `--drawio` raised `FileNotFoundError`,
+`PermissionError` or `IsADirectoryError` out of the writer when the destination folder did not
+exist, was unwritable, or was a folder -- **after** the whole survey had run, so the survey was
+thrown away with it. `cobble` did the same when the project's parent is read-only, which a
+mounted share often is, and from a desktop icon that failure is not visible at all.
+
+Every output path is now checked before a single file is read, and a bad one is one sentence
+naming the flag and the reason, with exit 2: `cobblerpy: --json out/s.json: cannot write here
+(its folder does not exist)`. Every bad path is named, not just the first, because a person
+fixing two mistyped paths one run at a time pays for the refusal twice. The check is the same
+one the sibling extraction tool uses, and the sentence is in the voice this package already uses
+when the shelf cannot be written.
+
+## No drive letter, and no silent shelf (2026-09-22)
+
+The shelf root was looked for in `CODECOBBLER_HOME`, then in a hardcoded drive letter, ahead of
+the documented fallback under the home directory -- under a comment insisting it was not a
+hardcoded path. It was. On Windows a mapped drive on that letter is usually a corporate network
+share, so a machine that happened to have one silently wrote somebody's shelf and register onto
+it, and nothing in the output said where they had gone. The environment variable is the
+documented mechanism and is now the only one; the machine-specific value belongs in the launcher
+shim the installer writes. A run that puts the shelf anywhere but the default now says where it
+put it, and says nothing when it is where it always is.
+
+## file:// URLs are built, not concatenated (2026-09-22)
+
+Four places pasted the scheme onto the front of a path. On Windows that gives
+`file://<drive>:\...`, which parses with the **whole path as the hostname** and an empty path, so
+every `cobble` run on that platform left a dead link on the shelf and opened nothing. On any
+platform a project path holding `#`, `?` or `%` broke the same way -- everything from the `#` on
+became a fragment -- and a space went through unencoded. `pathlib.Path.as_uri` percent-encodes
+all of it and writes the `file:///C:/...` form Windows reads. A register row written by an older
+version can hold a relative path, which `as_uri` refuses, so such a path is handed back as it
+came: a row that cannot be linked beats a shelf that will not render.
+
+## The resume pick could be the smaller copy (2026-09-22)
+
+Completeness is a proportion of what each file itself started, so two copies of one module score
+identically however far apart their sizes are, and the module *name* settled it. Measured on the
+same tree: 15 of the 22 groups have a tie at the top and in 7 of them the name picked the smaller
+file. In one, a 2,767-line copy under a backup directory was named "resume here" over the
+3,527-line live file it was copied from -- so the advice was to carry on in the copy, and the
+work-at-stake figure measured the wrong file. Line count now breaks the tie before the name, and
+the name stays as the last resort so two runs over one tree still agree.
+
+## Completeness saturates, and the effort line inherited it (2026-09-22)
+
+Measured across all 67 attempts in those 22 groups: **every one of them has a body on every
+definition.** The 0.7 body term is a constant on a tree like this, so the whole spread of the
+score comes from the remaining 0.3 -- reachability and tests -- and the group-level number takes
+three values in total, 70%, 90% and 100%, with 21 of 22 at 90 or above.
+
+Everything else already computed was measured for spread over the same 22 groups before anything
+was changed: TODO and FIXME markers (4 in the entire 979-module tree, 0 in any of the 67
+attempts), the group's `lacks` and `common_gaps` (empty for all 22, since nothing is stubbed),
+unreferenced definitions (0 for 14 of the 22), the abandonment score (0 for 7 of 22, and mostly
+a count of smells in the biggest files), and history (undefined for 4 of the 22, which are
+untracked). **Nothing separated them**, and none of those measures what the line claims to
+measure anyway, so no re-weighting was invented. A weighting that passes only its own fixtures is
+worse than the saturated one it replaced.
+
+What the measurement did find is that the number was wrong, not merely useless. `lines left to
+finish` was `lines × (1 − completeness)`, and completeness carries reachability and tests. A
+2,809-line file with a body on every definition, which nothing imported and no test named, was
+reported as having **~281 lines left to finish it**. So the field now counts what its name says --
+the lines in definitions with no body -- and nothing else, and the sentence names the count so it
+can be checked. On this tree that is 0 everywhere, and where it is 0 the line is dropped instead
+of printing "nothing left unwritten by this measure" on 12 rows out of 22. What the measure does
+and does not cover is stated once above the groups rather than on every row.

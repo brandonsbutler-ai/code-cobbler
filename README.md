@@ -24,23 +24,23 @@ That includes running it from inside the project, where a file named `ast.py` or
 `json.py` would otherwise be imported in place of Python's own. Before it imports
 anything else, the tool takes the current directory off the import path whenever it is
 the program being run: `cobblerpy`, `cobble` and `cobblerpy-gui` from pip, the desktop
-launchers, the `cobble` the launcher installer writes, and `python3 -m cobblerpy` on
-Python 3.10 or newer. The single executable never has the current directory on its path.
+launchers, the `cobble` the launcher installer writes, and `python3 -m cobblerpy`. The
+single executable never has the current directory on its path.
 
 Two things happen before any line of this tool runs, and no package can stop them:
 
 - `python3 -m` puts the current directory first, and Python imports some of its own
   modules from there to find the package. On 3.12 those are `importlib`, `types`,
   `warnings`, `threading`, `functools`, `collections`, `keyword`, `operator` and
-  `reprlib`; on 3.9 and 3.10, `runpy` as well. On 3.9 the tool also cannot tell its own
-  `-m` run from another program's, so it leaves the path alone there.
+  `reprlib` -- measured on 3.12.3 on 2026-09-22, and `runpy` is not among them. The
+  exact list moves between releases; that it is not empty is the part that matters.
 - An empty element in your own `PYTHONPATH` (`PYTHONPATH=:` or `/x:`) also means the
   current directory, and Python imports `encodings`, `sitecustomize.py` and
   `usercustomize.py` from it at startup (an `encodings.py` there runs, then the
   interpreter fails); pip's `cobblerpy` wrapper then imports `re`.
 
 So inside a project you do not trust, use `cobblerpy .` or `cobble` with no empty
-`PYTHONPATH` element, or `python3 -P -m cobblerpy .` on Python 3.11 or newer, or run it
+`PYTHONPATH` element, or `python3 -P -m cobblerpy .`, or run it
 from outside and name the folder.
 
 ## The problem it exists for
@@ -85,16 +85,18 @@ varies in strength. A `__main__` guard is near-certain; a suggestive filename is
 modules everything leans on, and any import cycles.
 
 **The same job, started over** -- modules that define enough of the same things to be attempts
-at one piece of work rather than separate pieces, ranked by how much of what each one started is
-filled in, with the gaps named:
+at one piece of work rather than separate pieces, ranked by the **work at stake** in each group,
+with the gaps named:
 
 ```
 4 attempts share normalise_codes, parse_claim, submit_claim, validate_claim
- ->  75%  app/claims_v3.py
+    ~573 lines at stake -- 1,224 in the furthest attempt, 78% complete, 40% of its definitions exist elsewhere
+    ~204 lines left to finish it -- 1 definition with no body yet
+ ->  78%  app/claims_v3.py
      42%  app/claims_ingest.py
      35%  app/intake_new.py
      33%  app/intake.py
-    resume at app/claims_v3.py (75% of what it started)
+    resume at app/claims_v3.py (78% of what it started)
       5 of 6 definitions have bodies
       still stubbed: submit_claim
       reachable from an entry point
@@ -110,6 +112,55 @@ not scored at all, and there is a test that documenting a weaker attempt does no
 The percentage is a proportion of what that file itself started, not of an imagined finished
 feature. It answers "how much of this attempt is filled in", which is the question that decides
 whether continuing beats starting over.
+
+**A copy is not a restart.** Most of what this finds on a working tree is one file kept in more
+than one place -- a backup folder, a re-dated variant, a generated twin -- and telling a reader
+"somebody restarted this four times" about a backup folder is a false sentence, not a low-ranked
+one. So a pair of files that define exactly the same things is reported under its own heading,
+with its own verdict and the one file you can check it against:
+
+```
+THE SAME FILE, IN MORE THAN ONE PLACE (15)
+  (not restarts: nothing here was started over and left)
+  app/claims.py and 3 others
+      this is a copy, not a restart: every definition in it is also in app/claims_source.py
+  app/intake.py and 1 other
+      this is a copy, not a restart: the same file name in two places, one of them under backups/ -- the other is backups/2026-08/app/intake.py
+```
+
+The verdict is about a **pair of files**, and a copy is taken out of its group rather than used
+to condemn it. Back up the attempt the tool told you to resume and you get both findings: the
+backup is reported as a copy, and the restart is still reported -- with its remaining attempts,
+their percentages and its resume line, re-ranked on what is left. A group is called a copy end
+to end only when every file in it is the same file as every other.
+
+Run against a 979-module tree, the matcher found 22 groups: 12 copies end to end, 7 with no
+duplicate in them at all, and 3 holding both, which report as 25 groups -- 9 restarts and 13
+copies before the split, 10 and 15 after. The cut is not a round number: across those 22 groups
+the share of the named file's definitions that a sibling also holds came out 12, 13, 22, 29, 50,
+53, 60, 60, 80, and then 100 thirteen times, so the cut sits where the gap is. Two files under
+the same name in a `backups/` or `archive/` directory count as a copy as well, because a backup
+taken before the last edit is one definition behind the live file; the directory name **on its
+own** is not evidence, and an archived script that shares only three names with its sibling is
+still reported as a restart.
+
+**Work at stake** is what you get back for resuming a group: the lines in its furthest-along
+attempt, taken down by how much of that file is written, and taken down again by the share of
+its definitions a sibling attempt already holds. All three numbers are printed beside it, so the
+order can be argued with without reading the code that produced it. How many times the job was
+restarted only breaks ties -- a restart count says how often somebody gave up, never how much
+code is sitting there. Where two attempts are equally far along, the bigger file is the one
+named: completeness is a proportion of what each file itself started, so a 2,767-line copy and
+the 3,527-line file it came from score the same, and "resume here" pointed at the copy.
+
+The lines left to finish ride along beside it and are deliberately **not** part of the order, so
+a small group that is nearly done still reads as a quick win from wherever it sorts. That line
+counts **only definitions with no body yet**, and says nothing about whether what is written
+works. It used to be the lines the completeness score said were missing, which also folds in
+whether anything imports the file and whether a test names it -- so a file with a body on every
+definition that nothing imported was reported as having 281 lines left to write. Where there is
+nothing unwritten the line is dropped rather than softened; on the 979-module tree every one of
+the 67 files in those 22 groups has a body on every definition, so it prints nowhere.
 
 **Where the work stopped** -- modules ranked by weighted signals of unfinished work, so reading
 top-down gives you an order to look at the code in:
@@ -171,7 +222,7 @@ that corpus. On third-party code the rate is roughly half again as high.
 
 ## Running it, on Linux and on Windows
 
-Python 3.9 or newer, and nothing else. The library and the command line import
+Python 3.11 or newer, and nothing else. The library and the command line import
 only the standard library, so there is no install step you can get wrong and
 nothing to pin.
 
@@ -222,7 +273,10 @@ is the honest answer to a bare click. Rows are dated by the map file rather than
 by the moment they were listed, or newest-first sorts on a fiction.
 
 On a machine that dual-boots, choose the volume both systems can see and one
-bookmark serves either side; on Windows the shelf goes on `W:\` when there is one. `packaging/CodeCobbler.bat`
+bookmark serves either side. `CODECOBBLER_HOME` is the only thing that moves the
+shelf: no drive letter is built into the package, on Windows or anywhere else,
+and a run that writes a shelf outside the default says where it put it.
+`packaging/CodeCobbler.bat`
 is the Windows equivalent of the launcher: double-click for the shelf, or drag a
 folder onto it.
 
@@ -240,18 +294,77 @@ where it is on PATH. Everything after `-m cobblerpy` is identical on both.
 
 ### Installed
 
-cobblerpy is not on PyPI. Install it from a clone, or straight from the
-repository:
+The name on PyPI is `cobblerpy`, and 0.1.3 -- this source -- is the release
+going there. Every route below installs that same 0.1.3, and none of them
+brings anything else with it: the package has no runtime dependencies, so there
+is nothing for pip to resolve.
+
+**From PyPI**, the ordinary case:
 
 ```bash
-python3 -m pip install .            # from a clone, Linux, macOS
-py -m pip install .                 # from a clone, Windows
-python3 -m pip install "cobblerpy @ git+https://github.com/brandonsbutler-ai/code-cobbler"
+python3 -m pip install cobblerpy            # Linux, macOS
+py -m pip install cobblerpy                 # Windows
+python3 -m pip install "cobblerpy[gui]"     # and the desktop window
 ```
 
-That puts `cobblerpy` on PATH, so the command is just `cobblerpy <folder>`.
-Add `[gui]` -- `pip install ".[gui]"` -- for the window, which is the one part
-that pulls a dependency (PySide6).
+**With pipx**, when you want the commands on PATH without them sharing an
+environment with anything else you have installed -- which is usually what you
+want for a tool you point at other people's projects:
+
+```bash
+pipx install cobblerpy
+pipx install "cobblerpy[gui]"
+```
+
+Both of those need 0.1.3 to be on the index. Until it is, and on any machine
+that cannot reach an index at all, the routes below install the same 0.1.3 from
+source.
+
+**From a clone**, when the source is already out and you want the commit you
+have just read:
+
+```bash
+python3 -m pip install .            # Linux, macOS
+py -m pip install .                 # Windows
+pipx install .                      # or in an environment of its own
+```
+
+**Straight from the repository**, when you would rather not keep a clone:
+
+```bash
+python3 -m pip install "cobblerpy @ git+https://github.com/brandonsbutler-ai/code-cobbler"
+pipx install "cobblerpy @ git+https://github.com/brandonsbutler-ai/code-cobbler"
+```
+
+Any of them puts `cobblerpy`, `cobble` and `cobblerpy-gui` on PATH, so the
+command is just `cobblerpy <folder>`. Add `[gui]` -- `pip install ".[gui]"` from
+a clone -- for the window, the one part that pulls a dependency (PySide6).
+
+**Nothing installed at all.** [Straight from the source
+tree](#straight-from-the-source-tree) needs no install step, no index and no
+network: the package runs where it sits.
+
+### Verify what you downloaded
+
+The source distribution carries more than the package: the tests, the claim
+checker they drive, and the packaging scripts that some of those tests
+exercise. So the claims this README makes can be re-run rather than believed,
+by whoever downloaded it, on their own machine:
+
+```bash
+python3 -m pip download --no-binary :all: --no-deps cobblerpy==0.1.3
+tar xzf cobblerpy-0.1.3.tar.gz
+cd cobblerpy-0.1.3
+python3 -m unittest discover -s tests
+python3 verify_e2e.py
+```
+
+`verify_e2e.py` is the file described under [Tests](#tests). It reads the README
+sitting beside it, drives the real command line against a codebase whose
+properties are known by construction, prints PASS or FAIL for each claim and
+exits non-zero if any of them is not true of the code it shipped with. Both
+commands were run from an unpacked 0.1.3 archive on 2026-09-21 and both came
+back green, so nothing either one needs is left out of it.
 
 ### Paths and quoting, which differ
 
@@ -393,11 +506,26 @@ Every option the command accepts. `--help` prints the same list.
 | `--max-files N` | stop after N .py files (default 5000). The survey is truncated, not sampled, so raise it rather than trust a partial map of a tree that hit the cap |
 | `--version` | show program's version number and exit |
 
+Every path given to `--map`, `--json`, `--mermaid` or `--drawio` is checked
+**before any file is read**. One that cannot be written is one sentence naming
+the flag and the reason, and exit 2 -- nothing is surveyed and nothing is
+written:
+
+```
+cobblerpy: --json out/reports/survey.json: cannot write here (its folder does not exist)
+```
+
+Otherwise exit status is 1 only when the directory cannot be read or holds no
+Python. Finding unfinished work is a result, not a failure, so it exits 0.
+`cobble` refuses the same way when the map has nowhere to go: it is written
+beside the project, so a read-only parent -- a mounted share, most often -- is
+said and nothing is surveyed.
+
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v     # 282 tests, no pytest required
-                                             # 7 need PySide6 or a shared volume and skip
+python3 -m unittest discover -s tests -v     # 369 tests, no pytest required
+                                             # 8 need PySide6 or a shared volume and skip
 python3 verify_e2e.py                        # 116 end-to-end claim checks
 ```
 
@@ -488,6 +616,11 @@ anything platform-specific.
 Nor is the attachment question answered -- where set-aside code *would* have fitted -- which
 [DESIGN_NOTES.md](DESIGN_NOTES.md) records as probably the boundary where deterministic analysis
 ends and narration begins.
+
+## Changelog
+
+[CHANGELOG.md](CHANGELOG.md) says what changed in each release, in terms of
+what it means for somebody using it.
 
 ## License
 
